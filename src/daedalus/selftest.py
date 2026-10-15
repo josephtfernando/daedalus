@@ -99,6 +99,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
             report.checks.append(await _check_loop(scratch, surface))
+            report.checks.append(await _check_daemon(scratch))
         finally:
             await rt.aclose()
 
@@ -254,6 +255,70 @@ async def _check_loop(settings: Settings, surface: ScriptedSurface) -> Check:
     if not hits:
         return Check("loop", False, "the tool's side effect did not land")
     return Check("loop", True, f"free text → tool → reply in {result.steps} steps")
+
+
+class _DaemonSurface:
+    """A surface whose readiness is reachable *only* through `start()`.
+
+    That is what a real surface does — it signals ready from inside its own
+    connection loop — and it is precisely the ordering the daemon got wrong.
+    """
+
+    def __init__(self) -> None:
+        self._ready = asyncio.Event()
+        self._running = asyncio.Event()
+        self.started = False
+
+    async def start(self) -> None:
+        self.started = True
+        self._ready.set()
+        await self._running.wait()
+
+    async def wait_ready(self) -> None:
+        await self._ready.wait()
+
+    async def send(self, text: str, *, thread: str | None = None) -> None: ...
+
+    async def ask(self, question: str, *, options: list[str] | None = None) -> str:
+        return ""
+
+    async def approve(self, request: object) -> bool:
+        return False
+
+    def stop(self) -> None:
+        self._running.set()
+
+
+async def _check_daemon(settings: Settings) -> Check:
+    """The daemon must actually *come up*, not merely be configured to.
+
+    Its absence is why the Discord surface shipped silent: this gate reported
+    green while the process opened no socket, dialed nothing, and logged
+    nothing, because `serve()` awaited readiness before starting the very loop
+    that produces it. Configuration checks cannot see that; only running it can.
+    """
+    from .main import serve
+
+    surface = _DaemonSurface()
+    rt = build_runtime(settings, surface=surface)  # type: ignore[arg-type]
+    task = asyncio.create_task(serve(surface, rt, tick_seconds=3600))
+    try:
+        for _ in range(200):
+            await asyncio.sleep(0)
+            if surface.started:
+                break
+        if not surface.started:
+            return Check("daemon", False, "serve() awaited readiness before starting the surface")
+        surface.stop()
+        code = await asyncio.wait_for(task, timeout=5)
+    except asyncio.TimeoutError:
+        return Check("daemon", False, "serve() did not shut down when the surface closed")
+    finally:
+        if not task.done():
+            task.cancel()
+    if code != 0:
+        return Check("daemon", False, f"serve() exited {code}")
+    return Check("daemon", True, "starts the surface, pumps ticks, shuts down cleanly")
 
 
 async def _check_providers(settings: Settings) -> Check:

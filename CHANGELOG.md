@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (7/7 offline, 8/8 with `--live`) and a 41-test suite. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
+_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (8/8 offline, 9/9 with `--live`) and a 44-test suite. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
 
 ### Added
 
@@ -27,9 +27,9 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   - **Scheduler v0** — a dependency-free 5-field cron matcher, file-first jobs, a wake log with **idempotency keys** (a repeat tick or a sleep/resume cannot double-fire), and a tick that runs authored capabilities with **no model in the loop**.
   - **Surfaces** — a Discord surface (one bot, DM-first, allowlist-enforced, approval buttons, chunked replies), plus CLI and scripted doubles for local use and for tests.
   - **Secrets** — an encrypted credential store (Fernet, per-install master key at `0600`) and a **bytes-stay-home** guard that blocks any outbound request whose body carries a provisioned secret value.
-  - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · and a full free-text turn, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
+  - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · a full free-text turn · and **the daemon lifecycle**, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
   - **Setup wizard (code)** — `scripts/setup.sh`: the `template.sh` library **vendored verbatim** from the `wizard` skill (every line from `set -euo pipefail` through the `STAGES` marker byte-identical), with the 13 stages authored below it, plus `-y/--yes` and `--non-interactive` modes. Deliberate deviations from the §8.5 stage list, each because the runtime disagreed with the prose: the secret-store **directory** is `0700` (a directory needs `+x` to be traversable; the files inside stay `0600`), the master key sits at `resources/master.key` because that is where `SecretStore` reads it, stage 10 installs only the two named units (the runtime pumps ticks **in-process**, so the timer triggers `daedalus.service` with `Persistent=true` rather than inventing a `tick` verb), and stage 12 runs `selftest --live` when a heavy key is configured. Nothing from the wizard is written to CI — no secret leaves the machine.
-  - **Tests** — 41 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, the secret store, and the self-test's own isolation guarantee.
+  - **Tests** — 44 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, the secret store, the daemon lifecycle, and the self-test's own isolation guarantee.
 
 - **`SPEC.md`** — the requirements and design source of truth. Covers purpose, design principles, the harness/stack decision, the capability substrate, Generative UI, the model stack, memory, trust & safety, the cabinet, runtime, the Discord surface, phases, the P0 definition and build order, reconciliation notes, and open implementation details.
 - **`ARCHITECTURE.md`** — the build-level companion: system context, component map, repository and package layout, runtime & process model, the five core flows, the data model, the interface/protocol contracts, the security architecture, failure modes, extension points, and the phase map.
@@ -72,6 +72,25 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **Settings are home-relative:** the grant store and the rate-limit ledger resolve from `$DAEDALUS_HOME` rather than a process-global path, so a self-test or a second install can never read or write another install's state.
 
 ### Fixed
+
+- **The daemon deadlocked on startup and never connected to Discord.** `cmd_run` awaited
+  `surface.wait_ready()` *before* calling `surface.start()`. A surface signals readiness from inside
+  its own connection loop, so the daemon waited for a connection it had not yet begun: the process
+  came up, opened **no socket**, dialed nothing, logged nothing, and systemd reported it
+  `active (running)` for 32 minutes. The Discord surface had therefore never once worked — no user
+  could have reached the agent by DM. The lifecycle is now extracted to `serve()`, which launches
+  `start()` as a task and *then* waits for readiness, so an early `start()` failure is raised loudly
+  instead of hanging the unit forever. Caught by a direct check of the live process (zero sockets
+  owned by the daemon pid), not by any test that existed at the time.
+  *Supersedes:* nothing — this was never working.
+- **The self-test reported green on a daemon that never came up.** This is the more serious of the
+  two: the gate was 8/8 while the bot was silent, because every check verified *configuration* and
+  none verified that the process actually starts. A gate that cannot see the primary failure mode is
+  decoration. There is now a **`daemon`** check that drives `serve()` with a surface whose readiness
+  is reachable only through `start()` — the exact ordering that was broken — and asserts it comes up,
+  pumps ticks, and shuts down. `tests/test_daemon.py` adds three tests that fail on the old ordering
+  and pass on the new one; the regression was verified to bite by re-running the old ordering, which
+  hangs with the surface never started.
 
 - **The default provider chain named models that do not exist.** `DEFAULT_HEAVY` shipped the
   shorthand `glm-5-3 → glm-4.7 → minimax → kimi`, and the first live probe failed exactly as it

@@ -7,10 +7,15 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import __version__
 from .config import Settings, load_settings
 from .storage import paths
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, keeps imports cheap
+    from .runtime import Runtime
+    from .surface.base import Surface
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -93,25 +98,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     surface = DiscordSurface(settings, handler)
     rt.set_surface(surface)
 
-    async def ticker() -> None:
-        while True:
-            try:
-                await rt.scheduler.dispatch_tick(rt, wake_handler=rt.wake)
-            except Exception:  # noqa: BLE001
-                logging.getLogger("daedalus.scheduler").exception("tick failed")
-            await asyncio.sleep(args.tick_seconds)
-
-    async def go() -> int:
-        await surface.wait_ready()
-        tick = asyncio.create_task(ticker())
-        try:
-            await surface.start()
-        finally:
-            tick.cancel()
-            await rt.aclose()
-        return 0
-
-    return asyncio.run(go())
+    return asyncio.run(serve(surface, rt, args.tick_seconds))
 
 
 def _run_cli_repl(settings: Settings) -> int:
@@ -142,6 +129,53 @@ def _run_cli_repl(settings: Settings) -> int:
         return 0
 
     return asyncio.run(go())
+
+
+async def _ticker(rt: Runtime, interval_s: float) -> None:
+    """Pump scheduler ticks in-process, forever (SPEC §8).
+
+    There is deliberately no separate `tick` verb — the daemon pumps its own
+    ticks, so the timer unit triggers `daedalus run` rather than a one-shot.
+    """
+    while True:
+        try:
+            await rt.scheduler.dispatch_tick(rt, wake_handler=rt.wake)
+        except Exception:  # noqa: BLE001 — a bad tick must not kill the daemon
+            logging.getLogger("daedalus.scheduler").exception("tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def serve(surface: Surface, rt: Runtime, tick_seconds: float = 60) -> int:
+    """Run the surface and the scheduler ticker together.
+
+    **`start()` must be in flight before `wait_ready()` is awaited.** A surface
+    signals readiness from inside its own connection loop, so awaiting
+    readiness first waits for a connection that never begins: the daemon comes
+    up, dials nothing, opens no socket, logs nothing, and still looks healthy
+    to systemd. That is exactly how the Discord surface shipped silent.
+    """
+    serving = asyncio.create_task(surface.start())
+    ready = asyncio.create_task(surface.wait_ready())
+    try:
+        await asyncio.wait({serving, ready}, return_when=asyncio.FIRST_COMPLETED)
+        if serving.done() and not ready.done():
+            # start() finished without ever becoming ready: it failed, or the
+            # surface closed on its own. Surface the failure instead of hanging.
+            exc = serving.exception()
+            await rt.aclose()
+            if exc is not None:
+                raise exc
+            return 1
+    finally:
+        ready.cancel()
+
+    tick = asyncio.create_task(_ticker(rt, tick_seconds))
+    try:
+        await serving
+    finally:
+        tick.cancel()
+        await rt.aclose()
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
