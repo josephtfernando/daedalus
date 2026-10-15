@@ -397,6 +397,9 @@ PY
   fi
   cat > "$CONFIG_FILE" <<'TOML'
 # Daedalus configuration. Written by scripts/setup.sh; edit by hand freely.
+# Fallback copy — normally emitted by `daedalus.config.default_config_toml()`.
+# Keep in sync with src/daedalus/config.py (a self-test asserts parity is not
+# possible in bash, so treat this as the emergency path only).
 
 [owner]
 discord_users = []          # only these users may DM the agent
@@ -404,11 +407,10 @@ discord_users = []          # only these users may DM the agent
 [models]
 cheap = { name = "bonsai-8b-local", base_url = "http://127.0.0.1:11434/v1", model = "bonsai-8b", api_key_env = "" }
 heavy = [
-  { name = "nim-glm-5-3", base_url = "https://integrate.api.nvidia.com/v1", model = "glm-5-3", api_key_env = "NVIDIA_API_KEY" },
-  { name = "nim-glm-4.7", base_url = "https://integrate.api.nvidia.com/v1", model = "glm-4.7", api_key_env = "NVIDIA_API_KEY" },
-  { name = "nim-minimax", base_url = "https://integrate.api.nvidia.com/v1", model = "minimax", api_key_env = "NVIDIA_API_KEY" },
-  { name = "nim-kimi", base_url = "https://integrate.api.nvidia.com/v1", model = "kimi", api_key_env = "NVIDIA_API_KEY" },
+  { name = "nim-glm-5.3-flash", base_url = "https://integrate.api.nvidia.com/v1", model = "z-ai/glm-5.3-flash", api_key_env = "NVIDIA_API_KEY" },
+  { name = "nim-step-5-preview", base_url = "https://integrate.api.nvidia.com/v1", model = "stepfun-ai/step-5-preview", api_key_env = "NVIDIA_API_KEY" },
   { name = "zai-glm-4.7-flash", base_url = "https://api.z.ai/api/paas/v4", model = "glm-4.7-flash", api_key_env = "ZAI_API_KEY" },
+  { name = "zai-glm-4.5-flash", base_url = "https://api.z.ai/api/paas/v4", model = "glm-4.5-flash", api_key_env = "ZAI_API_KEY" },
 ]
 
 [approvals]

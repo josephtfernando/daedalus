@@ -10,17 +10,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import stat
-from dataclasses import dataclass, field
+import tempfile
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .approvals.risk import Risk
 from .config import Settings
 from .loop.engine import Engine
 from .model.client import ModelClient
-from .model.providers import ChatResult, ScriptedProvider, ToolCall
+from .model.providers import ChatResult, ScriptedProvider, ToolCall  # noqa: F401
 from .runtime import Runtime, build_runtime
 from .security.provenance import Labeled, Origin
+from .storage import paths
 from .surface.base import InboundEvent
 from .surface.cli import ScriptedSurface
 
@@ -71,19 +74,38 @@ class Report:
 
 
 async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
+    """Verify the install without writing to it.
+
+    The real home is checked **read-only** (layout; and a self-cleaning
+    round-trip through the credential store). Everything that *creates* state —
+    memory, grants, an authored capability, a scheduled job, a turn — runs in a
+    throwaway scratch home, because a verification gate that dirties the thing
+    it verifies is not a gate.
+    """
     report = Report()
     surface = ScriptedSurface(approve=True)
-    rt = build_runtime(settings, surface=surface)
+    scratch_home = Path(tempfile.mkdtemp(prefix="daedalus-selftest-"))
+    try:
+        paths.ensure_tree(scratch_home)
 
-    report.checks.append(_check_layout(settings))
-    report.checks.append(_check_secrets(rt))
-    report.checks.append(_check_memory(rt))
-    report.checks.append(_check_approvals(rt))
-    report.checks.append(await _check_capability_gate(rt))
-    report.checks.append(await _check_scheduler(rt))
-    report.checks.append(await _check_loop(settings, surface))
-    if live:
-        report.checks.append(await _check_providers(settings))
+        report.checks.append(_check_layout(settings))
+
+        scratch = replace(settings, home=scratch_home)
+        rt = build_runtime(scratch, surface=surface)
+        try:
+            report.checks.append(_check_secrets(rt))
+            report.checks.append(_check_memory(rt))
+            report.checks.append(_check_approvals(rt))
+            report.checks.append(await _check_capability_gate(rt))
+            report.checks.append(await _check_scheduler(rt))
+            report.checks.append(await _check_loop(scratch, surface))
+        finally:
+            await rt.aclose()
+
+        if live:
+            report.checks.append(await _check_providers(settings))
+    finally:
+        shutil.rmtree(scratch_home, ignore_errors=True)
     return report
 
 
@@ -91,6 +113,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
 
 
 def _check_layout(settings: Settings) -> Check:
+    """Read-only assertions about the real install — this check never writes."""
     home = settings.home
     if not home.exists():
         return Check("layout", False, f"{home} does not exist")
@@ -100,18 +123,39 @@ def _check_layout(settings: Settings) -> Check:
     for part in ("memory", "capabilities", "approvals", "state", "resources/creds"):
         if not (home / part).exists():
             return Check("layout", False, f"missing {part}")
+
+    # Secrets that are already present must be hardened. We assert, never create.
+    for rel in (".env", "resources/master.key"):
+        path = home / rel
+        if not path.exists():
+            continue
+        file_mode = stat.S_IMODE(path.stat().st_mode)
+        if file_mode != 0o600:
+            return Check("layout", False, f"{rel} is {oct(file_mode)}, expected 0o600")
+
+    for path in (home / "resources" / "creds").glob("*"):
+        cred_mode = stat.S_IMODE(path.stat().st_mode)
+        if cred_mode & 0o077:
+            return Check("layout", False, f"creds/{path.name} is {oct(cred_mode)} — group/other can read it")
+
     return Check("layout", True, f"{home} at 0700")
 
 
 def _check_secrets(rt: Runtime) -> Check:
+    """Round-trip through a scratch store — proves the code, touches no real key."""
     rt.secrets.put("selftest_probe", "correct-horse-battery-staple")
-    value = rt.secrets.get("selftest_probe")
-    if value != "correct-horse-battery-staple":
-        return Check("secrets", False, "round-trip failed")
-    blob = (rt.secrets.dir / "selftest_probe.enc").read_bytes()
-    if b"correct-horse" in blob or b"battery" in blob:
-        return Check("secrets", False, "plaintext found at rest")
-    rt.secrets.delete("selftest_probe")
+    try:
+        value = rt.secrets.get("selftest_probe")
+        if value != "correct-horse-battery-staple":
+            return Check("secrets", False, "round-trip failed")
+        blob = (rt.secrets.dir / "selftest_probe.enc").read_bytes()
+        if b"correct-horse" in blob or b"battery" in blob:
+            return Check("secrets", False, "plaintext found at rest")
+        key_mode = stat.S_IMODE(rt.secrets.key_path.stat().st_mode)
+        if key_mode != 0o600:
+            return Check("secrets", False, f"master key is {oct(key_mode)}, expected 0o600")
+    finally:
+        rt.secrets.delete("selftest_probe")
     return Check("secrets", True, "encrypted at rest, round-trips")
 
 
@@ -213,24 +257,36 @@ async def _check_loop(settings: Settings, surface: ScriptedSurface) -> Check:
 
 
 async def _check_providers(settings: Settings) -> Check:
+    """Walk the chain in order, stop at the first provider that answers.
+
+    A fallback that is never probed is a fallback that might be dead, so this
+    follows the same order the runtime would — with a shortened per-provider
+    timeout so a cold start cannot stall the gate.
+    """
     from .model.providers import HttpProvider
 
-    reachable: list[str] = []
-    for cfg in settings.heavy[:1] or []:
-        provider = HttpProvider(cfg, settings.env)
+    if not settings.heavy:
+        return Check("models (live)", False, "no providers configured")
+    failures: list[str] = []
+    for cfg in settings.heavy:
+        probe = replace(cfg, timeout_s=min(cfg.timeout_s, 60))
+        provider = HttpProvider(probe, settings.env)
         if not provider.available():
+            failures.append(f"{cfg.name}: no key")
             continue
         try:
             result = await provider.complete(
                 [{"role": "user", "content": "Reply with the single word: ok"}], temperature=0.0
             )
-            if result.content:
-                reachable.append(cfg.name)
         except Exception as exc:  # noqa: BLE001
-            return Check("models (live)", False, f"{cfg.name}: {exc}")
-    if not reachable:
-        return Check("models (live)", False, "no provider had a usable key")
-    return Check("models (live)", True, ", ".join(reachable))
+            hint = " — model ID is not in this provider's catalogue" if "404" in str(exc) else ""
+            failures.append(f"{cfg.name}: {str(exc)[:100]}{hint}")
+            continue
+        if result.content:
+            detail = cfg.name + (" (first in the chain)" if not failures else f" answered after {len(failures)} failed")
+            return Check("models (live)", True, detail)
+        failures.append(f"{cfg.name}: empty response")
+    return Check("models (live)", False, "; ".join(failures) or "no provider had a usable key")
 
 
 # -- helpers ---------------------------------------------------------------

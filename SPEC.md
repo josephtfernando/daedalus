@@ -182,8 +182,13 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
 ## 4. Models
 
 - **Primary:** NVIDIA NIM free tier, model-agnostic behind one OpenAI-compatible `base_url`.
-  Fallback chain: **`glm-5-3` (flash) → `glm-4.7` → `minimax` → `kimi`**.
-- **Second free stack:** Z.ai direct (`glm-4.7-flash`, free).
+  Fallback chain, **as verified against the live catalogue during P0**:
+  **`z-ai/glm-5.3-flash` → `stepfun-ai/step-5-preview` → Z.ai `glm-4.7-flash` → Z.ai `glm-4.5-flash`**.
+  Both NIM entries were confirmed to return text *and* well-formed tool calls.
+  *Superseded:* the earlier shorthand `glm-5-3 → glm-4.7 → minimax → kimi` named models that do not
+  exist — `glm-4.7` and `minimax` are absent from the catalogue, `moonshotai/kimi-k2.6` is listed but
+  answers 404, and `z-ai/glm-5.3` (non-flash) does not answer within a useful timeout.
+- **Second free stack:** Z.ai direct (`glm-4.7-flash`, free; `glm-4.5-flash` as its fallback).
 - **Local:** **Bonsai 8B (1-bit)** for offline fallback *and* cheap/dumb tasks. Run via a local runner (Ollama or llama.cpp) — **exact runtime support for the 1-bit weights to be verified at P0.**
 - Heavy local models are **dropped** — they do not fit the available RAM, and the latency is unacceptable.
 - **No Nemotron.**

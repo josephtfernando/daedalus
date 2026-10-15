@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (7/7) and a 35-test suite, all offline. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
+_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (7/7 offline, 8/8 with `--live`) and a 41-test suite. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
 
 ### Added
 
@@ -27,9 +27,9 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   - **Scheduler v0** — a dependency-free 5-field cron matcher, file-first jobs, a wake log with **idempotency keys** (a repeat tick or a sleep/resume cannot double-fire), and a tick that runs authored capabilities with **no model in the loop**.
   - **Surfaces** — a Discord surface (one bot, DM-first, allowlist-enforced, approval buttons, chunked replies), plus CLI and scripted doubles for local use and for tests.
   - **Secrets** — an encrypted credential store (Fernet, per-install master key at `0600`) and a **bytes-stay-home** guard that blocks any outbound request whose body carries a provisioned secret value.
-  - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · and a full free-text turn, all offline with a scripted model; `--live` additionally probes the configured providers.
+  - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · and a full free-text turn, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
   - **Setup wizard (code)** — `scripts/setup.sh`: the `template.sh` library **vendored verbatim** from the `wizard` skill (every line from `set -euo pipefail` through the `STAGES` marker byte-identical), with the 13 stages authored below it, plus `-y/--yes` and `--non-interactive` modes. Deliberate deviations from the §8.5 stage list, each because the runtime disagreed with the prose: the secret-store **directory** is `0700` (a directory needs `+x` to be traversable; the files inside stay `0600`), the master key sits at `resources/master.key` because that is where `SecretStore` reads it, stage 10 installs only the two named units (the runtime pumps ticks **in-process**, so the timer triggers `daedalus.service` with `Persistent=true` rather than inventing a `tick` verb), and stage 12 runs `selftest --live` when a heavy key is configured. Nothing from the wizard is written to CI — no secret leaves the machine.
-  - **Tests** — 35 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, and the secret store.
+  - **Tests** — 41 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, the secret store, and the self-test's own isolation guarantee.
 
 - **`SPEC.md`** — the requirements and design source of truth. Covers purpose, design principles, the harness/stack decision, the capability substrate, Generative UI, the model stack, memory, trust & safety, the cabinet, runtime, the Discord surface, phases, the P0 definition and build order, reconciliation notes, and open implementation details.
 - **`ARCHITECTURE.md`** — the build-level companion: system context, component map, repository and package layout, runtime & process model, the five core flows, the data model, the interface/protocol contracts, the security architecture, failure modes, extension points, and the phase map.
@@ -55,7 +55,7 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **Typed durable seat protocol** — `request / ack / partial / result / verify / failure / cancel` with correlation/causation IDs; at-least-once with dedup.
 - **Runtime & process model** — systemd `--user`, `enable-linger`, journald, a cron-pumped scheduler, capabilities as capped child processes, AC/battery power profiles, sleep→resume digest, lid-closed awake.
 - **Discord surface** — one bot, DM-first, free-text, buttons for approvals, long tasks in threads.
-- **Model stack** — NVIDIA NIM free tier behind one OpenAI-compatible `base_url` with fallback `glm-5-3 → glm-4.7 → minimax → kimi`; Z.ai direct as a second free stack; **Bonsai 8B (1-bit)** local for offline fallback and cheap tasks.
+- **Model stack** — NVIDIA NIM free tier behind one OpenAI-compatible `base_url` with fallback `z-ai/glm-5.3-flash → stepfun-ai/step-5-preview → Z.ai glm-4.7-flash → glm-4.5-flash`; Z.ai direct as a second free stack; **Bonsai 8B (1-bit)** local for offline fallback and cheap tasks.
 - **Interface decisions** — output modes (`message` · `file` · `serve` · `push`); the MCP seam (consume external servers, expose the capability registry) as a forward path, not a P0 build.
 - **Phases** — P0 (loop + substrate + proof-of-life) through P6 (group chat), with seats introduced one at a time.
 - **P0 definition** — the unseen free-text request, completed end-to-end with nothing hardcoded; the substrate is in P0 because the proof-of-life cannot happen without it.
@@ -73,6 +73,29 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 
 ### Fixed
 
+- **The default provider chain named models that do not exist.** `DEFAULT_HEAVY` shipped the
+  shorthand `glm-5-3 → glm-4.7 → minimax → kimi`, and the first live probe failed exactly as it
+  should: `HTTP 404: 404 page not found` from NIM. Interrogating the catalogue directly showed that
+  `glm-4.7` and `minimax` are not in it at all, `moonshotai/kimi-k2.6` is *listed* but answers 404 on
+  completion, and `z-ai/glm-5.3` does not answer inside a useful timeout. The chain is now
+  **`z-ai/glm-5.3-flash` → `stepfun-ai/step-5-preview` → Z.ai `glm-4.7-flash` → Z.ai `glm-4.5-flash`**,
+  with the first two confirmed to return text *and* well-formed tool calls, and the Z.ai pair
+  confirmed to exist (the spec's `glm-4.7-flash` is real — it simply lives on Z.ai, not NIM).
+  The wizard's emergency literal template was carrying the same dead IDs and is corrected with it.
+  *Why this consumed a live probe:* the catalogue is the only source of truth for model IDs, and no
+  amount of local reasoning substitutes for asking the provider. *Supersedes:* the shorthand in
+  `SPEC.md` §4, now annotated in place rather than quietly overwritten.
+- **`selftest` mutates the install it is verifying.** The layout and secret checks wrote into the
+  real `~/.daedalus`, so running the acceptance gate twice left behind a fake `daily_focus`
+  capability, a scheduled job, and memory rows. A verification gate that dirties what it verifies
+  cannot be trusted twice. Layout and permission assertions now read the real home **read-only**;
+  every mutating check runs against a throwaway `tempfile.mkdtemp` scratch home that is removed
+  afterwards. Two consecutive runs now leave **no trace**, and that property is itself a regression
+  test (`tests/test_selftest.py`).
+- **The live probe only ever tested the first provider**, so a fallback could rot unnoticed. It now
+  walks the chain in order, stops at the first provider that answers, applies a shortened
+  per-provider timeout so a cold start cannot stall the gate, and — on a 404 — says outright that
+  the model ID is not in the provider's catalogue.
 - **`Scheduler.add_job` crashed on any cron expression** — the `cron` parameter shadowed the `cron` module inside the method, so validation hit a string. The validator is now imported under an explicit name. Caught by the self-test, not by luck.
 - **`Manifest.save()` assumed its capability directory existed** and raised `FileNotFoundError` when writing a manifest into a fresh directory; it now creates the directory first.
 - **A malformed line in the CLI REPL** (a stray walrus expression) would not have run; rewritten to a plain event construction.
@@ -99,6 +122,7 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 
 - **Documentation set:** `SPEC.md` (what) · `ARCHITECTURE.md` (how) · `AGENTS.md` (working rules) · `CHANGELOG.md` (this file).
 - **Open implementation details** (not architectural decisions) are tracked in `SPEC.md` §13: the local runner for Bonsai 1-bit weights, memory-recall embedding choice, scheduler transport, the `manifest.toml` schema, the resource-provisioning flow, the headless-browser choice, the GenUI spec schema, the mood→token mapping, the dashboard regeneration trigger, the tuner set, and long-running-process supervision.
+- **gcal is provisioned but not yet implemented.** The owner's OAuth desktop client has been adopted into the encrypted credential store as `secret:gcal-client` (so it no longer sits as a world-readable file on disk), and `resources/registry.toml` carries a live `gcal` resource entry with `calendar.readonly` + `calendar.events`. **No code consumes it yet** — `integrations/gcal.py` and the internal calendar store of §5.5 do not exist, so today the agent can neither read nor write any calendar. The resource is registered carried-forward work, not a working integration.
 
 <!--
 Maintenance notes:
