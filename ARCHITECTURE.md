@@ -1,0 +1,475 @@
+# Daedalus — Architecture
+
+**Companion to:** `SPEC.md` (the requirements/design source of truth) and `AGENTS.md` (working rules).
+**Scope:** how the system is built, from the loop outward. Pure architecture — no product narrative.
+
+---
+
+## 1. Overview
+
+Daedalus is a single-user, local-first agent that runs as a **lightweight always-connected daemon** on the owner's laptop and is reached over Discord. It has four architectural commitments that shape everything below:
+
+1. **One loop, many identities.** A single turn engine serves every surface and every cabinet seat. Seats are *identity + charter + memory namespace*, not processes.
+2. **Capability, not flow.** The model composes behaviour at runtime and *authors its own tools*; deterministic code owns only hard boundaries.
+3. **Structure remote, values local.** Sensitive values never enter a remote prompt; only structure/schema crosses the wire.
+4. **File-first state.** Memory, capabilities, tokens, and grants are human-readable on disk, indexed by SQLite.
+
+---
+
+## 2. Architectural principles
+
+Derived from `SPEC.md` §1 and binding on every component:
+
+- **P0 — Free text in, capability not flow, no hardcoded behaviours.** No component ships a fixed behaviour the model cannot compose around.
+- **P1 — The model proposes, a deterministic engine disposes.** LLMs decide *what*; deterministic code decides *whether it is allowed*.
+- **P2 — Local-first.** Default is on-machine. Egress is a gated exception.
+- **P3 — Depth for one person.** Single owner, single trust root.
+- **P4 — Bias to action.** The system drives toward the next concrete action and retires stale work.
+
+---
+
+## 3. System context
+
+```
+                       ┌───────────────────────────────────────────────┐
+   Owner (phone/laptop)│                  LAPTOP (delphi-1)             │
+        │              │                                               │
+        │  Discord DM  │   ┌──────────────┐      ┌──────────────────┐   │
+        ├─────────────►│   │   Surface     │      │   Scheduler      │   │
+        │              │   │  (Discord)    │      │  (cron-pumped)   │   │
+        │              │   └──────┬───────┘      └────────┬─────────┘   │
+        │              │          │  events               │ wakes       │
+        │              │          ▼                       ▼             │
+        │              │   ┌──────────────────────────────────────┐     │
+        │  tailnet     │   │            TURN ENGINE (loop)        │     │
+        │  (Serve)     │   │  context ▸ model ▸ tools ▸ output     │     │
+        ├─────────────►│   └───┬───────┬────────┬────────┬────────┘     │
+        │  dashboard   │       │       │        │        │              │
+        │              │       ▼       ▼        ▼        ▼              │
+        │              │  ┌────────┐┌────────┐┌────────┐┌─────────────┐ │
+        │              │  │ Model  ││ Tools  ││Approval││ Capability  │ │
+        │              │  │ client ││(prims) ││middle- ││ substrate   │ │
+        │              │  │        ││        ││ware    ││ (author/run)│ │
+        │              │  └───┬────┘└────────┘└────────┘└──────┬──────┘ │
+        │              │      │            │                  │        │
+        │              │      ▼            ▼                  ▼        │
+        │              │  ┌──────────────────────────────────────────┐ │
+        │              │  │   Memory · Grants · Registry · Secrets   │ │
+        │              │  └──────────────────────────────────────────┘ │
+        │              └───────────────────────────────────────────────┘
+        │                                      │
+        │                                      │ (egress, approval-gated)
+        ▼                                      ▼
+   Phone (Taildrop/Tailscale)          NIM · Z.ai · local runner
+```
+
+**Trust boundary:** the laptop. Everything inside is `trusted_owner` or `local_derived`; anything crossing outward is `untrusted_source` on return and is quarantined until re-derived.
+
+---
+
+## 4. Component map
+
+| Component | Responsibility | Key interface |
+| --- | --- | --- |
+| **Surface (Discord)** | Receive DMs/threads, stream replies, surface approvals as buttons | `Surface` port: `recv() → event`, `send(msg)`, `present(approval)` |
+| **Scheduler** | Trigger wakes and run authored capabilities on a period | `dispatch_tick()`; `agent_wakes` table |
+| **Turn engine** | Assemble context, drive model↔tool loop, emit output | `run_turn(event) → TurnResult` |
+| **Model client** | One OpenAI-compatible client, provider chain, local fallback | `chat(msgs, tools) → stream` |
+| **Rate-limit ledger** | Cross-process rolling-window accounting | SQLite `ratelimit.db` |
+| **Tools (primitives)** | The 11 irreducible capabilities | `Tool` protocol (name · schema · risk · `call`) |
+| **Approval middleware** | Tiering, standing grants, sink checks, action binding | `authorize(tool, args, provenance) → allow/ask/block` |
+| **Secrets** | Scoped credential access, never logged | `get(resource) → value` |
+| **Capability substrate** | Author · verify · register · run authored capabilities | `author()`, `registry`, `runner` |
+| **Resource registry** | Declarative external access (CLIs/APIs/devices) | `registry.toml` + provisioning |
+| **Memory** | File-first facts + SQLite recall index | `write(entry)`, `recall(query)` |
+| **Calendar & integrations** | Internal calendar store + `gcal` (read-all / write-own) + read-only mail | store API, `sync()` |
+| **Setup wizard** | First-run provisioning, hardening, and the self-test | `scripts/setup.sh` ⟷ `daedalus selftest` |
+| **Cabinet** | Seat identities, charters, namespaces, seat↔seat protocol | `Seat`, `Broker.send(msg)` |
+| **Generative UI** | Compose UI spec, bind values locally, render, serve, tune | `render(context)`, control API |
+| **Security spine** | Provenance labels, sink policy, quarantine | predicates used by middleware |
+
+---
+
+## 5. Repository & package layout
+
+```
+daedalus/                      # code repo
+  pyproject.toml
+  SPEC.md  ARCHITECTURE.md  AGENTS.md  CHANGELOG.md
+  scripts/setup.sh           # first-run wizard (template.sh-based)
+  src/daedalus/
+    main.py                    # entrypoint: bootstrap + run daemon
+    config.py                  # settings, tiers, paths
+    loop/
+      engine.py                # turn engine
+      context.py               # context assembly
+    model/
+      client.py                # OpenAI-compatible base_url client
+      providers.py             # NIM chain, z.ai, local runner
+      ratelimit.py             # SQLite ledger
+      routing.py               # heavy vs cheap (Bonsai)
+    tools/
+      base.py registry.py
+      shell.py code.py files.py http.py browser.py search.py
+      schedule.py process.py memory.py discord.py ask.py secrets.py
+    approvals/
+      middleware.py grants.py risk.py
+    capabilities/
+      authoring.py manifest.py runner.py registry.py verify.py
+    resources/
+      registry.py provisioning.py
+    memory/
+      store.py index.py schema.py facets.py
+    scheduler/
+      scheduler.py jobs.py wakes.py
+    surface/
+      discord/ bot.py dm.py approvals.py threads.py
+    cabinet/
+      seat.py namespace.py protocol.py broker.py seats/
+    genui/
+      spec.py components/ renderer.py theming.py server.py tuners.py
+    security/
+      provenance.py sink.py quarantine.py
+    integrations/
+      gcal.py mail.py calendar_sync.py
+    storage/
+      paths.py
+    selftest.py                # end-to-end verification (setup + health)
+
+$DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
+  config.toml  .env
+  memory/       facets/*.md  index.sqlite
+  calendar/     events.ics  index.sqlite  sync_state.json
+  capabilities/ <name>/{run.py, manifest.toml, README.md, state/, .venv/}
+  resources/    registry.toml  creds/            # creds encrypted, scoped
+  cabinet/      seats/*.toml  messages.db        # typed protocol log
+  genui/        components/  tokens/  drafts/
+  approvals/    grants.toml  log.db
+  state/        wakes.db  ratelimit.db
+  ui/                                        # generated dashboards (served)
+  logs/                                      # journald mirrors
+```
+
+**Rule:** the repo holds code; `$DAEDALUS_HOME` holds state. Code is versioned; state is owned by the owner and editable by hand.
+
+---
+
+## 6. Runtime & process model
+
+- **Daemon** — `daedalus.service` (systemd `--user`, `enable-linger`). Lightweight, always connected to Discord so DMs land; does **no idle reasoning on battery**.
+- **Scheduler** — `daedalus-tick.timer` fires every N minutes → `dispatch_tick()` drains due wakes/jobs. Cron-pumped, not a polling thread.
+- **Capabilities** — spawned as **child processes**, each in its own uv venv, resource-capped, killed on timeout.
+- **Power profiles** — AC: up to 3 workers, idle reasoning allowed. Battery: 1 worker, no idle reasoning.
+- **Suspend** — sleep ⇒ no work; on resume ⇒ a single **wake digest** (missed wakes coalesced; no duplicate external side effects).
+- **Lid closed ⇒ stays awake** (`logind`), so remote access and overnight work survive.
+- **Logging** — structured logs to journald; per-capability audit log in `state/`.
+- **Self-test** — `daedalus selftest` runs the end-to-end verification the setup wizard ends on (§7.7).
+
+---
+
+## 7. Core flows
+
+### 7.1 Inbound turn
+
+```
+Discord DM ─▶ Surface.recv ─▶ Engine.run_turn(event)
+  1. resolve surface + active seat identity → charter
+  2. assemble context:
+       charter + memory recall + capability inventory
+       + resource inventory + thread history + tool schemas
+  3. model.chat(...)                       [routed: heavy | cheap | local]
+  4. while tool calls returned:
+       approvals.authorize(tool, args, provenance) → allow ▸ run
+                                                   → ask   ▸ present, park
+                                                   → block ▸ refuse
+       append results; model.chat(...)
+  5. emit output ▸ Surface.send        (message | file | serve | push)
+  6. write memory candidates; schedule follow-ups; close turn
+```
+
+### 7.2 Capability authoring (the tool-making flow)
+
+```
+request (free text)
+  1. Engine detects a recurring/reusable need
+  2. Model authors  run.py + manifest.toml + README.md  in genui-agnostic scratch
+  3. Melinoë gate: run once in the capability's venv
+       checks:  output shape · side effects · declared-scope compliance
+  4. if the manifest needs egress ▸ owner approves (Discord button) → standing grant
+       else ▸ registered directly
+  5. registry.register()  ·  inventory refreshed
+  6. if manifest.schedule set ▸ scheduler.jobs.add()
+```
+
+### 7.3 Scheduled capability run (no model in the loop)
+
+```
+daedalus-tick.timer ─▶ dispatch_tick ─▶ due job
+  1. runner.spawn(capability)            → child process, own venv, caps
+  2. run.py reads JSON context on stdin, writes JSON result on stdout
+  3. runner records result + state/ checkpoint
+  4. if result is notifiable: model composes the *message* (structure only)
+  5. output ▸ Surface (message | push)
+```
+
+The artifact is deterministic; the model authored it once. Notification composition is the only optional model step.
+
+### 7.4 Dashboard render, approve, tune
+
+```
+GET /dashboard ─▶ genui.render(context)
+  1. gather context signals locally (time, calendar, activity, power, body…)
+  2. model composes *structure* (components, layout, keys) — never values
+  3. renderer binds local values + applies mood→token set
+  4. emit self-contained HTML ▸ serve loopback ▸ tailscale serve
+POST /tune  ─▶ tuners.set(pending)   (palette/density/motion/type + system knobs)
+POST /approve ─▶ tokens.commit(pending)   ▸ owner-approved store
+POST /action ─▶ approvals route (visual actions vs. Discord split)
+```
+
+### 7.5 Seat-to-seat collaboration
+
+Seats communicate over the **typed durable protocol** (§9.2) via the broker; messages persist in `cabinet/messages.db`. Example: `Icarus → Melinoë (verify) → Icarus (result) → Daedalus (summary)`. Deterministic code owns correlation, dedup, and delivery.
+
+### 7.6 Calendar sync
+
+```
+wake | cadence ─▶ calendar_sync
+  1. pull:  gcal changes since sync_state.cursor  →  external calendars (gcal-authoritative)
+             →  mirror into the internal store (read cache)
+  2. push:  local changes on the `Daedalus` calendar (internal-authoritative)
+             →  gcal events (create/update/delete, tombstones applied)
+  3. write sync_state.cursor
+```
+
+Writes to gcal are **egress actions** behind a standing grant scoped to the `Daedalus` calendar. The dashboard reads and edits the **internal** store directly.
+
+### 7.7 First-run setup
+
+```
+scripts/setup.sh  (bash wizard, template.sh-based)
+  1–11  provision: preflight · layout · secrets · owner · models · runner
+                  · discord · resources · trust · runtime · hardening
+  12    verify:  daedalus selftest
+                  → model · discord · memory · capability + Melinoë gate
+                  · scheduler · dashboard · calendar (if configured)
+  13    handoff
+```
+
+The wizard is the **owner-driven provisioning surface**: every secret enters through hidden prompts and lands in the encrypted store / `.env`; every resource is granted here, or later conversationally by re-running the same stages. It is idempotent and re-runnable (repair mode), and **stage 12 fails loudly** — success is never claimed with a red item.
+
+---
+
+## 8. Data model
+
+### 8.1 Memory entry
+
+```
+id            ULID
+facet         one of the modeled facets (§SPEC 5)
+content       text
+source_ref    pointer to origin (message id / file / url)
+origin        provenance label: trusted_owner | local_derived | untrusted_source
+confidence    0.0–1.0
+valid_from    timestamp
+valid_to      timestamp | null      # bitemporal
+superseded_by id | null
+created_at    timestamp
+```
+
+Store: `memory/facets/<facet>.md` (readable) + `memory/index.sqlite` (FTS5; optional embeddings column).
+
+### 8.2 Capability manifest (`manifest.toml`)
+
+```
+name, version, description
+entry        = "run.py"
+io           = { input_schema, output_schema }
+deps         = ["..."]              # materialised into the capability's venv
+schedule     = "cron | null"
+scopes       = { net = [...], fs = [...], secrets = [...] }   # the leash
+caps         = { cpu, mem_mb, time_s }
+trust_tier   = auto | ask | block
+owner_approved_at = timestamp | null
+```
+
+### 8.3 Resource (`registry.toml`)
+
+```
+[[resource]]
+name     = "gmail"
+class    = "remote_api | local_cli | device"
+access   = "oauth | token | local"
+scopes   = [...]
+cred_ref = "creds/gmail"           # encrypted at rest
+added_at = timestamp
+```
+
+### 8.4 UI spec (declarative, model-authored)
+
+```
+{ "theme": "<token-set-id>",
+  "layout": [ { "component": "stat-card", "key": "cp.rating", "span": 2 }, … ],
+  "bindings": { "<key>": "<local-value-resolver-id>" } }   # keys only; values bound locally
+```
+
+### 8.5 Other stores
+
+- `approvals/grants.toml` — standing grants (action-hash, scope, expiry).
+- `approvals/log.db` — every authorize decision.
+- `state/wakes.db` — `agent_wakes` + job state (idempotency keys).
+- `state/ratelimit.db` — rolling-window provider accounting.
+- `cabinet/messages.db` — typed seat messages.
+- `calendar/` — `events.ics` (the `Daedalus` calendar, internal-authoritative) + `index.sqlite` + `sync_state.json` (gcal cursor/token); reads from other calendars are cached with their gcal-authoritative origin.
+
+---
+
+## 9. Interfaces & protocols
+
+### 9.1 Tool protocol
+
+```
+Tool:
+  name: str
+  schema: JSONSchema          # args
+  risk: auto | ask | block
+  scopes: {net, fs, secrets}
+  async call(args, ctx) -> Result
+```
+
+The model sees only `name + schema + description`. Risk, scopes, and authorization are **invisible to the model** and enforced by the middleware.
+
+### 9.2 Seat message protocol
+
+```
+{ id, correlation_id, causation_id, from, to, type, payload, created_at }
+type ∈ request | ack | partial | result | verify | failure | cancel
+```
+
+**At-least-once with dedup** (never exactly-once). Deterministic broker owns ordering, retries, and delivery; seats own semantics.
+
+### 9.3 Capability run protocol
+
+Process boundary, JSON in / JSON out:
+
+```
+stdin  : { args, context, state }
+stdout : { result, state_next, notifications[] }
+exit   : 0 ok | non-zero ⇒ failure recorded, monitored
+```
+
+Isolation is by process + venv + resource caps; the manifest declares the only scopes available.
+
+### 9.4 Model client
+
+```
+chat(messages, tools, stream=True) -> Stream[Delta]
+route:  heavy (NIM glm-5-3 → glm-4.7 → minimax → kimi)
+      | cheap (Bonsai 8B, local)
+      | forbidden-for-local-only (refuse remote when provenance = local_only)
+```
+
+### 9.5 Dashboard control API (loopback only, tailnet-authenticated)
+
+```
+GET  /dashboard          → HTML (generated)
+GET  /draft/<id>         → live preview of a pending theme/component
+POST /tune               → set pending token/knob values
+POST /approve            → commit pending → owner-approved store
+POST /action             → route an action through the approval split
+```
+
+---
+
+## 10. Security architecture
+
+**Provenance flow.** Every value carries a label. Trusted work is `trusted_owner` or `local_derived`; anything fetched is `untrusted_source`.
+
+```
+untrusted_source ─▶ quarantine.read ─▶ local_derived (may inform a draft)
+                                        ╳  may NOT authorize recipient/URL/command/scope
+```
+
+**Sink policy.** The egress sink checks the provenance of the *authorizing* value, not just the payload: untrusted text can shape content but can never set a recipient, URL, command, or scope. This is the same rule the Generative UI uses (*structure remote, values local*).
+
+**Approval split.**
+
+- **Action** approvals (egress, purchases, irreversible ops) → **Discord buttons**.
+- **Visual** approvals (themes, components, dashboards) → **on the artifact** in the dashboard.
+- Approvals bound to **action hash + scope + expiry + idempotency**.
+
+**Restraint rules** (`SPEC.md` §6, `AGENTS.md`): reach narrow; personal data out of bounds; bytes stay home; structure travels, values stay local.
+
+**Secrets.** Stored encrypted under `resources/creds/`, accessed only through the `secrets` tool, scoped per resource, never logged, never sent to a remote model, never on Discord.
+
+---
+
+## 11. Capability substrate details
+
+- **Registry** — the set of authored capabilities, listed to the model at startup (name · description · io · schedule). File-first; hand-editable.
+- **Runner** — spawns `run.py` in the capability's uv venv with declared scopes and caps; owns timeout, kill switch, and audit record.
+- **Authoring** — the model writes the artifact; the *engine* owns registration and gating. No hand-coded feature may be required to satisfy a request.
+- **Lifecycle** — `born → verified → scheduled → monitored → re-authored | killed`. Daedalus audits capabilities like projects.
+- **Growth** — proposals only; authoring requires an explicit owner yes. Never autonomous.
+
+**The invariant:** any request resolves to a new **capability** (logic), a new **resource** (access), or — rarely — a new **primitive**. Never a hand-coded feature.
+
+---
+
+## 12. Generative UI subsystem
+
+- **Spec (model-authored)** — components + layout + keys. No markup, no values.
+- **Component registry** — bounded and **extensible**; a component is itself an authored capability, verified before use.
+- **Theming engine** — `mood + context → validated token set` (palette/type/density/motion). Owner-approved; overridable.
+- **Renderer** — spec + locally-bound values + token set → **self-contained HTML/CSS** (sanitized). The model never emits markup.
+- **Server** — loopback HTTP, published via **Tailscale Serve** (no Funnel); output also pushable via Taildrop.
+- **Control surface** — tuners for both presentation and system knobs; `approve` commits to the owner-approved store.
+- **Calendar view** — a full day / week / month calendar over the **internal** store, used the way gcal is used (create / edit / delete), with edits routed through the approval split.
+
+---
+
+## 13. Failure modes & recovery
+
+| Failure | Handling |
+| --- | --- |
+| Provider outage / rate limit | fall through NIM chain → z.ai → **Bonsai 8B local**; ledger enforces the rolling window |
+| Capability breaks (site change) | monitor detects bad output → mark stale → model **re-authors** → re-verify |
+| Laptop slept through a wake | wakes coalesce into a single **resume digest**; idempotency keys prevent duplicate side effects |
+| Egress denied | action parked as a proposal; surfaced as a button; never silently dropped |
+| Untrusted content tries to act | sink policy blocks authorization; content quarantined to `local_derived` |
+| Capability runaway | resource caps + timeout + kill switch; audit record written |
+| Secrets leak attempt | `secrets` tool refuses outbound embedding; bytes-stay-home predicate halts the action |
+
+---
+
+## 14. Extension points
+
+Every extension lands at a single seam, in this order of preference:
+
+1. **New capability** — author a script (most requests).
+2. **New resource** — provision access (one-time, owner-driven).
+3. **New component / token** — extend the UI vocabulary (owner-approved).
+4. **New primitive** — only if irreducible; a new `Tool` implementation + schema.
+5. **New seat** — a charter + memory namespace over the existing loop.
+
+Adding any of 1–5 must **not** require editing the loop.
+
+---
+
+## 15. Phasing
+
+| Phase | Delivers | Components touched |
+| --- | --- | --- |
+| **P0** | the loop + substrate + proof-of-life | engine, model client, primitives, approvals, Discord surface, capability substrate, memory v0, scheduler v0, Melinoë gate |
+| P1 | memory depth | `memory/*` |
+| P2 | proactive scheduler | `scheduler/*` |
+| P3 | seats, one at a time | `cabinet/*` |
+| P4 | remote / Tailscale Serve | `genui/server.py`, `surface/*` |
+| P5 | OpenCode delegation | `resources` (local CLI), `capabilities` |
+| P6 | group chat | `cabinet/broker.py` |
+
+---
+
+## 16. Open questions
+
+Tracked in `SPEC.md` §13 (runner for Bonsai 1-bit, embedding choice, manifest schema, resource provisioning flow, browser choice, GenUI spec schema, mood→token mapping, regeneration trigger, tuner set, `process` supervision). No architectural decisions are left open — they are implementation details behind the interfaces above.

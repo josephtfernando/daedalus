@@ -1,0 +1,107 @@
+"""Scheduled jobs — file-first, hand-editable (ARCHITECTURE §8.5)."""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+import tomli_w
+import tomllib
+
+from . import cron
+
+
+@dataclass(slots=True)
+class Job:
+    name: str
+    cron: str
+    kind: str = "capability"  # capability | wake
+    target: str = ""
+    enabled: bool = True
+    last_run: float | None = None
+    created_at: float = field(default_factory=time.time)
+
+    def next_run(self) -> datetime | None:
+        base = datetime.fromtimestamp(self.last_run) if self.last_run else datetime.now()
+        return cron.next_run(self.cron, base)
+
+    def next_run_text(self) -> str:
+        nxt = self.next_run()
+        return nxt.strftime("%Y-%m-%d %H:%M") if nxt else "never"
+
+    def due(self, when: datetime | None = None) -> bool:
+        when = when or datetime.now()
+        if not self.enabled:
+            return False
+        if not cron.matches(self.cron, when):
+            return False
+        if self.last_run is not None:
+            return datetime.fromtimestamp(self.last_run) < when.replace(second=0, microsecond=0)
+        return True
+
+    def idempotency_key(self, when: datetime | None = None) -> str:
+        when = when or datetime.now()
+        return f"{self.name}:{when.strftime('%Y%m%dT%H%M')}"
+
+
+class JobStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._jobs: dict[str, Job] = {}
+        self.load()
+
+    def load(self) -> None:
+        self._jobs = {}
+        if not self.path.exists():
+            return
+        data = tomllib.loads(self.path.read_text(encoding="utf-8"))
+        for row in data.get("job", []):
+            job = Job(
+                name=str(row.get("name", "")),
+                cron=str(row.get("cron", "")),
+                kind=str(row.get("kind", "capability")),
+                target=str(row.get("target", "")),
+                enabled=bool(row.get("enabled", True)),
+                last_run=row.get("last_run"),
+                created_at=float(row.get("created_at", time.time())),
+            )
+            if job.name:
+                self._jobs[job.name] = job
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "job": [
+                {
+                    "name": j.name,
+                    "cron": j.cron,
+                    "kind": j.kind,
+                    "target": j.target,
+                    "enabled": j.enabled,
+                    "created_at": j.created_at,
+                    **({"last_run": j.last_run} if j.last_run is not None else {}),
+                }
+                for j in self._jobs.values()
+            ]
+        }
+        self.path.write_text(tomli_w.dumps(payload), encoding="utf-8")
+
+    def all(self) -> list[Job]:
+        return list(self._jobs.values())
+
+    def get(self, name: str) -> Job | None:
+        return self._jobs.get(name)
+
+    def put(self, job: Job) -> Job:
+        self._jobs[job.name] = job
+        self.save()
+        return job
+
+    def remove(self, name: str) -> bool:
+        if name in self._jobs:
+            del self._jobs[name]
+            self.save()
+            return True
+        return False

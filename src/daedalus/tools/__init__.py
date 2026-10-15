@@ -1,0 +1,42 @@
+"""Primitives (Layer 1) and the registry builder."""
+
+from .base import Tool, ToolResult
+from .registry import ToolRegistry
+
+__all__ = ["Tool", "ToolResult", "ToolRegistry", "build_registry"]
+
+
+def build_registry() -> ToolRegistry:
+    """Register the primitives. Adding a primitive must not touch the loop."""
+    from .ask import AskTool
+    from .browser import BrowserTool
+    from .capability import CapabilityTool
+    from .code import CodeTool
+    from .discord import DiscordTool
+    from .files import FilesTool
+    from .http import HttpTool
+    from .memory import MemoryTool
+    from .process import ProcessTool
+    from .schedule import ScheduleTool
+    from .search import SearchTool
+    from .secrets import SecretsTool
+    from .shell import ShellTool
+
+    registry = ToolRegistry()
+    for tool in (
+        FilesTool(),
+        ShellTool(),
+        CodeTool(),
+        HttpTool(),
+        SearchTool(),
+        BrowserTool(),
+        ProcessTool(),
+        MemoryTool(),
+        ScheduleTool(),
+        DiscordTool(),
+        AskTool(),
+        SecretsTool(),
+        CapabilityTool(),
+    ):
+        registry.register(tool)
+    return registry
