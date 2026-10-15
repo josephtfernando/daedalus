@@ -19,11 +19,16 @@
 # Deviations from the stage list, all deliberate:
 #   · The secret-store DIR is created 0700, not 0600. A directory needs the
 #     execute bit to be traversable, so 0600 would make the store unreadable by
-#     Daedalus itself. Files inside it are 0600. $DAEDALUS_HOME and .env are
-#     asserted at 0700 / 0600 exactly as specified.
-#   · Stage 10 also writes daedalus-tick.service: a systemd timer must name a
-#     unit to run, and the timer's command cannot live in the .timer file. It
-#     invokes `daedalus tick`, which is not one of the four pinned CLI verbs.
+#     Daedalus itself; the product's own SecretStore also uses 0700 for
+#     resources/ and resources/creds/. Files inside it are 0600, and
+#     $DAEDALUS_HOME (0700) and .env (0600) are asserted as specified.
+#   · Stage 10 installs exactly the two named units. The runtime pumps its tick
+#     in-process, so daedalus-tick.timer wakes daedalus.service (Persistent, no
+#     separate tick service) rather than inventing a CLI verb beyond the pinned
+#     `selftest` / `run` / `ask` / `version`.
+#   · The master key is written where the runtime reads it —
+#     $DAEDALUS_HOME/resources/master.key, Fernet-shaped — so the product adopts
+#     it instead of minting a second one.
 #   · Stage 11 reports the SPEC extras (quarantine, dashboard loopback +
 #     Tailscale Serve) as advisory, never as passes, because nothing exists to
 #     assert yet in P0.
@@ -236,6 +241,7 @@ export DAEDALUS_HOME
 ENV_FILE="$DAEDALUS_HOME/.env"                        # library reads this at call time
 CONFIG_FILE="$DAEDALUS_HOME/config.toml"
 CREDS_DIR="$DAEDALUS_HOME/resources/creds"
+KEY_FILE="$DAEDALUS_HOME/resources/master.key"
 REGISTRY_FILE="$DAEDALUS_HOME/resources/registry.toml"
 UNITS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SELFTEST_LOG="$DAEDALUS_HOME/logs/selftest.log"
@@ -568,22 +574,26 @@ pause "Continue?"
 stage "Secrets — encrypted store and file modes"
 say "Secrets enter here and nowhere else; nothing is ever echoed (SPEC §3.6, §6)."
 
-mkdir -p "$CREDS_DIR"
-chmod 700 "$CREDS_DIR"          # a directory needs +x to be traversable
+RESOURCES_DIR="$DAEDALUS_HOME/resources"
+mkdir -p "$RESOURCES_DIR" "$CREDS_DIR"
+chmod 700 "$RESOURCES_DIR" "$CREDS_DIR"   # a directory needs +x to be traversable
 touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 ok "$ENV_FILE is 0600"
 kv "store" "$CREDS_DIR (0700)"
 
-if [[ -f "$CREDS_DIR/master.key" ]]; then
-  ok "master key already present — kept"
+# The key the runtime reads is $DAEDALUS_HOME/resources/master.key (0600), a
+# Fernet key: url-safe base64 of 32 random bytes. Minting it here means the
+# product adopts it on first use instead of generating its own behind our back.
+if [[ -f "$KEY_FILE" ]]; then
+  ok "master key already present — kept (never printed)"
 else
-  head -c 32 /dev/urandom | base64 | tr -d '\n' > "$CREDS_DIR/master.key"
-  chmod 600 "$CREDS_DIR/master.key"
-  ok "generated the store master key (0600, never printed)"
+  python3 -c 'import base64,os,sys;sys.stdout.write(base64.urlsafe_b64encode(os.urandom(32)).decode())' > "$KEY_FILE"
+  chmod 600 "$KEY_FILE"
+  ok "generated resources/master.key (0600, never printed)"
 fi
-note "store cipher: the 32-byte key is materialised now; the secrets tool that"
-note "seals per-resource blobs lands with P0, so the key never has to move."
+note "the key seals per-resource blobs under resources/creds; values are only"
+note "ever read back through the secrets tool (SPEC §3.6)."
 pause "Continue?"
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -831,33 +841,24 @@ StandardError=journal
 WantedBy=default.target
 UNIT
 
-# A timer needs a unit to trigger; this is the cron-pumped tick (ARCHITECTURE §6).
-cat > "$UNITS_DIR/daedalus-tick.service" <<UNIT
-[Unit]
-Description=Daedalus scheduler tick (drains due wakes and jobs once)
-After=daedalus.service
-
-[Service]
-Type=oneshot
-WorkingDirectory=$ROOT_DIR
-Environment=DAEDALUS_HOME=$DAEDALUS_HOME
-ExecStart=$UV_CMD run daedalus tick
-UNIT
-
+# A timer needs a unit to trigger, and the runtime pumps its own tick inside
+# `run`; so the timer wakes the daemon (Persistent=true, so a missed window
+# fires once at login) rather than inventing a CLI verb for a one-shot tick.
 cat > "$UNITS_DIR/daedalus-tick.timer" <<UNIT
 [Unit]
-Description=Daedalus scheduler tick (cron-pumped, not a polling thread)
+Description=Daedalus scheduler tick — wakes the daemon to drain due wakes
 
 [Timer]
 OnCalendar=*:0/5
 Persistent=true
 AccuracySec=30s
+Unit=daedalus.service
 
 [Install]
 WantedBy=timers.target
 UNIT
 
-ok "wrote daedalus.service, daedalus-tick.service, daedalus-tick.timer"
+ok "wrote daedalus.service and daedalus-tick.timer"
 kv "units" "$UNITS_DIR"
 
 if systemctl --user show-environment >/dev/null 2>&1; then
@@ -987,24 +988,47 @@ else
   exit 1
 fi
 
-say "daedalus selftest  (model · discord · memory · capability + Melinoë gate ·"
-say "                    scheduler · dashboard · calendar if configured)"
+say "daedalus selftest  (layout · secrets · memory · approvals · capability +"
+say "                    Melinoë gate · scheduler tick · the loop)"
 set +e
 (cd "$ROOT_DIR" && "$UV_CMD" run daedalus selftest) 2>&1 | tee "$SELFTEST_LOG"
 selftest_rc="${PIPESTATUS[0]}"
 set -e
 
-ver_out="$( (cd "$ROOT_DIR" && "$UV_CMD" run daedalus version) 2>/dev/null || true)"
-[[ -n "$ver_out" ]] && kv "version" "$ver_out"
-
 if (( selftest_rc == 0 )); then
-  ok "selftest is green"
+  ok "offline selftest is green"
 else
   printf '\n'
   bad "selftest exited $selftest_rc — the failures are above and in $SELFTEST_LOG"
   RUN_OK=0
   SETUP_FAIL+=("daedalus selftest exited $selftest_rc (log: $SELFTEST_LOG)")
 fi
+
+# SPEC §8.5 stage 12 lists a model probe. The product gates it behind --live,
+# so run it whenever a heavy key is configured: this is the one check that
+# proves the keys actually reach the providers.
+if [[ -n "$(_existing NVIDIA_API_KEY || true)$(_existing ZAI_API_KEY || true)" ]]; then
+  say "selftest --live  (probes the configured providers; may take a minute)"
+  set +e
+  (cd "$ROOT_DIR" && "$UV_CMD" run daedalus selftest --live) 2>&1 | tee -a "$SELFTEST_LOG"
+  live_rc="${PIPESTATUS[0]}"
+  set -e
+  if (( live_rc == 0 )); then
+    ok "live model probe is green"
+  else
+    bad "live model probe exited $live_rc — a configured key did not reach its provider"
+    RUN_OK=0
+    SETUP_FAIL+=("selftest --live exited $live_rc (log: $SELFTEST_LOG)")
+  fi
+else
+  note "no provider key configured, so the live model probe is skipped"
+fi
+
+ver_out="$( (cd "$ROOT_DIR" && "$UV_CMD" run daedalus version) 2>/dev/null || true)"
+[[ -n "$ver_out" ]] && kv "version" "$ver_out"
+
+note "the Discord round-trip in the spec's checklist is proven by your first"
+note "DM to the bot (stage 13) — the loop is already verified offline above."
 pause "Continue?"
 
 # ══════════════════════════════════════════════════════════════════════════
