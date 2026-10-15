@@ -183,8 +183,10 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
 
 - **Primary:** NVIDIA NIM free tier, model-agnostic behind one OpenAI-compatible `base_url`.
   Fallback chain, **as verified against the live catalogue during P0**:
-  **`z-ai/glm-5.3-flash` → `stepfun-ai/step-5-preview` → Z.ai `glm-4.7-flash` → Z.ai `glm-4.5-flash`**.
-  Both NIM entries were confirmed to return text *and* well-formed tool calls.
+  **`stepfun-ai/step-5-preview` → `z-ai/glm-5.3-flash` → Z.ai `glm-4.7-flash` → Z.ai `glm-4.5-flash`**.
+  Both NIM entries were confirmed to return text *and* well-formed tool calls; the **fastest entry is
+  first**, because a cold primary that stalls is worse than a warm fallback, and each entry carries a
+  **60s stall ceiling** (`timeout_s`) — the client streams, so this bounds silence, not answer length.
   *Superseded:* the earlier shorthand `glm-5-3 → glm-4.7 → minimax → kimi` named models that do not
   exist — `glm-4.7` and `minimax` are absent from the catalogue, `moonshotai/kimi-k2.6` is listed but
   answers 404, and `z-ai/glm-5.3` (non-flash) does not answer within a useful timeout.

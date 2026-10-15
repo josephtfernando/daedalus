@@ -91,7 +91,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     engine = Engine(rt)
 
     async def handler(event: InboundEvent) -> None:
-        result = await engine.run_turn(event)
+        # The typing indicator is held for the work, not for the send: sending
+        # the reply clears it, so it never lingers past the answer.
+        async with surface.working(event.channel_id):
+            result = await engine.run_turn(event)
         if result.text:
             await rt.surface.send(result.text)  # type: ignore[union-attr]
 

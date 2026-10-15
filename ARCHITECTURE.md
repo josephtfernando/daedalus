@@ -364,8 +364,8 @@ Isolation is by process + venv + resource caps; the manifest declares the only s
 
 ```
 chat(messages, tools, stream=True) -> Stream[Delta]
-route:  heavy (NIM z-ai/glm-5.3-flash → stepfun-ai/step-5-preview
-              → Z.ai glm-4.7-flash → glm-4.5-flash)
+route:  heavy (NIM stepfun-ai/step-5-preview → z-ai/glm-5.3-flash
+              → Z.ai glm-4.7-flash → glm-4.5-flash, 60s stall ceiling each)
       | cheap (Bonsai 8B, local)
       | forbidden-for-local-only (refuse remote when provenance = local_only)
 ```

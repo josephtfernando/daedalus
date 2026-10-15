@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (8/8 offline, 9/9 with `--live`) and a 44-test suite. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
+_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (8/8 offline, 9/9 with `--live`) and a 52-test suite. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
 
 ### Added
 
@@ -29,7 +29,7 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   - **Secrets** — an encrypted credential store (Fernet, per-install master key at `0600`) and a **bytes-stay-home** guard that blocks any outbound request whose body carries a provisioned secret value.
   - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · a full free-text turn · and **the daemon lifecycle**, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
   - **Setup wizard (code)** — `scripts/setup.sh`: the `template.sh` library **vendored verbatim** from the `wizard` skill (every line from `set -euo pipefail` through the `STAGES` marker byte-identical), with the 13 stages authored below it, plus `-y/--yes` and `--non-interactive` modes. Deliberate deviations from the §8.5 stage list, each because the runtime disagreed with the prose: the secret-store **directory** is `0700` (a directory needs `+x` to be traversable; the files inside stay `0600`), the master key sits at `resources/master.key` because that is where `SecretStore` reads it, stage 10 installs only the two named units (the runtime pumps ticks **in-process**, so the timer triggers `daedalus.service` with `Persistent=true` rather than inventing a `tick` verb), and stage 12 runs `selftest --live` when a heavy key is configured. Nothing from the wizard is written to CI — no secret leaves the machine.
-  - **Tests** — 44 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, the secret store, the daemon lifecycle, and the self-test's own isolation guarantee.
+  - **Tests** — 52 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
 
 - **`SPEC.md`** — the requirements and design source of truth. Covers purpose, design principles, the harness/stack decision, the capability substrate, Generative UI, the model stack, memory, trust & safety, the cabinet, runtime, the Discord surface, phases, the P0 definition and build order, reconciliation notes, and open implementation details.
 - **`ARCHITECTURE.md`** — the build-level companion: system context, component map, repository and package layout, runtime & process model, the five core flows, the data model, the interface/protocol contracts, the security architecture, failure modes, extension points, and the phase map.
@@ -55,13 +55,42 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **Typed durable seat protocol** — `request / ack / partial / result / verify / failure / cancel` with correlation/causation IDs; at-least-once with dedup.
 - **Runtime & process model** — systemd `--user`, `enable-linger`, journald, a cron-pumped scheduler, capabilities as capped child processes, AC/battery power profiles, sleep→resume digest, lid-closed awake.
 - **Discord surface** — one bot, DM-first, free-text, buttons for approvals, long tasks in threads.
-- **Model stack** — NVIDIA NIM free tier behind one OpenAI-compatible `base_url` with fallback `z-ai/glm-5.3-flash → stepfun-ai/step-5-preview → Z.ai glm-4.7-flash → glm-4.5-flash`; Z.ai direct as a second free stack; **Bonsai 8B (1-bit)** local for offline fallback and cheap tasks.
+- **Model stack** — NVIDIA NIM free tier behind one OpenAI-compatible `base_url` with fallback `stepfun-ai/step-5-preview → z-ai/glm-5.3-flash → Z.ai glm-4.7-flash → glm-4.5-flash`, fastest first, 60s stall ceiling each; Z.ai direct as a second free stack; **Bonsai 8B (1-bit)** local for offline fallback and cheap tasks.
 - **Interface decisions** — output modes (`message` · `file` · `serve` · `push`); the MCP seam (consume external servers, expose the capability registry) as a forward path, not a P0 build.
 - **Phases** — P0 (loop + substrate + proof-of-life) through P6 (group chat), with seats introduced one at a time.
 - **P0 definition** — the unseen free-text request, completed end-to-end with nothing hardcoded; the substrate is in P0 because the proof-of-life cannot happen without it.
 
 ### Changed
 
+- **The model chain now leads with the fastest entry.** Observed live: `z-ai/glm-5.3-flash` cold-starts past
+  its timeout while `stepfun-ai/step-5-preview` answers in ~1.3s warm, so the primary was the *slower*
+  of the two and every cold turn paid a stall before failing over. Order is now
+  `stepfun-ai/step-5-preview → z-ai/glm-5.3-flash → Z.ai glm-4.7-flash → glm-4.5-flash`, and every entry
+  carries an explicit **60s stall ceiling** (`timeout_s`). Because the client streams, that ceiling bounds
+  *silence*, not answer length — a long answer that keeps producing bytes is never cut off. *Supersedes:*
+  the GLM-first order chosen when the chain was first written, which was never measured.
+- **Credentials are adopted into the encrypted store, and the wizard says so.** The wizard instructed the
+  owner to drop the OAuth client JSON at `resources/creds/gcal-client.json` — plaintext at rest, and
+  inconsistent with the resolution actually taken (the credential lives in the Fernet store as
+  `secret:gcal-client`). The resources stage now asks for the downloaded file, **encrypts it into the store
+  and deletes the plaintext copy**, and records `cred_ref = "secret:<name>"` in `registry.toml`. *Supersedes:*
+  the `creds/<name>.json` reference and the "chmod 600 it" instruction, which asked the owner to protect a
+  file the runtime never reads.
+- **The wizard no longer carries a literal copy of the default config.** It emits `config.toml` from
+  `daedalus.config.default_config_toml()` and, if that import fails, **stops and says so** instead of writing
+  a fallback. That fallback had already gone stale twice in one evening — dead model IDs, then a corrected
+  order it did not have — and a wizard that writes a config the runtime has moved past is worse than one that
+  refuses. *Supersedes:* the handwritten heredoc fallback.
+- **Inbound messages are logged; silent drops are over.** A dropped message and a dead daemon were
+  indistinguishable from outside, which cost a real debugging session: the owner's DM produced no log line,
+  no error, and no reply, because it never reached the bot at all. The surface now logs each inbound DM (by
+  **length, never content**), logs *why* a message was dropped (not on the allowlist; not a DM — the surface
+  is DM-first), and at startup **resolves the allowlist** and reports who it will serve, so a wrong owner id
+  is loud instead of invisible. Strangers still get no reply.
+- **A typing indicator is held for the duration of a turn.** A turn can take a minute or more — a cold model,
+  tool calls, an approval round-trip — and the chat showed nothing until the answer arrived. The indicator is
+  held for the *work* and released before the reply is sent, and a typing failure is swallowed: it is
+  cosmetic and must never cost a turn.
 - **Harness:** extending the prior Hermes-based runtime → a **custom standalone harness**. Hermes is divergent from the target and does not fit; the prior `daedalus.md` plan is retained as a deep architecture reference.
 - **Models:** a Nemotron/OpenRouter-based stack → **NIM GLM chain + Z.ai + Bonsai 8B local**. (The prior provider's free-tier daily cap was the root cause of the earlier system's failure; the fix is largely a provider swap.)
 - **Cabinet:** six seats → **eight**, adding **Athena** and **Heracles** and renaming **Orpheus → Calliope**; the original six had no owner for knowledge/coding mastery, the body, or a distinct creative voice.
@@ -97,7 +126,7 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   should: `HTTP 404: 404 page not found` from NIM. Interrogating the catalogue directly showed that
   `glm-4.7` and `minimax` are not in it at all, `moonshotai/kimi-k2.6` is *listed* but answers 404 on
   completion, and `z-ai/glm-5.3` does not answer inside a useful timeout. The chain is now
-  **`z-ai/glm-5.3-flash` → `stepfun-ai/step-5-preview` → Z.ai `glm-4.7-flash` → Z.ai `glm-4.5-flash`**,
+  **`stepfun-ai/step-5-preview` → `z-ai/glm-5.3-flash` → Z.ai `glm-4.7-flash` → Z.ai `glm-4.5-flash`**,
   with the first two confirmed to return text *and* well-formed tool calls, and the Z.ai pair
   confirmed to exist (the spec's `glm-4.7-flash` is real — it simply lives on Z.ai, not NIM).
   The wizard's emergency literal template was carrying the same dead IDs and is corrected with it.

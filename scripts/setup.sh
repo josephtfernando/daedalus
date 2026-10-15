@@ -312,7 +312,18 @@ if (( ! INTERACTIVE )); then
   ask_secret() { _ni_ask "$@"; }
 fi
 
-# ── reporting helpers ─────────────────────────────────────────────────────
+# ask_path VAR "Prompt" — a free-form path prompt. Stays quiet non-interactively
+# rather than warning about a key that has no environment source.
+ask_path() {
+  local var="$1" prompt="$2" input=""
+  if (( INTERACTIVE )); then
+    printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
+    read -r input || true
+  fi
+  printf -v "$var" '%s' "$input"
+}
+
+
 ok()  { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 bad() { printf '  %s✗%s %s\n' "$RED"   "$RESET" "$1"; }
 kv()  { printf '  %s%-24s%s %s\n' "$DIM" "$1" "$RESET" "$2"; }
@@ -382,8 +393,11 @@ toml_set() {
   ' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
 }
 
-# _write_default_config — the canonical default, emitted by the product so the
-# two can never drift; a literal copy is the fallback if the import fails.
+# _write_default_config — the canonical default, emitted by the product itself
+# so the two can never drift. There is deliberately no literal fallback here:
+# a copied model chain went stale twice in one evening (dead model IDs, then a
+# corrected-but-different order), and a wizard that writes a config the runtime
+# has moved past is worse than a wizard that stops and says so.
 _write_default_config() {
   if python3 - "$ROOT_DIR/src" "$CONFIG_FILE" <<'PY' >/dev/null 2>&1
 import sys
@@ -395,35 +409,39 @@ PY
   then
     return 0
   fi
-  cat > "$CONFIG_FILE" <<'TOML'
-# Daedalus configuration. Written by scripts/setup.sh; edit by hand freely.
-# Fallback copy — normally emitted by `daedalus.config.default_config_toml()`.
-# Keep in sync with src/daedalus/config.py (a self-test asserts parity is not
-# possible in bash, so treat this as the emergency path only).
+  bad "could not emit the default config from src/daedalus/config.py"
+  note "the wizard writes config.toml from the product so the two cannot drift;"
+  note "a literal copy here would go stale (it did) — fix the repo, then re-run."
+  return 1
+}
 
-[owner]
-discord_users = []          # only these users may DM the agent
+# _adopt_secret NAME FILE — encrypt FILE into the credential store, then delete
+# the plaintext. The runtime reads credentials only from the store (Fernet, with
+# the per-install master key); it never reads a loose file, so a plaintext copy
+# is pure liability — the owner's gcal client JSON was sitting world-readable.
+_adopt_secret() {
+  local name="$1" file="$2"
+  if [[ ! -f "$file" ]]; then
+    warn "no such file: $file — nothing adopted"
+    return 1
+  fi
+  if python3 - "$ROOT_DIR/src" "$DAEDALUS_HOME" "$name" "$file" <<'PY' >/dev/null 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
 
-[models]
-cheap = { name = "bonsai-8b-local", base_url = "http://127.0.0.1:11434/v1", model = "bonsai-8b", api_key_env = "" }
-heavy = [
-  { name = "nim-glm-5.3-flash", base_url = "https://integrate.api.nvidia.com/v1", model = "z-ai/glm-5.3-flash", api_key_env = "NVIDIA_API_KEY" },
-  { name = "nim-step-5-preview", base_url = "https://integrate.api.nvidia.com/v1", model = "stepfun-ai/step-5-preview", api_key_env = "NVIDIA_API_KEY" },
-  { name = "zai-glm-4.7-flash", base_url = "https://api.z.ai/api/paas/v4", model = "glm-4.7-flash", api_key_env = "ZAI_API_KEY" },
-  { name = "zai-glm-4.5-flash", base_url = "https://api.z.ai/api/paas/v4", model = "glm-4.5-flash", api_key_env = "ZAI_API_KEY" },
-]
+from daedalus.resources.secrets import SecretStore
 
-[approvals]
-default_tier = "auto"      # auto | ask | block  (self-contained actions)
-egress_tier = "ask"        # anything leaving the machine
-
-[loop]
-max_steps = 16             # tool-call round trips per turn
-
-[surface]
-mode = "discord"           # discord | cli
-TOML
-  python3 -c 'import sys,tomllib;tomllib.load(open(sys.argv[1],"rb"))' "$CONFIG_FILE" 2>/dev/null
+home, name, src = Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+SecretStore(home).put(name, src.read_text(encoding="utf-8"))
+PY
+  then
+    rm -f -- "$file"
+    ok "adopted $name into the credential store (encrypted at rest); deleted the plaintext copy"
+    return 0
+  fi
+  bad "could not adopt $name into the credential store"
+  return 1
 }
 
 # _record_resource NAME CLASS ACCESS CRED_REF SCOPES — a commented placeholder
@@ -767,11 +785,18 @@ if confirm "Grant Google Calendar now? (read all, write the 'Daedalus' calendar)
   open_url "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
   step "APIs & Services → OAuth consent screen → External → add yourself as a test user."
   step "Credentials → Create credentials → OAuth client ID → Desktop app."
-  step "Download the JSON to $CREDS_DIR/gcal-client.json and chmod 600 it."
+  step "Download the client JSON somewhere temporary — do not leave it there."
   step "Scopes the agent requests: calendar.readonly (read all) and"
   step "calendar.events (write the calendar the agent owns)."
-  _record_resource gcal remote_api oauth "creds/gcal-client.json" "calendar.readonly,calendar.events"
-  SKIPPED+=("gcal OAuth: drop the client JSON at $CREDS_DIR/gcal-client.json when ready")
+  step "The runtime reads credentials only from its encrypted store, never from"
+  step "a loose file, so the wizard encrypts it and deletes the plaintext copy."
+  if ask_path _GCAL_JSON "Path to the downloaded client JSON (blank to skip):"; then :; fi
+  if [[ -n "${_GCAL_JSON:-}" ]] && _adopt_secret gcal-client "$_GCAL_JSON"; then
+    _record_resource gcal remote_api oauth "secret:gcal-client" "calendar.readonly,calendar.events"
+  else
+    _record_resource gcal remote_api oauth "secret:gcal-client" "calendar.readonly,calendar.events"
+    SKIPPED+=("gcal OAuth: re-run this wizard with the client JSON and it will be encrypted into the store")
+  fi
 else
   note "calendar skipped — grant it later with: scripts/setup.sh"
   SKIPPED+=("Google Calendar not granted")
@@ -780,10 +805,15 @@ fi
 if confirm "Grant Gmail now? (read-only: summarise, never send)"; then
   step "Enable the Gmail API in the same project:"
   open_url "https://console.cloud.google.com/apis/library/gmail.googleapis.com"
-  step "Reuse the same OAuth client; download the JSON to $CREDS_DIR/gmail-client.json."
+  step "Reuse the same OAuth client JSON, or download it again to a temporary path."
   step "Scope: https://www.googleapis.com/auth/gmail.readonly — read and summarise only."
-  _record_resource gmail remote_api oauth "creds/gmail-client.json" "gmail.readonly"
-  SKIPPED+=("gmail OAuth: drop the client JSON at $CREDS_DIR/gmail-client.json when ready")
+  if ask_path _GMAIL_JSON "Path to the client JSON (blank to skip):"; then :; fi
+  _record_resource gmail remote_api oauth "secret:gmail-client" "gmail.readonly"
+  if [[ -n "${_GMAIL_JSON:-}" ]] && _adopt_secret gmail-client "$_GMAIL_JSON"; then
+    :
+  else
+    SKIPPED+=("gmail OAuth: re-run this wizard with the client JSON and it will be encrypted into the store")
+  fi
 else
   note "mail skipped — grant it later with: scripts/setup.sh"
   SKIPPED+=("Gmail not granted")

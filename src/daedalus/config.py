@@ -27,28 +27,32 @@ LOCAL_BASE = "http://127.0.0.1:11434/v1"
 
 DEFAULT_HEAVY: list[dict[str, Any]] = [
     {
-        "name": "nim-glm-5.3-flash",
-        "base_url": NIM_BASE,
-        "model": "z-ai/glm-5.3-flash",
-        "api_key_env": "NVIDIA_API_KEY",
-    },
-    {
         "name": "nim-step-5-preview",
         "base_url": NIM_BASE,
         "model": "stepfun-ai/step-5-preview",
         "api_key_env": "NVIDIA_API_KEY",
+        "timeout_s": 60,
+    },
+    {
+        "name": "nim-glm-5.3-flash",
+        "base_url": NIM_BASE,
+        "model": "z-ai/glm-5.3-flash",
+        "api_key_env": "NVIDIA_API_KEY",
+        "timeout_s": 60,
     },
     {
         "name": "zai-glm-4.7-flash",
         "base_url": ZAI_BASE,
         "model": "glm-4.7-flash",
         "api_key_env": "ZAI_API_KEY",
+        "timeout_s": 60,
     },
     {
         "name": "zai-glm-4.5-flash",
         "base_url": ZAI_BASE,
         "model": "glm-4.5-flash",
         "api_key_env": "ZAI_API_KEY",
+        "timeout_s": 60,
     },
 ]
 
