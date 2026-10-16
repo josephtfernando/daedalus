@@ -79,7 +79,16 @@ class ProcessTool(Tool):
     parameters = params(
         op=({"type": "string", "enum": ["start", "list", "logs", "stop"]}, True),
         name=({"type": "string"}, True),
-        command=({"type": "string"}, False),
+        command=(
+            {
+                "type": "string",
+                "description": (
+                    "the shell command to run, for op=start. Pass \"\" for op=list/logs/stop, which "
+                    "act on an existing process."
+                ),
+            },
+            True,
+        ),
         cwd=({"type": "string"}, False),
     )
 

@@ -22,18 +22,33 @@ if TYPE_CHECKING:
 class CapabilityTool(Tool):
     name = "capability"
     description = (
-        "Author, list, run, verify, or remove an authored capability. Authoring writes "
-        "capabilities/<name>/{run.py,manifest.toml,README.md}, runs the Melinoë gate, and "
-        "registers it. A capability reads {args,context,state} as JSON on stdin and writes "
-        "{result,state_next,notifications} as JSON on stdout."
+        "The tool-making machine: author, list, get, run, verify, remove, or schedule a capability.\n"
+        "`op=author` ALWAYS needs `name` and `run_py`. `run_py` is the complete Python source of "
+        "run.py, and YOU write it. The tool stores exactly what you pass, runs the Melinoë gate over "
+        "it, and registers it — the tool never writes code for you, so a call without `run_py` "
+        "creates nothing.\n"
+        "The contract run.py must honour: it runs as a standalone script in its own venv, reads one "
+        "JSON object {args,context,state} on stdin, and prints one JSON object "
+        "{result,state_next,notifications} on stdout. Keep it small and deterministic.\n"
+        "Give `schedule` (5-field cron) on op=author to register a recurring job, and `args` for the "
+        "sample the gate exercises."
     )
     risk = Risk.ASK
     scopes = {"fs": ["capabilities"], "exec": ["capability"]}
     parameters = params(
         op=({"type": "string", "enum": ["author", "list", "get", "run", "verify", "remove", "schedule"]}, True),
-        name=({"type": "string"}, False),
-        description=({"type": "string"}, False),
-        run_py=({"type": "string", "description": "the run.py source"}, False),
+        name=({"type": "string", "description": "short slug, e.g. disk_free_check. Required for op=author."}, False),
+        description=({"type": "string", "description": "one line for the manifest: what it does"}, False),
+        run_py=(
+            {
+                "type": "string",
+                "description": (
+                    "REQUIRED for op=author: the complete Python source of run.py, written by you. "
+                    "Stored verbatim; the tool never fills this in. Pass \"\" for the other ops."
+                ),
+            },
+            True,
+        ),
         why=({"type": "string", "description": "one line: why this exists"}, False),
         deps=({"type": "array", "items": {"type": "string"}, "description": "pip deps for its own venv"}, False),
         schedule=({"type": "string", "description": "5-field cron, optional"}, False),
@@ -76,7 +91,12 @@ class CapabilityTool(Tool):
         name = str(args.get("name", "")).strip()
         run_py = str(args.get("run_py", "")).strip()
         if not name or not run_py:
-            return ToolResult.error("author needs name and run_py")
+            missing = "name" if not name else "run_py"
+            return ToolResult.error(
+                f"op=author needs `name` and `run_py`; `{missing}` was missing, so nothing was "
+                "created. run_py is the complete Python source of run.py — you write it, the tool "
+                "only stores it. Retry the same call with the full source included."
+            )
         manifest = Manifest(
             name=name,
             description=str(args.get("description", "")),

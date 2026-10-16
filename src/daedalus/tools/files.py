@@ -27,7 +27,16 @@ class FilesTool(Tool):
     parameters = params(
         op=({"type": "string", "enum": ["read", "write", "append", "list", "glob", "grep", "mkdir"]}, True),
         path=({"type": "string"}, True),
-        content=({"type": "string", "description": "for write/append"}, False),
+        content=(
+            {
+                "type": "string",
+                "description": (
+                    "the text to write, for op=write/append. Pass \"\" for the ops that do not "
+                    "write (read, list, glob, grep, mkdir)."
+                ),
+            },
+            True,
+        ),
         pattern=({"type": "string", "description": "glob or regex"}, False),
         max_results=({"type": "integer"}, False),
     )

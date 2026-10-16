@@ -23,8 +23,26 @@ class MemoryTool(Tool):
     parameters = params(
         op=({"type": "string", "enum": ["write", "recall", "list"]}, True),
         facet=({"type": "string", "description": "e.g. projects, body, research, application_pipeline"}, False),
-        content=({"type": "string"}, False),
-        query=({"type": "string"}, False),
+        content=(
+            {
+                "type": "string",
+                "description": (
+                    "the fact to store, for op=write. Pass \"\" for op=recall and op=list, which "
+                    "query instead of writing."
+                ),
+            },
+            True,
+        ),
+        query=(
+            {
+                "type": "string",
+                "description": (
+                    "the search text, for op=recall. Pass \"\" for op=write and op=list. An empty "
+                    "query matches nothing, so a recall without it looks like an empty memory."
+                ),
+            },
+            True,
+        ),
         confidence=({"type": "number", "default": 0.8}, False),
         origin=({"type": "string", "enum": ["trusted_owner", "local_derived", "untrusted_source"]}, False),
     )
