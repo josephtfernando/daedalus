@@ -251,7 +251,9 @@ remains the read-all / write-own resource below, and `sync_state.json` is its em
 an `RRULE` (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`, with `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY`
 including ordinals such as `-1FR`, `BYMONTHDAY`, `BYMONTH`, `BYSETPOS`, `WKST`); `EXDATE` leaves
 instances out; a `RECURRENCE-ID` override — a second `VEVENT` sharing the series' `UID` —
-replaces exactly one instance. `agenda` and every other read expand the rule and answer in
+replaces exactly one instance. The recurrence set is the RFC's: **`RRULE ∪ RDATE − EXDATE`** —
+an `RDATE` adds a date the rule does not produce, with or without a rule, and an `EXDATE`
+removes one however it got there. `agenda` and every other read expand the rule and answer in
 dated occurrences, so "every weekday at 9:10" answers for the day being asked about rather than
 existing as a rule nobody can read. Writes say what they mean: `scope=all` edits the series,
 `scope=this` the one instance, `scope=future` splits the series at that point. A `VALARM` is

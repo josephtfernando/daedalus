@@ -156,6 +156,10 @@ class Event:
     rrule: str = ""
     #: ``EXDATE`` — occurrence starts to leave out, in the shape times are stored.
     exdates: list[str] = field(default_factory=list)
+    #: ``RDATE`` — extra occurrence starts the rule does not produce. The
+    #: recurrence set is RRULE ∪ RDATE, minus EXDATE (RFC 5545 §3.8.5), which is
+    #: also what makes "drop that one" work on an added date.
+    rdates: list[str] = field(default_factory=list)
     #: ``RECURRENCE-ID`` — set on an event that replaces a single occurrence of
     #: the series sharing its ``uid``. Empty on the series itself.
     recurrence_id: str = ""

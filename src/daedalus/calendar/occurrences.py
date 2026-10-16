@@ -41,8 +41,8 @@ def expand(
     """Every dated occurrence in ``[window_start, window_end)``, ascending.
 
     One-off events pass through untouched. A series is expanded from its
-    ``DTSTART`` up to the window's end, its ``EXDATE``s dropped, and its
-    overrides substituted in place.
+    ``DTSTART`` up to the window's end, its ``RDATE``s added and its ``EXDATE``s
+    dropped, and its overrides substituted in place.
     """
     masters: list[Event] = []
     overrides: dict[str, dict[str, Event]] = {}
@@ -84,26 +84,42 @@ def _occurrences_of(
     window_end: datetime,
     pending: dict[str, Event],
 ) -> list[Event]:
-    if not master.rrule:
-        return [master] if overlaps(master, window_start, window_end) else []
+    """The recurrence set of one series, in the window.
 
-    rule = recur.parse_rule(master.rrule)
-    # The rule is pure wall-clock arithmetic (recur.py never sees a zone), so
-    # expand on the *event's own* clock: a weekday 09:00 is 09:00 in the zone it
-    # was written in and stays 09:00 there across a clock change. Only the window
-    # bound has to be translated into that clock to be comparable.
-    zone = None if master.all_day else zones.zone_for(master.tzid)
-    start = parse_iso(master.start)
-    stop = zones.wall_in(window_end, zone) if zone is not None else window_end
+    RFC 5545 defines it as ``RRULE ∪ RDATE − EXDATE``, and it is worth being
+    literal about: an added date is a real occurrence, and leaving one out is the
+    same act whether the rule produced it or a person typed it. A series with no
+    rule still contributes its own start plus any ``RDATE`` — "this, and also
+    these three" is a legal event.
+    """
+    moments: list[datetime] = []
+    if master.rrule:
+        rule = recur.parse_rule(master.rrule)
+        # The rule is pure wall-clock arithmetic (recur.py never sees a zone), so
+        # expand on the *event's own* clock: a weekday 09:00 is 09:00 in the zone
+        # it was written in and stays 09:00 there across a clock change. Only the
+        # window bound has to be translated into that clock to be comparable.
+        zone = None if master.all_day else zones.zone_for(master.tzid)
+        start = parse_iso(master.start)
+        stop = zones.wall_in(window_end, zone) if zone is not None else window_end
+        moments.extend(recur.occurrences(start, rule, stop=stop))
+    else:
+        moments.append(parse_iso(master.start))
+    moments.extend(parse_iso(str(value)) for value in master.rdates)
+
     excluded = {str(value) for value in master.exdates}
     end = parse_iso(master.end) if master.end else None
-    length = (end - start) if end is not None else None
+    length = (end - parse_iso(master.start)) if end is not None else None
 
     out: list[Event] = []
-    for moment in recur.occurrences(start, rule, stop=stop):
+    seen: set[str] = set()
+    for moment in sorted(moments):
         key = occurrence_key(moment, master.all_day)
-        if key in excluded:
+        # `seen` dedupes an RDATE that lands on a date the rule already produced:
+        # one day, one standup. `excluded` is the EXDATE.
+        if key in seen or key in excluded:
             continue
+        seen.add(key)
         override = pending.pop(key, None)
         if override is not None:
             if overlaps(override, window_start, window_end):

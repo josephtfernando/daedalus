@@ -8,6 +8,7 @@ claim about the *format*, not about who owns the data.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -846,3 +847,114 @@ async def test_the_approval_prompt_names_the_set(runtime: Runtime) -> None:
 
     assert "standup" in assessment.summary
     assert "every" in assessment.summary
+
+
+# -- dates the rule does not produce ----------------------------------------
+
+
+def test_an_added_date_is_an_occurrence(store: CalendarStore) -> None:
+    """The recurrence set is the rule *plus* RDATE: "every Monday, and also Friday"."""
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-16T09:00"])
+
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 20))
+
+    assert [(e.start, e.summary) for e in rows] == [
+        ("2026-10-12T09:00", "Standup"),
+        ("2026-10-16T09:00", "Standup"),
+        ("2026-10-19T09:00", "Standup"),
+    ]
+
+
+def test_an_event_can_be_its_own_date_and_three_others(store: CalendarStore) -> None:
+    """No rule at all: "this, and also these" is a legal event, not a broken one."""
+    series = store.add(summary="Workshop", start="2026-10-12T09:00")
+    store.update(series.uid, rdates=["2026-10-20T09:00", "2026-11-03T09:00"])
+
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 11, 4))
+
+    assert [e.start for e in rows] == ["2026-10-12T09:00", "2026-10-20T09:00", "2026-11-03T09:00"]
+    assert all(e.recurrence_id for e in rows[1:])
+
+
+def test_an_added_date_survives_the_file(store: CalendarStore, tmp_path: Path) -> None:
+    """A property the store parses but does not write back is a silent data loss."""
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-16T09:00"])
+
+    raw = _raw(store.ics_path)
+    reopened = CalendarStore(tmp_path / "calendar").get(series.uid)
+
+    assert "RDATE:" in raw.replace("\r\n ", "")
+    assert reopened is not None and reopened.rdates == ["2026-10-16T09:00"]
+
+
+def test_an_added_date_that_lands_on_the_rule_does_not_double(store: CalendarStore) -> None:
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-19T09:00"])  # a Monday the rule already has
+
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 20))
+
+    assert [e.start for e in rows] == ["2026-10-12T09:00", "2026-10-19T09:00"]
+
+
+def test_dropping_an_added_date_leaves_the_rule_alone(store: CalendarStore) -> None:
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-16T09:00"])
+
+    assert store.delete(series.uid, recurrence_id="2026-10-16T09:00", scope="this") is True
+
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 20))
+    assert [e.start for e in rows] == ["2026-10-12T09:00", "2026-10-19T09:00"]
+    assert store.get(series.uid).rrule == "FREQ=WEEKLY;BYDAY=MO"  # type: ignore[union-attr]
+
+
+def test_an_all_day_added_date_keeps_its_shape(store: CalendarStore, tmp_path: Path) -> None:
+    series = store.add(summary="Market", start="2026-10-12")
+    store.update(series.uid, rdates=["2026-10-20"])
+
+    reopened = CalendarStore(tmp_path / "calendar").get(series.uid)
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 21))
+
+    assert reopened is not None and reopened.rdates == ["2026-10-20"]
+    assert [e.start for e in rows] == ["2026-10-12", "2026-10-20"]
+    assert all(e.all_day for e in rows)
+
+
+def test_splitting_a_series_keeps_each_added_date_on_its_own_side(store: CalendarStore) -> None:
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-14T09:00", "2026-10-21T09:00"])
+
+    tail = store.update(
+        series.uid, recurrence_id="2026-10-19T09:00", scope="future", summary="Standup (late)"
+    )
+
+    assert tail is not None
+    assert store.get(series.uid).rdates == ["2026-10-14T09:00"]  # type: ignore[union-attr]
+    assert tail.rdates == ["2026-10-21T09:00"]
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 26))
+    assert [(e.start, e.summary) for e in rows] == [
+        ("2026-10-12T09:00", "Standup"),
+        ("2026-10-14T09:00", "Standup"),
+        ("2026-10-19T09:00", "Standup (late)"),
+        ("2026-10-21T09:00", "Standup (late)"),
+    ]
+
+
+def test_a_schema_bump_rebuilds_rather_than_serving_an_empty_calendar(
+    store: CalendarStore, tmp_path: Path
+) -> None:
+    """A dropped cache whose old revision still matches is a calendar read as empty.
+
+    The index records the ``.ics`` revision it was built from, so a cache that
+    has been emptied *without* clearing that revision looks current — and the
+    owner opens their calendar to nothing. Survivable in a test, not on the
+    laptop where the events live.
+    """
+    store.add(summary="Dentist", start="2026-11-02T09:00")
+    with sqlite3.connect(store.index.path) as conn:  # as if built by an older shape
+        conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema'")
+
+    reopened = CalendarStore(tmp_path / "calendar")
+
+    assert [e.summary for e in reopened.series()] == ["Dentist"]

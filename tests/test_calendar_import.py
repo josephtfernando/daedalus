@@ -229,3 +229,27 @@ def test_the_report_says_what_happened(store: CalendarStore, export: Path) -> No
 def _write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def test_an_added_date_in_the_file_arrives_as_occurrences(
+    store: CalendarStore, tmp_path: Path
+) -> None:
+    """RDATE is not decoration: a dropped one is an occurrence that vanishes."""
+    extra = _write(
+        tmp_path / "rdate.ics",
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Google Inc//Google Calendar//EN\r\n"
+        "BEGIN:VEVENT\r\nUID:rdate@google.com\r\nDTSTART:20261102T090000\r\n"
+        "DTEND:20261102T093000\r\nSUMMARY:Workshop\r\nRRULE:FREQ=WEEKLY;BYDAY=MO\r\n"
+        "RDATE:20261105T090000,20261112T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+    )
+    store.import_ics(extra)
+
+    rows = store.occurrences(datetime(2026, 11, 2), datetime(2026, 11, 16))
+
+    assert [e.start for e in rows] == [
+        "2026-11-02T09:00",
+        "2026-11-05T09:00",
+        "2026-11-09T09:00",
+        "2026-11-12T09:00",
+    ]
+    assert store.ics_path.read_text(encoding="utf-8").replace("\r\n ", "").count("RDATE:") == 1

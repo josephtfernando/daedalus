@@ -28,7 +28,7 @@ from .event import OPAQUE, Event, Reminder
 
 #: Bumped when the table shape changes. The cache is derived, so a mismatch
 #: means "rebuild", never "migrate".
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events(
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS events(
     data_class TEXT NOT NULL DEFAULT 'private',
     rrule TEXT NOT NULL DEFAULT '',
     exdates TEXT NOT NULL DEFAULT '[]',
+    rdates TEXT NOT NULL DEFAULT '[]',
     recurrence_range TEXT NOT NULL DEFAULT '',
     tzid TEXT NOT NULL DEFAULT '',
     transparency TEXT NOT NULL DEFAULT 'opaque',
@@ -72,10 +73,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
 _COLUMNS = (
     "uid, recurrence_id, summary, start, end, span_start, span_end, all_day,"
     " recurring, location, description, calendar, authority, data_class, rrule,"
-    " exdates, recurrence_range, tzid, transparency, reminders, created_at,"
+    " exdates, rdates, recurrence_range, tzid, transparency, reminders, created_at,"
     " updated_at, extra"
 )
-_INSERT = f"INSERT OR REPLACE INTO events ({_COLUMNS}) VALUES ({','.join('?' * 23)})"
+_INSERT = f"INSERT OR REPLACE INTO events ({_COLUMNS}) VALUES ({','.join('?' * 24)})"
 
 
 class CalendarIndex:
@@ -96,6 +97,12 @@ class CalendarIndex:
                 # cheaper and safer than migrating a shape nobody depends on.
                 conn.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS search;")
                 conn.executescript(SCHEMA)
+                # The recorded revision goes with the rows it described. Kept, it
+                # would still match the ``.ics`` it was built from, the store
+                # would decide the (now empty) cache was current, and the owner's
+                # whole calendar would read as "no events" until the file next
+                # changed. Emptying the cache has to mean "rebuild me".
+                conn.execute("DELETE FROM meta")
                 conn.execute(
                     "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                     (str(SCHEMA_VERSION),),
@@ -167,15 +174,17 @@ class CalendarIndex:
         """Every stored event that could contribute an occurrence to a window.
 
         A recurring series always qualifies: its own start may be years behind
-        the window and it still produces today's standup. Every override
-        qualifies too — an instance moved *out* of the window must still be
-        found, or the day would keep showing a meeting that is no longer on it.
-        Everything else is matched by overlap, which is why ``span_end`` exists.
+        the window and it still produces today's standup. So does an event with
+        ``RDATE``s, which can sit months past the day it is written on. Every
+        override qualifies too — an instance moved *out* of the window must still
+        be found, or the day would keep showing a meeting that is no longer on
+        it. Everything else is matched by overlap, which is why ``span_end``
+        exists.
         """
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM events"
-                " WHERE recurring = 1 OR recurrence_id != ''"
+                " WHERE recurring = 1 OR rdates != '[]' OR recurrence_id != ''"
                 " OR (span_start < ? AND span_end > ?)"
                 " ORDER BY span_start LIMIT ?",
                 (end, start, limit),
@@ -258,6 +267,7 @@ def _row(event: Event) -> tuple:
         event.data_class.value,
         event.rrule,
         json.dumps(event.exdates),
+        json.dumps(event.rdates),
         event.recurrence_range,
         event.tzid,
         event.transparency,
@@ -288,6 +298,7 @@ def _event(row: sqlite3.Row) -> Event:
         updated_at=float(row["updated_at"]),
         rrule=row["rrule"],
         exdates=_load_list(row["exdates"]),
+        rdates=_load_list(row["rdates"]),
         recurrence_id=row["recurrence_id"],
         recurrence_range=row["recurrence_range"],
         tzid=row["tzid"],

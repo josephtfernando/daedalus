@@ -290,6 +290,7 @@ def _check_calendar(rt: Runtime) -> Check:
         "BEGIN:VTIMEZONE\r\nTZID:Europe/London\r\nEND:VTIMEZONE\r\n"
         "BEGIN:VEVENT\r\nUID:selftest-imported@example.com\r\n"
         "DTSTART;TZID=Europe/London:20990103T090000\r\n"
+        "RDATE;TZID=Europe/London:20990104T090000\r\n"
         "SUMMARY:selftest imported probe\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
         encoding="utf-8",
     )
@@ -297,6 +298,11 @@ def _check_calendar(rt: Runtime) -> Check:
     arrived = rt.calendar.get("selftest-imported@example.com")
     if report.added != 1 or arrived is None or arrived.authority != "imported":
         return Check("calendar", False, "an outside calendar did not come in")
+    # An `RDATE` the store reads but does not keep is an occurrence that quietly
+    # stops happening, so the round trip is proven by asking for both days.
+    extra = rt.calendar.occurrences(datetime(2099, 1, 3), datetime(2099, 1, 5))
+    if [e.start for e in extra] != ["2099-01-03T09:00", "2099-01-04T09:00"]:
+        return Check("calendar", False, "an imported RDATE did not arrive as an occurrence")
     if rt.calendar.import_ics(handover).added != 0:
         return Check("calendar", False, "importing the same file twice added it twice")
 

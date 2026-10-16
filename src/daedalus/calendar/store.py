@@ -223,11 +223,13 @@ class CalendarStore:
             data_class=master.data_class,
             rrule=tail_rrule,
             exdates=[value for value in master.exdates if str(value) >= key],
+            rdates=[value for value in master.rdates if str(value) >= key],
             tzid=master.tzid,
             transparency=master.transparency,
             reminders=list(master.reminders),
         )
         master.exdates = [value for value in master.exdates if str(value) < key]
+        master.rdates = [value for value in master.rdates if str(value) < key]
         master.updated_at = time.time()
         parsed.events.append(tail)
         _apply(tail, wanted)
@@ -828,6 +830,8 @@ def _apply(event: Event, wanted: dict[str, Any]) -> None:
             event.rrule = rule
         elif key == "exdates":
             event.exdates = [_key_from(value, event) for value in value]
+        elif key == "rdates":
+            event.rdates = sorted({_key_from(value, event) for value in value})
         elif key == "summary":
             event.summary = str(value).strip()
         elif key in ("location", "description", "calendar", "authority", "tzid"):

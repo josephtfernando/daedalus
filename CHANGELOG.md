@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 282-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 291-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -454,6 +454,40 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **A schema bump could have shown the owner an empty calendar.** Changing the index shape above
+  exposed a fault in how the cache was replaced. `events.ics` is the truth and `index.sqlite` a
+  build over it, so a shape change **drops and rebuilds** rather than migrating — but the record of
+  *which* `events.ics` revision the cache was built from survived the drop. An emptied cache that
+  still matches the file it came from looks current, so the store declined to rebuild and answered
+  "no events" — for every existing install, on the next restart, until the `.ics` happened to
+  change. Emptying the cache now clears the revision it claimed, which is what "rebuild me" means.
+  Found by asking what the version bump would do to a calendar that already has events in it,
+  rather than to a fresh one in a test directory. *Supersedes:* carrying `source_revision` across a
+  schema change.
+
+- **`RDATE` was read and then thrown away, taking the occurrences with it.** An event's extra
+  dates — "every Monday, *and also* Friday the 16th" — were listed as a property the reader knew,
+  parsed into the field map, and then never put on the event and never written back. The result was
+  the worst shape a bug can take here: silent, and destructive on *write*. Import a file with an
+  `RDATE`, then let any tool call rewrite `events.ics`, and the added dates were gone — the
+  occurrences simply stopped happening, and nothing said so. `RDATE` is now a first-class part of
+  the event:
+  - **The recurrence set is what the RFC says it is.** `RRULE ∪ RDATE − EXDATE`. An added date is
+    a real occurrence on every read (`agenda`, `busy`, `search`, free/busy), and leaving one out is
+    the same act whether a rule produced it or a person typed it — so `scope=this` on an added date
+    works, and writes the `EXDATE` that means it.
+  - **A rule is not required.** An event with no `RRULE` and three `RDATE`s is a legal way to say
+    "this, and also those" — it produced only its own start before, and now produces all four.
+  - **An added date on a day the rule already has is not two standups.** Deduped by occurrence
+    start, so a hand-written `RDATE` that repeats a rule date stays one meeting.
+  - **`scope=future` splits them too,** on the same date boundary as the rule and the exclusions —
+    a split series that kept both halves' added dates would double-book the owner.
+  - It also round-trips: `RDATE` is written back in the shape it was read, `VALUE=DATE` for an
+    all-day event included. The table shape changed with it, so `SCHEMA_VERSION` goes to 4 and the
+    derived cache **rebuilds** — as it always does, `events.ics` remaining the truth.
+  - Not a tool parameter: the model has no `rdate` argument, and does not need one (two events say
+    the same thing). This is a *fidelity* fix — the store must not lose what the owner's file says.
 
 - **The `browser` primitive crashed on its own default argument.** `op=text` with no
   selector called `Page.inner_text()`, which *requires* a selector, and raised

@@ -191,7 +191,9 @@ def _event_lines(event: Event) -> list[str]:
     if event.rrule:
         lines.append(f"RRULE:{event.rrule}")
     if event.exdates:
-        lines.append(_exdate_line(event))
+        lines.append(_date_list_line("EXDATE", event.exdates, event))
+    if event.rdates:
+        lines.append(_date_list_line("RDATE", event.rdates, event))
     lines.append(f"TRANSP:{'TRANSPARENT' if event.transparency == TRANSPARENT else 'OPAQUE'}")
     lines.append(f"X-DAEDALUS-CALENDAR:{event.calendar}")
     lines.append(f"X-DAEDALUS-AUTHORITY:{event.authority}")
@@ -233,14 +235,15 @@ def _stamp_line(name: str, value: str, event: Event) -> str:
     return f"{name}:{rendered}"
 
 
-def _exdate_line(event: Event) -> str:
+def _date_list_line(name: str, values: list[str], event: Event) -> str:
+    """``EXDATE`` or ``RDATE``: the same shape, so the same writer."""
     if event.all_day:
-        joined = ",".join(str(value).replace("-", "") for value in event.exdates)
-        return f"EXDATE;VALUE=DATE:{joined}"
+        joined = ",".join(str(value).replace("-", "") for value in values)
+        return f"{name};VALUE=DATE:{joined}"
     joined = ",".join(
-        datetime.fromisoformat(str(value)).strftime("%Y%m%dT%H%M%S") for value in event.exdates
+        datetime.fromisoformat(str(value)).strftime("%Y%m%dT%H%M%S") for value in values
     )
-    prefix = f"EXDATE;TZID={event.tzid}" if event.tzid else "EXDATE"
+    prefix = f"{name};TZID={event.tzid}" if event.tzid else name
     return f"{prefix}:{joined}"
 
 
@@ -387,6 +390,7 @@ def _from_block(block: list[str]) -> Event | None:
         updated_at=_stamp_epoch(fields.get("LAST-MODIFIED")) or _stamp_epoch(fields.get("DTSTAMP")),
         rrule=fields.get("RRULE", "").strip(),
         exdates=_stamps(fields.get("EXDATE", ""), all_day),
+        rdates=_stamps(fields.get("RDATE", ""), all_day),
         recurrence_id=_parse_stamp(fields["RECURRENCE-ID"], params.get("RECURRENCE-ID"))[0]
         if fields.get("RECURRENCE-ID")
         else "",
