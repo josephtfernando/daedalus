@@ -132,7 +132,12 @@ class ApprovalMiddleware:
             return decide(True, False, f"standing grant ({grant.scope})")
 
         # 5. Everything else asks.
-        return decide(False, True, "egress requires approval")
+        if egress:
+            return decide(False, True, "egress requires approval")
+        # Reached by an ask-tier local tool (shell, code, capability authoring).
+        # Saying "egress" here was simply wrong, and told the owner the agent was
+        # trying to leave the machine when it wanted to run `date`.
+        return decide(False, True, f"{tool_name} always asks before it runs")
 
     def grant_from(self, decision: Decision, *, note: str = "", expires_at: float | None = None) -> Grant:
         return self.grants.add(

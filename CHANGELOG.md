@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (8/8 offline, 9/9 with `--live`) and a 52-test suite. `0.1.0` is cut once the owner runs the live proof-of-life end-to-end with real credentials._
+_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 with `--live`) and a 61-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — now **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord._
 
 ### Added
 
@@ -29,7 +29,9 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   - **Secrets** — an encrypted credential store (Fernet, per-install master key at `0600`) and a **bytes-stay-home** guard that blocks any outbound request whose body carries a provisioned secret value.
   - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · a full free-text turn · and **the daemon lifecycle**, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
   - **Setup wizard (code)** — `scripts/setup.sh`: the `template.sh` library **vendored verbatim** from the `wizard` skill (every line from `set -euo pipefail` through the `STAGES` marker byte-identical), with the 13 stages authored below it, plus `-y/--yes` and `--non-interactive` modes. Deliberate deviations from the §8.5 stage list, each because the runtime disagreed with the prose: the secret-store **directory** is `0700` (a directory needs `+x` to be traversable; the files inside stay `0600`), the master key sits at `resources/master.key` because that is where `SecretStore` reads it, stage 10 installs only the two named units (the runtime pumps ticks **in-process**, so the timer triggers `daedalus.service` with `Persistent=true` rather than inventing a `tick` verb), and stage 12 runs `selftest --live` when a heavy key is configured. Nothing from the wizard is written to CI — no secret leaves the machine.
-  - **Tests** — 52 tests across cron, approvals, capabilities, memory, the engine loop, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
+  - **Tests** — 61 tests across cron, approvals, capabilities, memory, the engine loop, the tool schemas, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
+  - **A trace of the loop, in the log.** The engine logs every tool call — the tool, its `op` when it has one, and whether it succeeded, failed, or was blocked, with a short reason on failure and a character count on success. **Arguments are never logged**, because they carry the owner's words; the trace records shape and outcome only. This exists because the failed acceptance run was invisible: sixteen identical tool calls left not one line behind, and the only way to see what the model had actually sent was to re-drive the turn by hand through a scripted probe.
+  - **`tests/test_tool_schemas.py`** — the schema audit as a regression test. It fails if any tool offers a payload parameter (`content`, `run_py`, `query`, `command`, …) as optional, naming every offender at once. It caught two more instances on its first run (`process.command`, `memory.query`) that the live failure had not yet exposed.
 
 - **`SPEC.md`** — the requirements and design source of truth. Covers purpose, design principles, the harness/stack decision, the capability substrate, Generative UI, the model stack, memory, trust & safety, the cabinet, runtime, the Discord surface, phases, the P0 definition and build order, reconciliation notes, and open implementation details.
 - **`ARCHITECTURE.md`** — the build-level companion: system context, component map, repository and package layout, runtime & process model, the five core flows, the data model, the interface/protocol contracts, the security architecture, failure modes, extension points, and the phase map.
@@ -62,6 +64,20 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 
 ### Changed
 
+- **A parameter that carries the substance of an action is now declared `required`.** An LLM treats a
+  large *optional* string argument as skippable, and drops it without comment. That single behaviour
+  was the whole of P0's blocker (see *Fixed*). The rule is now applied across the primitives: the
+  schema's `required` list is the union of what its ops need, exactly as `process` already did with
+  `name`. Where a payload belongs to only one op, the description says so and says what to pass for
+  the others. `files.content` · `memory.content` and `memory.query` · `capability.run_py` ·
+  `process.command` are all required now. *Supersedes:* the earlier convention in which the one
+  parameter an op could not work without was the one parameter the schema let the model omit.
+- **The charter tells the model not to tour the codebase.** One failed attempt spent its entire step
+  budget listing, globbing, and reading its own implementation — including a single 25,058-character
+  file read — and never reached the task. The charter now states that a tool's description *is* the
+  contract, that reading its own source is unnecessary, and that a file is read only when the request
+  is about that file, in the narrowest slice that answers the question. This is guidance about
+  conduct, not a hardcoded flow.
 - **The model chain now leads with the fastest entry.** Observed live: `z-ai/glm-5.3-flash` cold-starts past
   its timeout while `stepfun-ai/step-5-preview` answers in ~1.3s warm, so the primary was the *slower*
   of the two and every cold turn paid a stall before failing over. Order is now
@@ -101,6 +117,54 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **Settings are home-relative:** the grant store and the rate-limit ledger resolve from `$DAEDALUS_HOME` rather than a process-global path, so a self-test or a second install can never read or write another install's state.
 
 ### Fixed
+
+- **The acceptance request failed on a tool schema, not on the model.** The owner asked, in free
+  text, for a weekday disk-space check. The turn reached the capability substrate, asked for approval,
+  was approved — and then spent its **entire sixteen-step budget** calling
+  `capability op=author -> author needs name and run_py` and produced **nothing**: no capability, no
+  job, no memory, and not one log line. The model was sending
+  `{"op": "author", "name": "disk_free_check", "schedule": "41 7 * * 1-5", …}` — every field except
+  `run_py`, the program itself. It was not one bad model, one bad prompt, or one bad phrase: with
+  `run_py` optional, `stepfun-ai/step-5-preview` left it out under a minimal system prompt, under the
+  full charter, with one tool and with thirteen. Add `run_py` to the schema's `required` list and the
+  same model, same prompt, same request, returns 1,313 characters of correct Python. The fix is the
+  schema change recorded under *Changed*; the tool's failure message now also names the missing
+  argument and says to retry with the source included. Verified end-to-end: the capability
+  `disk_free_check` was authored, run once by the Melinoë gate, registered, and scheduled at
+  `41 7 * * 1-5`, and its alert branch fires correctly when the threshold is crossed.
+  *Supersedes:* the assumption that the authoring interface was fine and the model was at fault.
+- **An empty model turn was delivered as silence.** When the model answered with neither text nor tool
+  calls, the engine returned an empty string and the caller sent nothing at all — the owner got no
+  reply and no error, which is indistinguishable from a dead daemon. A turn now always says something:
+  if the model returns nothing, the owner is told so explicitly. *Supersedes:* the `if result.text`
+  guard, which made an empty answer look like no answer.
+- **The "cheap" route could hard-fail a trivial turn.** `_chain("cheap")` returned only the local
+  provider. Ollama is running with **zero models pulled**, so any turn the router classified as cheap
+  — a short message, or one containing a marker like *"is this"* or *"summarize in one line"* — would
+  have failed outright with no attempt at a working provider. The cheap route now returns the local
+  provider followed by the full chain, so a missing local model is a slower answer rather than a dead
+  turn.
+- **Approval prompts gave the wrong reason for non-egress tools.** The middleware fell through to
+  *"egress requires approval"* for every ask-tier tool, including ones with no network scope at all.
+  The owner approved a `capability` call reading *"egress requires approval"* — a sentence that was
+  simply false about what was happening, and that framed a local file write as data leaving the
+  machine. A non-egress ask-tier tool now says *"`<tool>` always asks before it runs"*, and egress
+  keeps its own wording. *Supersedes:* the single hardcoded reason.
+- **A repeated identical failure now stops the turn.** Sixteen steps on one broken call was not a
+  model quirk to tolerate; it was the loop failing to notice that a retry was not progress. Three
+  *consecutive* identical failures now end the turn with a plain explanation of what kept failing and
+  what the owner might say instead. Progress in between resets the count, so a genuine retry with a
+  different approach is unaffected.
+- **One oversized tool result could poison the rest of the turn.** A single `files` read returned
+  25,058 characters straight back into the conversation, and every model call after it degraded. No
+  single tool result may now add more than 8,000 characters; a truncated result says so and tells the
+  model to ask for a narrower slice instead of the whole thing.
+- **`files op=write` could create an empty file and report success.** With `content` optional, the
+  model could omit the bytes, and the tool would write an empty file and return `ok` — a silent data
+  loss wearing a success message. `content` is required, and the schema-audit test keeps it that way.
+- **`memory op=recall` with no query reported an empty memory.** An omitted `query` searched for the
+  empty string, which matches nothing, so the owner would be told *"(nothing found)"* when the memory
+  was full. `query` is required, and its description states what an empty query does.
 
 - **The daemon deadlocked on startup and never connected to Discord.** `cmd_run` awaited
   `surface.wait_ready()` *before* calling `surface.start()`. A surface signals readiness from inside

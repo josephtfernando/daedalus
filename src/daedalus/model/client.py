@@ -46,7 +46,11 @@ class ModelClient:
 
     def _chain(self, route: str) -> list[Provider]:
         if route == "cheap" and self.cheap is not None:
-            return [self.cheap]
+            # Cheap is a preference, not a trap. A local runner that is down, or
+            # has no weights pulled, must not fail a trivial turn outright when
+            # the heavy chain is right there -- the local route exists to save
+            # money, not to make the agent unreachable.
+            return [self.cheap, *self.providers]
         return list(self.providers)
 
     async def chat(

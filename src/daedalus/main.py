@@ -14,6 +14,7 @@ from .config import Settings, load_settings
 from .storage import paths
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps imports cheap
+    from .loop.engine import TurnResult
     from .runtime import Runtime
     from .surface.base import Surface
 
@@ -90,13 +91,25 @@ def cmd_run(args: argparse.Namespace) -> int:
     rt = build_runtime(settings)
     engine = Engine(rt)
 
+    log = logging.getLogger("daedalus.surface.discord")
+
     async def handler(event: InboundEvent) -> None:
         # The typing indicator is held for the work, not for the send: sending
         # the reply clears it, so it never lingers past the answer.
         async with surface.working(event.channel_id):
             result = await engine.run_turn(event)
-        if result.text:
-            await rt.surface.send(result.text)  # type: ignore[union-attr]
+        log.info(
+            "turn done: %d step(s), tools=%s, provider=%s, %d char(s)%s",
+            result.steps,
+            ",".join(result.tools_used) or "none",
+            result.provider or "none",
+            len(result.text),
+            f", error={result.error}" if result.error else "",
+        )
+        if not result.text:
+            # Never be silent: a turn with no text is reported, not swallowed.
+            log.warning("turn produced no text (%s)", result.error or "the model returned empty content")
+        await deliver(rt.surface, result)  # type: ignore[arg-type]
 
     surface = DiscordSurface(settings, handler)
     rt.set_surface(surface)
@@ -132,6 +145,27 @@ def _run_cli_repl(settings: Settings) -> int:
         return 0
 
     return asyncio.run(go())
+
+
+NO_OUTPUT = (
+    "I worked through that but came back with nothing to send — that's a fault on my side, "
+    "not a refusal. Say the word and I'll try again."
+)
+
+
+async def deliver(surface: Surface, result: TurnResult) -> bool:
+    """Send the turn's text, or say plainly that there wasn't any.
+
+    Returns True if the no-output fallback was used. Silence is the one outcome
+    that must never happen: an unanswered DM and a dead daemon are then
+    indistinguishable from the outside, which is exactly how a real request went
+    missing without leaving a trace.
+    """
+    if result.text:
+        await surface.send(result.text)
+        return False
+    await surface.send(NO_OUTPUT)
+    return True
 
 
 async def _ticker(rt: Runtime, interval_s: float) -> None:
