@@ -118,14 +118,18 @@ class Engine:
                     continue
                 # The acceptance run spent sixteen steps calling the same tool
                 # with the same missing argument, and every retry was identical.
-                # Repeating a failure is not progress; stop and say so.
-                signature = f"{call.name}: {detail[:80]}"
+                # Repeating a failure is not progress; stop and say so. The
+                # signature carries the *arguments* as well as the error, so two
+                # genuinely different attempts that happen to fail the same way
+                # are not collapsed into one "repeated step".
+                signature = f"{_call_signature(call)}: {detail[:80]}"
                 failures[signature] = failures.get(signature, 0) + 1
                 if failures[signature] >= MAX_IDENTICAL_FAILURES:
                     return TurnResult(
                         text=(
                             f"I got stuck repeating the same failing step — `{call.name}` kept "
                             f"coming back with: {detail[:160]}\n\n"
+                            f"The call was {_arguments(call.arguments)}.\n\n"
                             "I stopped rather than burn the rest of the turn on it. Tell me what to "
                             "try instead, and I'll pick it up from there."
                         ),
@@ -253,6 +257,16 @@ def _call_signature(call: ToolCall) -> str:
     denial is meant to stop.
     """
     return f"{call.name}:{json.dumps(call.arguments or {}, sort_keys=True, default=str)}"
+
+
+def _arguments(arguments: Any, *, limit: int = 140) -> str:
+    """The arguments a failed call carried, short enough to read in a message.
+
+    This is the owner's own surface, so the values may show; they are truncated
+    anyway, because a wall of JSON in a Discord message is not a diagnosis.
+    """
+    text = json.dumps(arguments or {}, sort_keys=True, default=str)
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 def _assistant_message(content: str, calls: list[ToolCall]) -> dict[str, Any]:

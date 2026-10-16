@@ -131,6 +131,49 @@ async def test_progress_between_failures_does_not_stop_the_turn(runtime: Runtime
     assert result.text == "Recovered."
 
 
+async def test_different_failing_calls_are_not_collapsed_into_one(runtime: Runtime) -> None:
+    """The guard keys on the call, not just the error text.
+
+    Three different attempts to author a capability with three different names
+    fail with the *same* message (`run_py` was missing). Keyed on the error alone
+    they looked like one repeated step and the turn was cut short; keyed on the
+    arguments too, each attempt is its own failure and the turn can recover.
+    """
+    runtime.settings.max_steps = 8
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    tool_call("capability", op="author", name="alpha"),
+                    tool_call("capability", op="author", name="beta"),
+                    tool_call("capability", op="author", name="gamma"),
+                    ChatResult(content="Recovered."),
+                ]
+            )
+        ],
+    )
+
+    result = await Engine(runtime).run_turn(InboundEvent(text="author three probes", user_id="owner"))
+
+    assert result.text == "Recovered.", "different calls were collapsed into a repeat"
+    assert result.steps == 4
+
+
+async def test_the_stuck_message_shows_the_call_it_made(runtime: Runtime) -> None:
+    """The owner is asked to diagnose from the whole picture, not half of it."""
+    runtime.settings.max_steps = 8
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([tool_call("capability", op="author", name="probe")] * 5)],
+    )
+
+    result = await Engine(runtime).run_turn(InboundEvent(text="author probe", user_id="owner"))
+
+    assert result.error == "repeated failure"
+    assert "probe" in result.text, "the arguments that kept failing were not shown"
+
+
 async def test_an_empty_turn_is_never_swallowed(runtime: Runtime) -> None:
     """An empty answer and a dead daemon must not look the same from outside.
 

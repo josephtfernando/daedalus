@@ -12,10 +12,27 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 473-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 488-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
+- **A set of events can be addressed by the day it falls on, and moved by a date delta.** A calendar
+  the owner talks to has to hear *"the coming weekend Sunday"*, and the two things that fall on a day
+  need not share a word to match on. `calendar op=update`/`op=delete` now take `on="2026-10-25"`: the
+  events that **produce an occurrence** that local day, alone or narrowed by a `match`. On its own
+  the day is the whole address, which is what "move the two things on Sunday" needs when the things
+  are called different names.
+  - **`shift="-7d"` moves the set by a *date*, keeping each event's own time and length.** `at` sets a
+    time of day on each event's own date and `start` names one shared date — neither can say "a week
+    earlier", and handing the same date to a set would pile it onto that day. A signed day or week
+    offset (`"-7d"`, `"2w"`, `"3d"`) is that missing shape, and unlike `at` it moves an all-day event
+    too, because days are a whole-day event's natural unit. This is the call the owner's real
+    correction needed — `op=update on="2026-10-25" shift="-7d"`, one call for two events that share
+    no name.
+  - **The day-set is gated like every other read.** The matched set passes through the same
+    `local_only` egress filter, so on a remote-bound turn the model cannot address an event it was not
+    allowed to see; the write still takes the `CAUTION` approval, now worded *"change every event on
+    2026-10-25"*.
 - **The renderer turns structure into the owner's own page, and fetches nothing.** `genui/renderer.py`
   is the last step of the pipeline — a spec, local values and a mood in, one self-contained HTML
   document out — and it is where the shape of the design finally pays off.
@@ -439,6 +456,14 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Changed
 
+- **A refused calendar call says what it heard, and hands back what the next call needs.** A model
+  that reached for a plausible alias (`id` for `uid`) or sent only a date was told only what was
+  *missing*, so it repeated the same wrong key — three identical failures in the owner's own turn.
+  `op=update`/`op=delete` errors now echo the argument names the call actually carried (`You sent:
+  `id`, `start``), and when a set matches nothing the reply carries the ids that *do* exist instead
+  of sending the model round again on a separate `list`. *Supersedes:* the bare "needs `uid` or
+  `match`" refusal.
+
 - **Mail moves to the end of the plan.** Read-only Gmail was bundled with the calendar
   under "Calendar & integrations" (ARCHITECTURE §8.2). The owner cut it away: the calendar
   is the half that earns its keep, and a read-only mail scope that is never exercised is a
@@ -594,6 +619,15 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **The repeat guard no longer collapses two different calls that fail the same way.** It keyed the
+  failure signature on the tool name and the *error text*, so three genuinely different attempts —
+  authoring a capability under three different names, each failing because `run_py` was missing —
+  looked like one repeated step and the turn was cut short after the second. The signature now
+  includes the call's arguments (reusing `_call_signature`), so only a genuinely identical call trips
+  `MAX_IDENTICAL_FAILURES`; and the dead-end message shows the arguments it kept sending, so the
+  owner is asked to diagnose from the whole call rather than half of it. *Supersedes:* keying the
+  guard on `name: detail`.
 
 - **A schema bump could have shown the owner an empty calendar.** Changing the index shape above
   exposed a fault in how the cache was replaced. `events.ics` is the truth and `index.sqlite` a

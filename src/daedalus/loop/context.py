@@ -68,8 +68,12 @@ while `scope=future` moves it and everything after it.
 
 Changing several things at once (every event whose name contains a word — "move all my standups to
 10") is one call: `op=update` with `match` instead of `uid`, and `at` for the new time of day, which
-keeps each event on its own date. `op=delete` with `match` removes the set. Use `match` only when the
-owner means the group; when they name one event, use its `uid`.
+keeps each event on its own date. A set can also be addressed by the day it falls on: `on="2026-10-25"`
+means every event that day, alone or narrowed by `match` — "move the two things on Sunday" is one
+call. To move a set by a **date** rather than a time of day, use `shift`, a signed day or week offset
+such as `"-7d"` (a week earlier): each event keeps its own time and length. "Wrong Sunday — I meant
+the coming one" is `op=update on="2026-10-25" shift="-7d"`. `op=delete` takes the same `match`/`on`
+addressing. Use a set only when the owner means the group; when they name one event, use its `uid`.
 
 ### Recent memory
 {memory}
