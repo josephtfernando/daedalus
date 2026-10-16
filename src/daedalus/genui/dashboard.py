@@ -37,8 +37,9 @@ from ..calendar.store import CalendarStore
 from .components import VOCABULARY
 from .renderer import CSP, FORM_CSP, render_page
 from .spec import Spec
+from .theming import Tokens
 
-__all__ = ["VIEWS", "Page", "calendar_page", "write_page"]
+__all__ = ["VIEWS", "Page", "calendar_page", "draft_strip", "write_page"]
 
 #: The three views, in the order the owner would name them.
 VIEWS = ("day", "week", "month")
@@ -68,6 +69,12 @@ class Page:
     #: The policy this page claims for itself. A page with controls needs
     #: `form-action 'self'`; a read-only one keeps the strict default.
     csp: str = CSP
+    #: The owner's **adopted** theme values (T9), laid over the mood. Absent
+    #: means the mood alone.
+    overrides: Mapping[str, str] | None = None
+    #: A token set given outright — a **draft preview**, the page as a pending
+    #: tune would render it. Nothing is resolved when this is set.
+    tokens: Tokens | None = None
 
     @property
     def name(self) -> str:
@@ -81,6 +88,8 @@ class Page:
             appendix=self.controls,
             extra_css=_CONTROL_CSS if self.controls else "",
             csp=self.csp,
+            overrides=self.overrides,
+            tokens=self.tokens,
         )
 
 
@@ -91,13 +100,17 @@ def calendar_page(
     anchor: str | date | None = None,
     now: datetime | None = None,
     with_controls: bool = False,
+    overrides: Mapping[str, str] | None = None,
+    tokens: Tokens | None = None,
 ) -> Page:
     """One view of the calendar, as a page ready to render.
 
     `anchor` is the day the view is *about* — a week or a month is the one
     containing it. `now` decides which day is marked as today, and is passed in
     rather than read, so a test can pin the clock. `with_controls` adds the
-    control strip, which only an authenticated view is served with.
+    control strip, which only an authenticated view is served with. `overrides`
+    are the owner's adopted theme values; `tokens` given outright renders a
+    **draft preview** (T9) — the page as a pending tune would look.
     """
     if view not in VIEWS:
         raise ValueError(f"view is one of: {' | '.join(VIEWS)}; it is {view!r}")
@@ -150,6 +163,8 @@ def calendar_page(
         values=values,
         controls=controls,
         csp=FORM_CSP if controls else CSP,
+        overrides=overrides,
+        tokens=tokens,
     )
 
 
@@ -344,6 +359,31 @@ def _uid_picker(events: list[Event]) -> str:
 
 def _picker_label(event: Event) -> str:
     return f"{_when(event)} — {event.summary}"
+
+
+def draft_strip(id: str) -> str:
+    """The approve/discard forms a **draft preview** carries (SPEC §3.6).
+
+    Approval is a control on the page being looked at — *seeing is the most
+    accurate way to say yes* — so the preview is the real dashboard, rendered
+    with the pending set, and the two choices are right under it. Built by code,
+    outside the spec, exactly like the control strip.
+    """
+    return (
+        '<section class="controls">\n'
+        "<h2>This tune is pending</h2>\n"
+        '<form method="post" action="/approve">'
+        f'<input type="hidden" name="id" value="{_escape(id)}">'
+        '<input type="hidden" name="decision" value="approve">'
+        '<button type="submit">Adopt this theme</button>'
+        "</form>\n"
+        '<form method="post" action="/approve">'
+        f'<input type="hidden" name="id" value="{_escape(id)}">'
+        '<input type="hidden" name="decision" value="deny">'
+        '<button type="submit" class="danger">Discard</button>'
+        "</form>\n"
+        "</section>"
+    )
 
 
 def _escape(text: str) -> str:

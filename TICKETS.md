@@ -204,7 +204,7 @@ compared — including a block-tier tool both paths refuse. Writing it exposed a
 calendar bug (fixed below): naming one instance while leaving `scope` unset
 silently acted on the **whole series**.
 
-### T9 — `genui/tuners.py`: pending → approved · `open`
+### T9 — `genui/tuners.py`: pending → approved · `done`
 *SPEC §3.6 (control surface), ARCHITECTURE §9.5 (`POST /tune`, `POST /approve`).*
 
 A tuned value forms a **pending** set, visible in a preview, adopted only on
@@ -212,6 +212,13 @@ approve. Tokens and drafts persist under `genui/`.
 
 **Acceptance:** a tune does not change the live theme; approve does; the pending
 set survives a restart.
+**Done** — `Tuners` keeps drafts as files (`genui/drafts/<id>.toml`) and adopts
+into `genui/tokens/approved.toml`, the only file the renderer reads; `resolve`
+lays the adopted values **over** whichever mood is chosen. The preview is the real
+dashboard at `/draft/<id>`, with Adopt/Discard under it when the request carries a
+session. Values are validated at the tune and again at adoption. 35 tests in
+`tests/test_tuners.py`; the selftest gained a 13th check (tuned → pending →
+adopted, live theme moving only on the yes).
 
 ## Stream C — seats (P3)
 

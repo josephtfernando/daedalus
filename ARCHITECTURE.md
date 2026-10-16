@@ -132,6 +132,7 @@ daedalus/                      # code repo
       seat.py namespace.py protocol.py broker.py
     genui/
       spec.py components/ renderer.py theming.py dashboard.py server.py actions.py tuners.py
+      tokens/approved.toml drafts/<id>.toml      # adopted values, pending tunes
     security/
       provenance.py sink.py quarantine.py env.py
     integrations/
@@ -325,6 +326,14 @@ daemon's loop; `ask` schedules the Discord button and answers *"waiting"* at onc
 policy's reason. The vocabulary is closed (`calendar.create|update|delete`), and
 the controls run only where the daemon started the server — `daedalus serve` is a
 read-only viewer and says so.
+
+**The tuners.** `genui/tuners.py` is the theme's pending → approved path. A tune
+writes `genui/drafts/<id>.toml` and moves nothing; `/draft/<id>` renders the real
+dashboard with the pending set and the two choices under it; only `approve`
+writes `genui/tokens/approved.toml`, which `resolve()` lays **over** whichever
+mood is chosen. Every value is checked when tuned and again when adopted — the
+approved file is the owner's, and a hand edit gets the same door. Unlike the
+controls, this needs no surface, so both `serve` and the daemon attach it.
 
 ### 7.5 Seat-to-seat collaboration
 

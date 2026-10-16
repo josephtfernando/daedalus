@@ -189,6 +189,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from .calendar.store import CalendarStore
     from .genui.dashboard import VIEWS, calendar_page, write_page
     from .genui.server import LocalServer, control_token
+    from .genui.tuners import Tuners
     from .resources.secrets import SecretStore
 
     settings = _settings(args)
@@ -198,6 +199,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         token=control_token(SecretStore(settings.home)),
         port=args.port,
         calendar=calendar,
+        tuners=Tuners(settings.home),
     )
     # Today's view is drawn once at start so that `/` opens on the calendar rather
     # than on a directory of files. A broken read must not stop the server — the
@@ -386,6 +388,7 @@ def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
 
     from .genui.actions import Controls
     from .genui.server import LocalServer, control_token
+    from .genui.tuners import Tuners
 
     try:
         token = control_token(rt.secrets)
@@ -395,6 +398,7 @@ def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
             port=0,
             calendar=rt.calendar,
             controls=Controls(rt, loop=_asyncio.get_running_loop()),
+            tuners=Tuners(rt.settings.home),
         )
         url = server.start()
     except Exception:  # noqa: BLE001 — the daemon outranks its dashboard

@@ -12,9 +12,40 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 667-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 702-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **A tune is pending, and only approval is a theme.** SPEC §3.6's *"tuned values form a **pending**
+  set; **approve** adopts them into the owner-approved store"* was prose until now: the tuners did
+  not exist, so the dashboard's theme came from a mood and nothing the owner chose could move one
+  token of it. `genui/tuners.py` is the pending → approved path. The point of the two-step is that
+  *seeing* is how a theme is judged — so a tune renders as a **preview of the real page**
+  (`/draft/<id>` is today's dashboard rendered with the pending set, with Adopt and Discard under
+  it), and the live theme does not move until one of them is taken. Four decisions:
+
+  - **The live theme is what was approved.** A tune writes `genui/drafts/<id>.toml` and touches
+    nothing else; only `approve` writes `genui/tokens/approved.toml`, which is the only file the
+    renderer reads. `resolve()` gained the adopted values as a layer **over** whichever mood is
+    chosen, so a tune can move one colour without forking a whole mood, and the mood still supplies
+    every token a partial adoption did not name.
+  - **The pending set is files, so it survives a restart** — the server between "tune" and
+    "approve" no longer throws the proposal away — and *"never mind"* is deleting the file the
+    owner can see.
+  - **Every value passes the door twice.** Once when tuned and again when adopted, against the same
+    rules a mood's own values obey (`theming.check_token`); the second pass exists because
+    `approved.toml` is a file the owner edits by hand, and a hand-edited value is entitled to the
+    same refusal as a proposed one — it arrives naming the file.
+  - **A decision is spelled, never implied.** `POST /approve` carries `decision=approve` or
+    `deny`; a POST that only names a draft is refused, because adopt and discard must never be one
+    default apart.
+
+  `daedalus serve` and the daemon both attach the tuners — unlike the calendar controls, theme
+  adoption needs no surface, because the approval is on the page itself. `POST /tune` and
+  `POST /approve` answer JSON or a browser form; `/tune` accepts flat token fields and refuses a
+  typo'd token name rather than letting it become a pending value nobody can read. The selftest
+  grew a 13th check: tuned → pending → adopted, with the live theme verified to move **only** on
+  the yes. 35 tests in `tests/test_tuners.py`.
 
 - **The dashboard's controls go through the approval split — and can't go around it.** SPEC §3.6
   has always drawn the line as *"visual → dashboard, action → Discord"*, and until now the dashboard

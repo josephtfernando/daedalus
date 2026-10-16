@@ -102,6 +102,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(_check_calendar(rt))
             report.checks.append(_check_serve(scratch))
             report.checks.append(_check_dashboard(rt))
+            report.checks.append(_check_tuners(scratch))
             report.checks.append(_check_approvals(rt))
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
@@ -383,6 +384,32 @@ def _check_dashboard(rt: Runtime) -> Check:
     if "Content-Security-Policy" not in page or "--d-accent:" not in page:
         return Check("dashboard", False, "the page carries no policy or no theme")
     return Check("dashboard", True, f"rendered the day around {marker!r}, nothing fetched")
+
+
+def _check_tuners(scratch: Settings) -> Check:
+    """A tune pends, the live theme does not move, and approval does (SPEC §3.6).
+
+    "Seeing is the most accurate way to say yes" only holds if the thing being
+    seen is not already live, so the check is the acceptance in miniature: the
+    theme is read twice with a tune in between, and once after an approval.
+    """
+    from .genui.tuners import Tuners
+
+    tuners = Tuners(scratch.home)
+    before = tuners.theme()
+
+    draft = tuners.tune({"accent": "#0aa574"}, note="selftest")
+    if tuners.theme() != before:
+        return Check("tuners", False, "a tune moved the live theme before approval")
+    if tuners.pending() == []:
+        return Check("tuners", False, "the tune did not reach the pending set")
+
+    after = tuners.approve(draft.id)
+    if after.accent != "#0aa574" or Tuners(scratch.home).theme().accent != "#0aa574":
+        return Check("tuners", False, "approval did not adopt, or did not survive a reopen")
+    if tuners.pending():
+        return Check("tuners", False, "approval left the tune pending")
+    return Check("tuners", True, f"tuned → pending → adopted {after.accent}, live theme moved only on yes")
 
 
 def _check_approvals(rt: Runtime) -> Check:

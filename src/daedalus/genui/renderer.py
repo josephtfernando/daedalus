@@ -34,7 +34,7 @@ from typing import Any, Mapping
 
 from .components import RENDERERS, VOCABULARY, render
 from .spec import Spec
-from .theming import resolve, sheet
+from .theming import Tokens, resolve, sheet
 
 __all__ = ["CSP", "FORM_CSP", "render_fragment", "render_page"]
 
@@ -70,20 +70,27 @@ def render_page(
     appendix: str = "",
     extra_css: str = "",
     csp: str = CSP,
+    overrides: Mapping[str, str] | None = None,
+    tokens: "Tokens | None" = None,
 ) -> str:
     """Bind, validate, theme and render — into one self-contained document.
 
     `mood` is what the caller *inferred* from local signals; `override` is the
-    owner's one word, and it wins. `appendix` is markup the model did not
-    compose — the dashboard's control strip, which is deliberately outside the
-    spec so that a page a model authored carries no actions. `csp` is the policy
-    the document claims for itself; the server sends the same one as a header.
+    owner's one word, and it wins. `overrides` are the theme values the owner has
+    **adopted** (T9) — they sit on top of whichever mood is chosen. `tokens`
+    replaces resolution outright: that is what a draft preview is, the page
+    rendered with a *pending* set. `appendix` is markup the model did not
+    compose — the control strip, which is deliberately outside the spec.
     """
     bound = spec.bind(values or {}, vocabulary=vocabulary or VOCABULARY)
     # The model may propose a mood — it is meant to be generative in *styling
     # choices* — but a mood from local signals outranks it, and the owner's one
-    # word outranks both.
-    tokens = resolve(inferred=mood or bound.mood, override=override)
+    # word outranks both. `tokens` given outright is a draft preview: the page
+    # rendered with a pending set, and nothing resolved.
+    if tokens is None:
+        tokens = resolve(
+            inferred=mood or bound.mood, override=override, overrides=overrides or {}
+        )
 
     title = bound.title or _FALLBACK_TITLE
     body = render_fragment(bound)

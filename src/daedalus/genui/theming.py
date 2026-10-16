@@ -27,15 +27,19 @@ plain page, not a broken one.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
+from typing import Mapping
 
 __all__ = [
     "BASE_CSS",
     "DEFAULT_MOOD",
     "MOODS",
     "MOOD_NAMES",
+    "TOKEN_NAMES",
     "TokenError",
     "Tokens",
+    "apply",
+    "check_token",
     "infer",
     "resolve",
     "sheet",
@@ -251,12 +255,51 @@ def tokens_for(mood: str) -> Tokens:
     return Tokens(**{token: values[token] for token in TOKEN_NAMES})
 
 
-def resolve(*, inferred: str = "", override: str = "") -> Tokens:
-    """The owner's override wins; otherwise the inferred mood; otherwise `calm`."""
+def check_token(name: str, value: str) -> None:
+    """One tuned value, against the same rules a mood's own values obey.
+
+    The door for a *tune*: a value that could not render must not even reach the
+    pending set, let alone an approval.
+    """
+    _check(name, value, "tune")
+
+
+def apply(tokens: Tokens, overrides: Mapping[str, str]) -> Tokens:
+    """The owner's adopted values, laid over a mood — and validated again.
+
+    The second check is not ceremony: `approved.toml` is a file the owner edits
+    by hand, and a hand-edited value gets exactly the door a proposed one did.
+    """
+    if not overrides:
+        return tokens
+    unknown = sorted(set(overrides) - set(TOKEN_NAMES))
+    if unknown:
+        raise TokenError(
+            f"unknown token{'' if len(unknown) == 1 else 's'} {', '.join(map(repr, unknown))} — "
+            f"a theme has: {', '.join(TOKEN_NAMES)}"
+        )
+    values = {name: str(overrides[name]) for name in TOKEN_NAMES if name in overrides}
+    for name, value in values.items():
+        _check(name, value, "the approved theme")
+    return replace(tokens, **values)
+
+
+def resolve(
+    *,
+    inferred: str = "",
+    override: str = "",
+    overrides: Mapping[str, str] | None = None,
+) -> Tokens:
+    """The owner's override wins; otherwise the inferred mood; otherwise `calm`.
+
+    `overrides` is what the owner has **approved** since — adopted values that
+    sit on top of whichever mood is chosen, so a tune can move one colour
+    without forking a whole mood.
+    """
     chosen = str(override or "").strip().lower()
     if chosen not in MOODS:
         chosen = str(inferred or "").strip().lower()
-    return tokens_for(chosen)
+    return apply(tokens_for(chosen), overrides or {})
 
 
 # -- inference ---------------------------------------------------------------
