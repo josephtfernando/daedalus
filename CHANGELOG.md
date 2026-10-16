@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 291-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 293-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -484,8 +484,10 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   - **`scope=future` splits them too,** on the same date boundary as the rule and the exclusions —
     a split series that kept both halves' added dates would double-book the owner.
   - It also round-trips: `RDATE` is written back in the shape it was read, `VALUE=DATE` for an
-    all-day event included. The table shape changed with it, so `SCHEMA_VERSION` goes to 4 and the
-    derived cache **rebuilds** — as it always does, `events.ics` remaining the truth.
+    all-day event included, and the definition view (`list`, `get`) says `+2 extra dates` so a view
+    of the *definitions* does not contradict a view of the occurrences. The table shape changed with
+    it, so `SCHEMA_VERSION` goes to 4 and the derived cache **rebuilds** — as it always does,
+    `events.ics` remaining the truth.
   - Not a tool parameter: the model has no `rdate` argument, and does not need one (two events say
     the same thing). This is a *fidelity* fix — the store must not lose what the owner's file says.
 

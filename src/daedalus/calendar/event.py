@@ -273,6 +273,11 @@ class Event:
             parts.append(f"@ {self.location}")
         if self.rrule and show_rule:
             parts.append(f"↻ {self.rule_text()}")
+        if self.rdates:
+            # The definition view has to admit to the extra dates, or `list`
+            # would quietly under-report what `agenda` then shows.
+            count = len(self.rdates)
+            parts.append(f"+{count} extra date{'' if count == 1 else 's'}")
         if self.reminders:
             parts.append(f"⏰ {self.reminders[0].lead_text()}")
         text = " ".join(parts)

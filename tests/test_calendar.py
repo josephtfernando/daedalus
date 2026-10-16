@@ -958,3 +958,24 @@ def test_a_schema_bump_rebuilds_rather_than_serving_an_empty_calendar(
     reopened = CalendarStore(tmp_path / "calendar")
 
     assert [e.summary for e in reopened.series()] == ["Dentist"]
+
+
+def test_moving_one_added_date_leaves_the_rule_and_the_rest_alone(store: CalendarStore) -> None:
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-16T09:00"])
+
+    store.update(series.uid, recurrence_id="2026-10-16T09:00", scope="this", start="2026-10-16T14:00")
+
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 20))
+    assert [e.start for e in rows] == ["2026-10-12T09:00", "2026-10-16T14:00", "2026-10-19T09:00"]
+
+
+def test_the_definition_view_admits_to_the_extra_dates(store: CalendarStore) -> None:
+    """`list` shows definitions; one that hides its RDATEs would contradict `agenda`."""
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, rdates=["2026-10-16T09:00", "2026-10-23T09:00"])
+
+    assert "+2 extra dates" in store.series()[0].line()
+    one = store.add(summary="Workshop", start="2026-11-02T09:00")
+    store.update(one.uid, rdates=["2026-11-05T09:00"])
+    assert "+1 extra date" in store.get(one.uid).line()  # type: ignore[union-attr]
