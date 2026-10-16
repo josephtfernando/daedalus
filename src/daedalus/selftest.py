@@ -101,6 +101,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(_check_memory(rt))
             report.checks.append(_check_calendar(rt))
             report.checks.append(_check_serve(scratch))
+            report.checks.append(_check_dashboard(rt))
             report.checks.append(_check_approvals(rt))
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
@@ -313,6 +314,75 @@ def _check_calendar(rt: Runtime) -> Check:
     return Check(
         "calendar", True, f"wrote+repeated+moved+searched+bulk+imported {event.uid[:8]}"
     )
+
+
+def _check_dashboard(rt: Runtime) -> Check:
+    """The page must show the owner's own data, and reach for nothing.
+
+    SPEC §8.5 puts "dashboard render" among the things that end provisioning, and
+    the two failures worth catching are the ones a rendered page hides perfectly.
+    One is a page that goes looking for something on a network — invisible in a
+    screenshot, obvious in a CSP violation. The other is a page that renders
+    *around* the owner's data instead of showing it: a tidy empty grid looks like
+    a working dashboard, and is the same thing as a broken one.
+
+    So the check writes an event to the real scratch calendar, reads it back the
+    way every other read does — as an *occurrence* — and insists the marker is on
+    the page, in a document that names no remote origin, and that it never entered
+    the spec the model would have held.
+    """
+    from datetime import datetime, timedelta
+
+    from .genui.components import VOCABULARY
+    from .genui.renderer import render_page
+    from .genui.spec import Spec
+
+    marker = "selftest dashboard probe"
+    day = datetime.now().date()
+    rt.calendar.add(
+        summary=marker, start=f"{day.isoformat()}T15:00", end=f"{day.isoformat()}T15:30"
+    )
+    begin = datetime.combine(day, datetime.min.time())
+    on_day = rt.calendar.occurrences(begin, begin + timedelta(days=1))
+    if not any(event.summary == marker for event in on_day):
+        return Check("dashboard", False, "the event the page was to show never came back")
+
+    spec = Spec.parse(
+        {
+            "title": "Today",
+            "blocks": [
+                {
+                    "component": "calendar",
+                    "props": {
+                        "view": "day",
+                        "days": {"bind": "calendar.days"},
+                        "today": day.isoformat(),
+                    },
+                }
+            ],
+        },
+        vocabulary=VOCABULARY,
+    )
+    # The values are built here, from the store, and are the thing §6 keeps off the
+    # wire: the model composes the keys, the laptop writes the values.
+    page = render_page(
+        spec,
+        values={
+            "calendar.days": [
+                [day.isoformat(), day.strftime("%a"), " · ".join(e.summary for e in on_day)]
+            ]
+        },
+    )
+    if marker in json.dumps(spec.to_dict()):
+        return Check("dashboard", False, "the owner's data was in the model-visible spec")
+    if marker not in page:
+        return Check("dashboard", False, "the page did not carry the owner's own event")
+    for forbidden in ("<script", "http://", "https://", "url(", "@import"):
+        if forbidden in page:
+            return Check("dashboard", False, f"the page reaches for {forbidden!r}")
+    if "Content-Security-Policy" not in page or "--d-accent:" not in page:
+        return Check("dashboard", False, "the page carries no policy or no theme")
+    return Check("dashboard", True, f"rendered the day around {marker!r}, nothing fetched")
 
 
 def _check_approvals(rt: Runtime) -> Check:

@@ -137,14 +137,18 @@ event appears on the page while being absent from any model-visible spec, proven
 together, before and after rendering. **Done** — 29 tests in
 `tests/test_genui_render.py`.
 
-### T10 — Selftest: dashboard render · `open`
+### T10 — Selftest: dashboard render · `done`
 *SPEC §8.5 step 12 ("dashboard render" is part of the mandatory end-to-end verification).*
 
-The selftest has ten checks and none of them renders anything, though the spec
-lists it among the things that must be green.
+The twelfth check renders a day view from the scratch calendar: an event written,
+read back as an occurrence, bound into a `calendar` block, and required to appear
+on a page that names no remote origin and never had the value in the
+model-visible spec.
 
-**Acceptance:** a check renders a dashboard from a fixed context and asserts the
-HTML is self-contained and contains the calendar value it was given.
+**Acceptance:** a check renders a dashboard and asserts the HTML is self-contained
+and contains the calendar value it was given. **Done** — `_check_dashboard`, with
+two new renderer tests for what it exposed: `Component.check` was running before a
+binding resolved, so it is now deferred to the pass that has the values.
 
 ### T7 — The calendar dashboard: day / week / month · `open`
 *SPEC §5.5 line 317.*

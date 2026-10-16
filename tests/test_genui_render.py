@@ -234,6 +234,51 @@ def test_a_spec_knows_whether_it_still_has_bindings() -> None:
     assert not make(LIST_SPEC).has_bindings()
 
 
+def test_a_cross_prop_rule_waits_for_the_values_and_then_still_fires() -> None:
+    """A rule about a *shape* cannot run on a key — and must not be dropped."""
+    spec = make(
+        {
+            "blocks": [
+                {"component": "table", "props": {"columns": ["a"], "rows": {"bind": "rows"}}}
+            ]
+        }
+    )
+
+    # Parsing succeeds: the prop is a key, so there is nothing to check yet, and
+    # running the rule now would be a TypeError on a Binding, not a refusal.
+    assert spec.has_bindings()
+    assert "1" in render_page(spec, values={"rows": [["1"], ["2"]]})
+
+    # But the rule is not skipped, only deferred: binding re-parses with values,
+    # and a row wider than the headings is refused there in the usual voice.
+    with pytest.raises(SpecError) as refused:
+        render_page(spec, values={"rows": [["1", "2"]]})
+
+    assert "row 1" in str(refused.value)
+    assert "wide" in str(refused.value) or "1 columns" in str(refused.value)
+
+
+def test_a_bound_calendar_day_is_held_to_the_row_shape_after_binding() -> None:
+    spec = make(
+        {
+            "blocks": [
+                {
+                    "component": "calendar",
+                    "props": {"view": "day", "days": {"bind": "calendar.days"}},
+                }
+            ]
+        }
+    )
+
+    page = render_page(spec, values={"calendar.days": [["2026-10-16", "Fri", "standup"]]})
+    assert "2026-10-16" in page and "standup" in page
+
+    with pytest.raises(SpecError) as refused:
+        render_page(spec, values={"calendar.days": [["2026-10-16"]]})
+
+    assert "[date, weekday, what is on it]" in str(refused.value)
+
+
 # -- the mood reaches the page -----------------------------------------------
 
 

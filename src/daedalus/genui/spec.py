@@ -255,9 +255,14 @@ def _parse_block(
     for key, value in props_raw.items():
         prop = component.props[key]
         props[key] = _coerce(prop, value, f"{where} ({name}).{key}", values)
-    if component.check is not None:
+    if component.check is not None and not any(
+        _has_binding(value) for value in props.values()
+    ):
         # A cross-prop rule refuses the *spec*, at the door, in the same voice as
-        # every other refusal — not a render that half-succeeds.
+        # every other refusal — not a render that half-succeeds. It waits for a
+        # second pass when a prop is still a binding, because a rule about a
+        # shape cannot run on a key: `Spec.bind()` parses again with the values,
+        # and this is where the rule gets its chance.
         try:
             component.check(props)
         except SpecError as exc:

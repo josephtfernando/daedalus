@@ -12,9 +12,18 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 490-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 492-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The self-test renders a dashboard, because the spec says it must.** SPEC §8.5 lists *"dashboard
+  render"* among the checks that end provisioning, and it was the one item on that list nothing
+  performed. The twelfth check now writes an event to the scratch calendar, reads it back as an
+  **occurrence** the way every other read does, binds it into a rendered day view, and insists the
+  marker is on the page — in a document that names no remote origin, carries a policy, and never had
+  the value in the model-visible spec. The two failures it exists to catch are the ones a rendered
+  page hides perfectly: one that reaches for something on a network, and one that renders *around*
+  the owner's data. A tidy empty grid looks exactly like a working dashboard.
 
 - **A set of events can be addressed by the day it falls on, and moved by a date delta.** A calendar
   the owner talks to has to hear *"the coming weekend Sunday"*, and the two things that fall on a day
@@ -619,6 +628,14 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **A cross-prop rule no longer runs on a key.** `Component.check` refuses a `table` row wider than
+  its headings and a `calendar` day that is not `[date, weekday, what is on it]` — but it ran during
+  parsing, and a prop that is still a **binding** is a key, not a shape: the calendar view reached
+  into `props["days"]` and iterated a `Binding`, which is a `TypeError` rather than a refusal. The
+  rule now waits for the pass that has the values, and a test pins that it is *deferred, not skipped*
+  — a bound row of the wrong width is refused at bind time, in the same voice as a literal one. Found
+  the moment the new dashboard check asked a bound calendar to render, which is what a gate is for.
 
 - **The proactive gate no longer goes red at lunchtime.** The selftest probe drives a **pinned**
   sequence — a silent 03:00 tick, then a noon tick that must speak — but each run recorded the job's
