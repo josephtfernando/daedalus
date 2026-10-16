@@ -14,7 +14,8 @@ from datetime import datetime
 from typing import Any
 
 from .approvals.middleware import ApprovalMiddleware
-from .cabinet.seat import DEFAULT_SEAT, Seat, builtin_charters, load_charters
+from .cabinet.namespace import memory_for
+from .cabinet.seat import DEFAULT_SEAT, Seat, builtin_charters, load_charters, pick
 from .calendar.store import CalendarStore
 from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
@@ -56,7 +57,9 @@ class Runtime:
     settings: Settings
     tools: ToolRegistry
     model: ModelClient
-    memory: MemoryStore
+    #: Every namespace of memory. The store a turn actually reads is
+    #: :attr:`memory` — the active seat's handle onto this root.
+    memory_root: MemoryStore
     calendar: CalendarStore
     capabilities: CapabilityRegistry
     runner: CapabilityRunner
@@ -74,6 +77,23 @@ class Runtime:
     session: Session | None = None
 
     # -- turn bookkeeping -------------------------------------------------
+
+    @property
+    def seat(self) -> Seat:
+        """The seat this turn runs as. Never nothing: a turn always has an identity."""
+        return pick(self.seats, self.session.seat if self.session else None)
+
+    @property
+    def memory(self) -> MemoryStore:
+        """The memory this turn reads and writes through: the active seat's namespace.
+
+        A property rather than a field, so no tool call can reach the wrong
+        namespace by forgetting an argument — `ctx.memory` *is* the seat's store.
+        With no session (startup, the self-test, a CLI probe) it is the
+        coordinator's, which is the namespace every fact written before seats had
+        namespaces already lives in.
+        """
+        return memory_for(self.memory_root, self.seat)
 
     def remember(self, event: InboundEvent, user_text: str, assistant_text: str) -> None:
         if not assistant_text:
@@ -206,7 +226,7 @@ def build_runtime(
         settings=settings,
         tools=registry,
         model=model,
-        memory=MemoryStore(settings.home / "memory"),
+        memory_root=MemoryStore(settings.home / "memory"),
         calendar=CalendarStore(settings.home / "calendar"),
         capabilities=CapabilityRegistry(settings.home / "capabilities"),
         runner=CapabilityRunner(settings.home / "capabilities"),

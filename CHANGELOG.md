@@ -12,9 +12,42 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 570-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 612-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **Each seat remembers its own things — memory is namespaced now.** SPEC §7 has said since
+  the start that a seat is *identity + charter + memory namespace*, and T11 shipped the first
+  two; the `namespace` field existed and went nowhere, so every seat would have read the same
+  flat memory and one identity's facts would have surfaced in another's brief the moment a
+  second seat was switched on. Memory is now scoped by the seat a turn runs as. Four decisions:
+
+  - **The namespace is a directory, not a column.** `memory/facets/` is the default namespace
+    (`daedalus`), and any other seat reads `memory/namespaces/<key>/facets/`. Putting it in the
+    tree rather than in a metadata field means the filesystem *is* the list of namespaces (new
+    `memory/namespaces.py`), a hand-made directory is picked up without a roster, and moving
+    a note between seats is `mv` — which is the honest behaviour for a file-first store, because
+    the file wins and the directory says whose it is.
+  - **The default namespace is the tree that was already there.** `memory/facets/` is
+    `daedalus`, so every fact the owner has told Daedalus keeps behaving exactly as it did and
+    nothing is migrated, copied, or rewritten on upgrade. The one namespace that may not be
+    *moved* is the coordinator's — a charter that tried would orphan every existing fact, so it
+    is refused at load with that reason.
+  - **The index carries the namespace, and rebuilds instead of migrating.** The FTS5 cache
+    gained a `namespace` column, so `REQUIRED_COLUMNS` now includes it: an install whose index
+    predates this ticket **fails the column check and is rebuilt from the notes**, rather than
+    being read with a guess. `rebuild_index` walks *every* namespace, because a rebuild scoped
+    to the handle that triggered it would empty every other seat's memory — the failure would be
+    a seat that forgot everything the first time anyone else's index was repaired.
+  - **`Runtime.memory` is a property, not a field.** It resolves to the active seat's handle, so
+    a tool call cannot reach the wrong namespace by forgetting an argument, and `Runtime.memory_root`
+    is the field that names the whole tree. `build_system_prompt` resolves its memory from the
+    seat it was *passed* rather than from the ambient session, so a prompt stays a function of
+    its arguments. `memory_for`/`namespace_for` in the new `cabinet/namespace.py` are the only
+    place a seat becomes a namespace.
+  - Seat names are directory names, so they are validated (`^[a-z0-9][a-z0-9_-]*$`) and a name
+    that could escape the tree is refused with the path it came from. `pick()` now matches a seat
+    by key **or** display name, so the owner can say `Melinoë` and get `melinoe`.
 
 - **The seat charters are the owner's files now.** The eight charters lived as string literals in
   `cabinet/seat.py`, which made "not that — more like this" an edit to Python. They are now files at

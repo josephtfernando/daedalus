@@ -28,6 +28,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..memory.namespaces import DEFAULT_NAMESPACE, NamespaceError, check
+
 __all__ = [
     "BUILTIN",
     "CHART_FIELDS",
@@ -216,11 +218,31 @@ def read_charter(path: Path) -> Seat:
     traits = raw.get("traits", [])
     if not isinstance(traits, list) or any(not isinstance(t, str) for t in traits):
         raise CharterError(f"{path}: `traits` is a list of strings, not {traits!r}")
+    key = Path(path).stem.lower()
+    try:
+        check(key, where=str(path))
+    except NamespaceError as exc:
+        # The key names the seat's memory directory, so a key that cannot be a
+        # directory is not a seat the store can hold facts for.
+        raise CharterError(str(exc)) from exc
+    namespace = str(raw.get("namespace") or "").strip()
+    if namespace:
+        try:
+            check(namespace, where=str(path))
+        except NamespaceError as exc:
+            raise CharterError(str(exc)) from exc
+        if key == DEFAULT_SEAT and namespace != DEFAULT_NAMESPACE:
+            raise CharterError(
+                f"{path}: daedalus cannot point its memory elsewhere — the coordinator's "
+                f"namespace is {DEFAULT_NAMESPACE!r}, which is where every fact written "
+                "before seats had namespaces already lives. Leave `namespace` out of this "
+                "file."
+            )
     return Seat(
         name=name,
         charter=charter,
-        key=Path(path).stem.lower(),
-        namespace=str(raw.get("namespace") or "").strip(),
+        key=key,
+        namespace=namespace,
         active=active,
         traits=list(traits),
         source=str(path),
@@ -256,12 +278,17 @@ def write_charter(home: Path, seat: Seat) -> Path:
 def pick(charters: Mapping[str, Seat], name: str | None) -> Seat:
     """The seat a name refers to. Never nothing — a turn always has an identity.
 
-    An unknown name is not an error worth stopping a turn for: the owner's phrase
-    is honest enough ("Daedalus, ...") and the default seat is the seat that
-    already carries the whole system in its head.
+    Matched on the key or on the name the owner sees ("melinoe" and "Melinoë" are
+    the same seat), because both spellings reach here from a session, a CLI flag,
+    or a charter edit. An unknown name is not an error worth stopping a turn for:
+    the owner's phrase is honest enough ("Daedalus, ..."), and the default seat is
+    the seat that already carries the whole system in its head.
     """
-    key = str(name or DEFAULT_SEAT).strip().lower()
-    return charters.get(key) or charters[DEFAULT_SEAT]
+    wanted = str(name or DEFAULT_SEAT).strip().lower()
+    for key, seat in charters.items():
+        if wanted and wanted in (key.lower(), seat.name.lower()):
+            return seat
+    return charters[DEFAULT_SEAT]
 
 
 def _string(value: str) -> str:

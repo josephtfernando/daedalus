@@ -217,7 +217,7 @@ actionable error; the built-in charters remain the fallback for a fresh install.
 **Done** — 28 tests in `tests/test_cabinet.py`, including the prompt-level claim:
 an edited `athena.toml` reaches the system prompt and the built-in does not.
 
-### T12 — `cabinet/namespace.py`: seat memory namespaces · `open`
+### T12 — `cabinet/namespace.py`: seat memory namespaces · `done`
 *ARCHITECTURE §12 ("identity + charter + memory namespace"). `Seat.namespace` exists and is used nowhere.*
 
 Scope memory reads and writes by seat. Daedalus's own namespace must keep
@@ -225,6 +225,14 @@ behaving exactly as it does today, or every existing fact is orphaned.
 
 **Acceptance:** a fact written under seat A is not recalled under seat B; a fact
 written before this ticket is still recalled by Daedalus afterwards.
+**Done** — the namespace is a directory: `memory/facets/` is `daedalus` (so nothing
+moves on upgrade), other seats read `memory/namespaces/<key>/facets/`. The index
+gained a `namespace` column, so an install whose index predates it is rebuilt from
+the notes rather than mis-read; `rebuild_index` walks every namespace. `Runtime.memory`
+became a property over `memory_root` so no call site can forget the scope. 42 tests in
+`tests/test_namespace.py`, including an old-schema index built by hand and rebuilt, a
+charter file naming a namespace that could escape the tree, and a scripted turn under
+`athena` whose fact is invisible to the coordinator.
 
 ### T13 — Activate one seat · `open`
 *SPEC §7 (no seat is wired until the proof-of-life holds), AGENTS.md.*

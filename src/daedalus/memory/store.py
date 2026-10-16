@@ -4,6 +4,12 @@ File-first: the markdown **is** the memory. The SQLite index exists for recall
 speed and can be rebuilt from the notes at any time (:meth:`rebuild_index`), so
 an owner who edits a facet by hand is not fighting a second, hidden copy of the
 truth.
+
+A store is **one namespace's** handle onto that tree (SPEC §7). Everything it
+writes goes to that namespace and everything it reads comes from it, so the object
+a turn holds *is* the seat's memory; there is no argument a caller can forget.
+:meth:`scoped` hands out the other handles, and :meth:`rebuild_index` — being
+about the one shared cache — always rebuilds every namespace at once.
 """
 
 from __future__ import annotations
@@ -15,19 +21,41 @@ from ..security.provenance import DataClass, Origin
 from . import markdown as md
 from .facets import normalize_facet
 from .index import MemoryIndex
+from .namespaces import DEFAULT_NAMESPACE, check, facets_dir, facets_dirs
 from .schema import MemoryEntry
 
 
 class MemoryStore:
-    def __init__(self, root: Path) -> None:
-        self.root = root
-        self.facets_dir = root / "facets"
+    def __init__(self, root: Path, namespace: str = DEFAULT_NAMESPACE) -> None:
+        self.root = Path(root)
+        self.namespace = check(namespace)
+        self.facets_dir = facets_dir(self.root, self.namespace)
         self.facets_dir.mkdir(parents=True, exist_ok=True)
-        self.index = MemoryIndex(root / "index.sqlite")
-        # An index written before the bitemporal columns existed cannot be
-        # altered in place; rebuild it from the notes rather than lose recall.
+        self.index = MemoryIndex(self.root / "index.sqlite")
+        self._handles: dict[str, MemoryStore] = {}
+        # An index written before the bitemporal or namespace columns existed
+        # cannot be altered in place; rebuild it from the notes rather than lose
+        # recall.
         if not self.index.has_columns():
             self.rebuild_index()
+
+    # -- namespaces -------------------------------------------------------
+
+    def scoped(self, namespace: str) -> "MemoryStore":
+        """A handle on another namespace, sharing this root and this index.
+
+        Handles are cached, so asking per turn is a dict lookup rather than
+        another SQLite open. They are also interchangeable: any handle can see
+        and rebuild the whole tree, it just *reads* through one namespace.
+        """
+        name = check(namespace)
+        if name == self.namespace:
+            return self
+        handle = self._handles.get(name)
+        if handle is None:
+            handle = MemoryStore(self.root, name)
+            self._handles[name] = handle
+        return handle
 
     # -- write ------------------------------------------------------------
 
@@ -48,6 +76,7 @@ class MemoryStore:
             data_class=data_class,
             confidence=confidence,
             source_ref=source_ref,
+            namespace=self.namespace,
         )
         self.index.add(entry)
         self._append_markdown(entry)
@@ -82,7 +111,7 @@ class MemoryStore:
 
     def _rewrite_entry_meta(self, entry: MemoryEntry) -> None:
         """Replace just this entry's metadata comment, leaving the rest intact."""
-        path = self._facet_path(entry.facet)
+        path = facets_dir(self.root, entry.namespace) / f"{entry.facet}.md"
         if not path.exists():
             return
         text = path.read_text(encoding="utf-8")
@@ -98,15 +127,24 @@ class MemoryStore:
         path.write_text(text, encoding="utf-8")
 
     def rebuild_index(self) -> int:
-        """Reconstruct the index from the facet notes. Returns entries indexed."""
+        """Reconstruct the index from the notes. Returns entries indexed.
+
+        **Every namespace at once.** The cache is one table over one root, so a
+        scoped handle that rebuilt only its own namespace would drop every other
+        seat's facts on the floor — and the next recall would report an empty
+        memory for a seat that has plenty to say. The namespace comes from where
+        the note lives (:mod:`daedalus.memory.namespaces`), never from its text.
+        """
         self.index.reset()
         total = 0
-        for path in sorted(self.facets_dir.glob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            for entry in md.parse_facet(text, fallback_facet=path.stem):
-                if entry.content:
-                    self.index.add(entry)
-                    total += 1
+        for namespace, directory in facets_dirs(self.root):
+            for path in sorted(directory.glob("*.md")):
+                text = path.read_text(encoding="utf-8")
+                for entry in md.parse_facet(text, fallback_facet=path.stem):
+                    if entry.content:
+                        entry.namespace = namespace
+                        self.index.add(entry)
+                        total += 1
         return total
 
     # -- read -------------------------------------------------------------
@@ -122,6 +160,7 @@ class MemoryStore:
         return self.index.search(
             query,
             facet=normalize_facet(facet) if facet else None,
+            namespace=self.namespace,
             limit=limit,
             include_invalid=include_invalid,
         )
@@ -131,20 +170,24 @@ class MemoryStore:
     ) -> list[MemoryEntry]:
         return self.index.all_for_facet(
             normalize_facet(facet) if facet else None,
+            namespace=self.namespace,
             limit=limit,
             include_invalid=include_invalid,
         )
 
     def get(self, entry_id: str) -> MemoryEntry | None:
+        """One entry by id, wherever it lives. An id is unique across the tree."""
         return self.index.get(entry_id)
 
     def count(self) -> int:
-        return self.index.count()
+        return self.index.count(namespace=self.namespace)
 
     def inventory(self, limit: int = 8, *, allow_local_only: bool = True) -> str:
         # Over-fetch before filtering: a page of local_only facts must not hide
         # the shareable ones behind them.
-        rows = self.index.all_for_facet(None, limit=max(limit * 4, limit))
+        rows = self.index.all_for_facet(
+            None, namespace=self.namespace, limit=max(limit * 4, limit)
+        )
         if not allow_local_only:
             rows = [r for r in rows if r.data_class is not DataClass.LOCAL_ONLY]
         rows = rows[:limit]

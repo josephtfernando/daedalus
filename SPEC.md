@@ -205,6 +205,15 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
   FTS5 index is a **derived cache** that can be rebuilt from the notes
   (`MemoryStore.rebuild_index`). An owner editing a facet by hand is not fighting a
   hidden second copy of the truth.
+- **Memory is namespaced by seat.** Reads and writes are scoped to the seat the turn
+  runs as, so what one identity knows is not what another knows. The namespace is a
+  *directory*: `memory/facets/` is the default namespace (`daedalus`) — where every
+  fact recorded before seats had namespaces already lives — and any other seat reads
+  `memory/namespaces/<key>/facets/`. A charter may name its namespace, but `daedalus`
+  cannot be pointed elsewhere, because moving it would orphan every fact already
+  written. The index carries the namespace and `rebuild_index` walks every namespace,
+  so an index written before the column existed is **rebuilt rather than guessed at**,
+  and re-reading the notes leaves every seat's memory where it was.
 - Every entry carries **provenance, confidence, and supersession**, and is
   **bitemporal** — `valid_from` / `valid_to` plus `superseded_by`. Superseding a fact
   retires it: recall returns what is true *now*, history requires
@@ -388,6 +397,14 @@ believe — bad TOML, no charter, a field it does not know — **stops the start
 problem**, because the failure it would otherwise produce (the built-in quietly answering in place of
 the charter the owner wrote) is one they would never notice. Exactly one seat is active; two charters
 claiming the owner is refused, and none leaves the default in place.
+
+**Each seat keeps its own memory.** A seat reads and writes
+`memory/namespaces/<key>/facets/`; the key is the directory name, so it is validated
+as one. The coordinator reads `memory/facets/` at the root — the namespace
+`daedalus` — which is where every fact the owner has told Daedalus already lives, so
+the default identity's memory keeps behaving exactly as it did before seats had
+namespaces. A charter may point its seat at another namespace; Daedalus's own cannot
+be moved, since that is the tree those facts are in.
 
 ---
 

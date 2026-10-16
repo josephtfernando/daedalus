@@ -120,7 +120,7 @@ daedalus/                      # code repo
     resources/
       registry.py provisioning.py
     memory/
-      store.py index.py schema.py facets.py markdown.py
+      store.py index.py schema.py facets.py markdown.py namespaces.py
     calendar/
       store.py index.py event.py ical.py recur.py occurrences.py zones.py reminders.py
     scheduler/
@@ -143,6 +143,7 @@ daedalus/                      # code repo
 $DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
   config.toml  .env
   memory/       facets/*.md  index.sqlite
+                namespaces/<seat>/facets/*.md             # one directory per other seat
   calendar/     events.ics  index.sqlite  sync_state.json
   capabilities/ <name>/{run.py, manifest.toml, README.md, state/, .venv/}
   resources/    registry.toml  creds/            # creds encrypted, scoped
@@ -362,6 +363,7 @@ The wizard is the **owner-driven provisioning surface**: every secret enters thr
 
 ```
 id            ULID
+namespace     the seat whose fact this is; `daedalus` is the root
 facet         one of the modeled facets (§SPEC 5)
 content       text
 source_ref    pointer to origin (message id / file / url)
@@ -374,6 +376,8 @@ created_at    timestamp
 ```
 
 Store: `memory/facets/<facet>.md` (**source of truth**, Obsidian-compatible: YAML frontmatter + one list item per entry) + `memory/index.sqlite` (**derived** FTS5 cache, rebuildable from the notes; optional embeddings column). Validity is enforced on read — a superseded or expired entry is not recalled unless history is asked for.
+
+**Namespaces are directories.** `memory/facets/` is the namespace `daedalus` — the default identity's, and where every fact written before seats had namespaces already lives. Another seat reads `memory/namespaces/<key>/facets/`. The directory *is* the namespace, so the filesystem lists them (`memory/namespaces.py`); a store handle is bound to one and every read narrows to it, while `rebuild_index` walks all of them at once. One `id` is unique across the tree, so a handle shares the root and the index with the others and only the boundary differs.
 
 ### 8.2 Capability manifest (`manifest.toml`)
 

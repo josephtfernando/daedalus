@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..cabinet.namespace import memory_for
 from ..cabinet.seat import pick
 from ..scheduler.cron import CronError  # noqa: F401  (documented in the prompt)
 from ..surface.base import InboundEvent
@@ -96,6 +97,10 @@ def build_system_prompt(
     include_local_only: bool | None = None,
 ) -> str:
     chosen = pick(ctx.seats, seat)
+    # Resolved from the seat this prompt is *for*, not from the ambient session: a
+    # prompt must be a function of (ctx, seat), or a caller that passes `seat=`
+    # without a session gets one identity's charter over another's memory.
+    memory = memory_for(ctx.memory_root, chosen)
     grants = ctx.approvals.grants.all()
     grant_text = "\n".join(f"- {g.action} on {g.scope}" for g in grants) or "(none)"
     if include_local_only is None:
@@ -106,7 +111,7 @@ def build_system_prompt(
         capabilities=ctx.capabilities.inventory(),
         resources=ctx.resources.inventory(),
         calendar=ctx.calendar.inventory(allow_local_only=include_local_only),
-        memory=ctx.memory.inventory(allow_local_only=include_local_only),
+        memory=memory.inventory(allow_local_only=include_local_only),
         tools="\n".join(f"- {t.name}: {t.description.splitlines()[0]}" for t in ctx.tools.all()),
         grants=grant_text,
     )

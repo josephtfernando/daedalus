@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..security.provenance import DataClass, Origin
+from .namespaces import DEFAULT_NAMESPACE
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -37,6 +38,10 @@ class MemoryEntry:
     data_class: DataClass = DataClass.PRIVATE
     confidence: float = 0.8
     source_ref: str | None = None
+    #: Which identity's memory this is (SPEC §7). Not written into the note: the
+    #: namespace is the directory the note lives in, so a fact moved between
+    #: namespaces is a fact that moved.
+    namespace: str = DEFAULT_NAMESPACE
     valid_from: float = field(default_factory=time.time)
     valid_to: float | None = None
     superseded_by: str | None = None
@@ -52,6 +57,7 @@ class MemoryEntry:
             "data_class": self.data_class.value,
             "confidence": self.confidence,
             "source_ref": self.source_ref,
+            "namespace": self.namespace,
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
             "superseded_by": self.superseded_by,
