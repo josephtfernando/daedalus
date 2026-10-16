@@ -91,7 +91,10 @@ class ModelClient:
                 self.ledger.record(provider.name)
                 result = await provider.complete(messages, tools, on_delta)
             except Exception as exc:  # noqa: BLE001 — try the next provider on anything
-                errors.append(f"{provider.name}: {exc}")
+                # An exception with an empty message (`httpx.ReadTimeout()`) would
+                # read as `provider: ` — name the *kind* of failure instead.
+                detail = str(exc).strip() or type(exc).__name__
+                errors.append(f"{provider.name}: {detail}")
                 continue
             self.last_provider = provider.name
             return result

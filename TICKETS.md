@@ -287,6 +287,20 @@ dedup** (never exactly-once), correlation and causation links.
 **Acceptance:** a message survives a restart; a redelivered message is deduped; a
 reply carries the id of the request it answers.
 
+### T18 — Missed jobs queue and stagger on startup · `open`
+*The owner's ask (16 Oct): "jobs are queued up when not run, and run when started
+up but like not all at the same time, run only the needed tasks."*
+
+A job whose tick fell while the daemon was down should be **queued, not
+dropped** — and on startup the queue drains **staggered**, one at a time, never
+a pile. "Only the needed tasks" is the queue's judgement: a probe whose moment
+has clearly passed (a disk check from six hours ago) is skipped with a note
+rather than fired late, while a morning briefing is still worth delivering late.
+
+**Acceptance:** a job missed while the daemon was down runs after startup; two
+missed jobs run one after the other, never simultaneously; a stale job is
+skipped with a visible note.
+
 ### T15 — P4: reach it from the phone · `open`
 *SPEC §10 (P4), §3.5 (`push` / Taildrop).*
 

@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 716-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 721-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -41,6 +41,22 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
     pointing at a dead port is a broken dashboard on the phone rather than an error anywhere.
 
   14 tests in `tests/test_publish.py`.
+
+### Fixed
+
+- **Approving a capability's network access now actually records the yes.** The Melinoë gate refuses
+  an egressing capability until a standing grant keyed `capability:<name>` exists — and **nothing in
+  the system ever wrote one**. So the model relayed the question as an `ask` ("Do you approve this?"),
+  the owner typed "yes, approve discord.com", the model heard it, and had no tool to record it: verify
+  failed again, the turn circled through re-authoring and file reads, and died at the step limit —
+  which is exactly what happened to the first capability the owner asked for (a Codeforces contest
+  reminder) on its first night, twice. The ask now happens in the `capability` tool itself, as a real
+  approval — **buttons**, the same shape the engine's ask-branch uses — and the answer is written to
+  the grant store the gate reads. Asked once per capability: after a yes, verify and the scheduled
+  runs never ask again. 5 tests in `tests/test_capabilities.py`.
+- **A model provider failing with an empty message no longer reads as `nim-step-5-preview: `** — the
+  exception's *kind* is named when the message is blank (`ReadTimeout`), so "I couldn't reach a model"
+  says what actually happened on every link of the chain.
 
 - **A tune is pending, and only approval is a theme.** SPEC §3.6's *"tuned values form a **pending**
   set; **approve** adopts them into the owner-approved store"* was prose until now: the tuners did

@@ -11,9 +11,15 @@ from typing import Any, TYPE_CHECKING
 
 from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
+from ..approvals.classify import Assessment, Level
+from ..approvals.grants import Grant
+from ..approvals.risk import Risk
 from ..capabilities.authoring import materialize
 from ..capabilities.manifest import Caps, Manifest, Scopes
 from ..capabilities.verify import verify_capability
+from ..calendar.event import normalise_when, parse_iso
+from ..security.provenance import DataClass
+from ..surface.base import ApprovalRequest
 from .base import Tool, ToolResult, params
 
 if TYPE_CHECKING:
@@ -171,18 +177,22 @@ class CapabilityTool(Tool):
         )
         materialize(ctx.capabilities.root, manifest, run_py=run_py, why=str(args.get("why", "")))
 
-        # Melinoë gate. Egress needs an owner-approved grant before we exercise it.
+        # Melinoë gate. Egress needs an owner-approved grant before we exercise
+        # it — and the ask happens here, as a real approval with buttons, so the
+        # owner's yes is *recorded* rather than relayed and lost.
+        note = ""
         if manifest.scopes.needs_egress():
-            grant = ctx.approvals.grants.find("capability", f"capability:{name}")
-            allow = grant is not None
+            allowed, note = await self._egress_approved(manifest, ctx)
             report = await verify_capability(
-                manifest, ctx.runner, sample_args=args.get("args") or {}, allow_egress=allow
+                manifest, ctx.runner, sample_args=args.get("args") or {}, allow_egress=allowed
             )
         else:
             report = await verify_capability(manifest, ctx.runner, sample_args=args.get("args") or {})
 
         ctx.capabilities.register(manifest)  # registered either way; verified flag decides scheduling
         lines = [report.summary()]
+        if note:
+            lines.append(note)
         if report.ok:
             manifest.mark_verified()
             ctx.capabilities.register(manifest)
@@ -196,6 +206,49 @@ class CapabilityTool(Tool):
         else:
             lines.append(f"{name!r} registered but NOT verified — it will not be scheduled unattended")
         return ToolResult(ok=report.ok, output="\n".join(lines), data={"verified": report.ok, "name": name})
+
+    async def _egress_approved(self, manifest: Manifest, ctx: "Runtime") -> tuple[bool, str]:
+        """Whether this capability may reach the network — asking the owner **once**.
+
+        The Melinoë gate refuses an egressing capability until the owner has
+        approved it, and the record it looks for is a standing grant keyed
+        ``capability:<name>``. Until now nothing ever *wrote* that grant: the
+        model relayed the question as text, heard "yes", and could not record
+        it — so verify failed again and the turn circled into its step limit.
+        The ask now happens here, as a real approval (buttons, the same shape
+        the engine's ask-branch uses), and the answer is written where the gate
+        reads it. After a yes, verify and the scheduler never ask again.
+        """
+        scope = f"capability:{manifest.name}"
+        if ctx.approvals.grants.find("capability", scope) is not None:
+            return True, ""
+        if ctx.surface is None:
+            return False, (
+                f"{manifest.name!r} needs network access ({', '.join(manifest.scopes.net)}) "
+                "and no surface is attached to ask through"
+            )
+        hosts = ", ".join(manifest.scopes.net)
+        approved = await ctx.surface.approve(
+            ApprovalRequest(
+                action="capability",
+                scope=scope,
+                reason="it reaches the network on a schedule, so it asks once and is remembered",
+                args={"name": manifest.name, "net": list(manifest.scopes.net)},
+                action_hash=ctx.approvals.action_hash("capability", {"name": manifest.name}),
+                title=f"Allow network access for {manifest.name!r}",
+                summary=f"reach {hosts} on a schedule, without asking again",
+                level="caution",
+                note="egress — the approval is remembered as a standing grant",
+                affirm_label=f"Allow {hosts[:60]}",
+                deny_label="Don't allow",
+            )
+        )
+        if not approved:
+            return False, f"{manifest.name!r} was not allowed network access — it stays unverified"
+        ctx.approvals.grants.add(
+            Grant(action="capability", scope=scope, note=f"egress approved: {hosts}")
+        )
+        return True, f"network access allowed for {hosts} — remembered as a standing grant"
 
     async def _run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         manifest = ctx.capabilities.get(str(args.get("name", "")))
@@ -215,12 +268,16 @@ class CapabilityTool(Tool):
         manifest = ctx.capabilities.get(str(args.get("name", "")))
         if manifest is None:
             return ToolResult.error("no such capability")
-        allow = not manifest.scopes.needs_egress() or ctx.approvals.grants.find("capability", f"capability:{manifest.name}") is not None
-        report = await verify_capability(manifest, ctx.runner, sample_args=args.get("args") or {}, allow_egress=bool(allow))
+        note = ""
+        allowed = not manifest.scopes.needs_egress()
+        if manifest.scopes.needs_egress():
+            allowed, note = await self._egress_approved(manifest, ctx)
+        report = await verify_capability(manifest, ctx.runner, sample_args=args.get("args") or {}, allow_egress=bool(allowed))
         if report.ok:
             manifest.mark_verified()
             ctx.capabilities.register(manifest)
-        return ToolResult(ok=report.ok, output=report.summary())
+        output = report.summary() if not note else f"{report.summary()}\n{note}"
+        return ToolResult(ok=report.ok, output=output)
 
     def _schedule(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         name = str(args.get("name", ""))
