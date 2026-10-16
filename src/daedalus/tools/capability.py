@@ -29,7 +29,9 @@ class CapabilityTool(Tool):
         "creates nothing.\n"
         "The contract run.py must honour: it runs as a standalone script in its own venv, reads one "
         "JSON object {args,context,state} on stdin, and prints one JSON object "
-        "{result,state_next,notifications} on stdout. Keep it small and deterministic.\n"
+        "{result,state_next,notifications} on stdout. Keep it small and deterministic. "
+        "`notifications` is what the owner actually sees when the job runs unattended — each entry "
+        'should be {"title": "...", "text": "..."}, and an empty list means stay quiet.\n'
         "Give `schedule` (5-field cron) on op=author to register a recurring job, and `args` for the "
         "sample the gate exercises."
     )

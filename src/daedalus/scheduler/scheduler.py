@@ -124,7 +124,10 @@ def _render_notification(job: Job, note: Any) -> str:
     if isinstance(note, str):
         return note
     if isinstance(note, dict):
-        title = note.get("title") or job.name
+        # `job.target` is the capability the owner named (e.g. disk_free_check);
+        # `job.name` is our internal handle for it (`cap-disk_free_check`), which
+        # is noise in a message the owner reads every weekday morning.
+        title = note.get("title") or job.target or job.name
         body = note.get("body") or note.get("text") or ""
         return f"**{title}**\n{body}".strip()
     return f"{job.name}: {note}"

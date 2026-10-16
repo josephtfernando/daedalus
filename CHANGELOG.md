@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 with `--live`) and a 61-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — now **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord._
+_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 with `--live`) and a 65-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — now **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord._
 
 ### Added
 
@@ -29,7 +29,8 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   - **Secrets** — an encrypted credential store (Fernet, per-install master key at `0600`) and a **bytes-stay-home** guard that blocks any outbound request whose body carries a provisioned secret value.
   - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · a full free-text turn · and **the daemon lifecycle**, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
   - **Setup wizard (code)** — `scripts/setup.sh`: the `template.sh` library **vendored verbatim** from the `wizard` skill (every line from `set -euo pipefail` through the `STAGES` marker byte-identical), with the 13 stages authored below it, plus `-y/--yes` and `--non-interactive` modes. Deliberate deviations from the §8.5 stage list, each because the runtime disagreed with the prose: the secret-store **directory** is `0700` (a directory needs `+x` to be traversable; the files inside stay `0600`), the master key sits at `resources/master.key` because that is where `SecretStore` reads it, stage 10 installs only the two named units (the runtime pumps ticks **in-process**, so the timer triggers `daedalus.service` with `Persistent=true` rather than inventing a `tick` verb), and stage 12 runs `selftest --live` when a heavy key is configured. Nothing from the wizard is written to CI — no secret leaves the machine.
-  - **Tests** — 61 tests across cron, approvals, capabilities, memory, the engine loop, the tool schemas, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
+  - **Tests** — 65 tests across cron, approvals, capabilities, memory, the engine loop, the tool schemas, scheduled notifications, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
+  - **`tests/test_notifications.py`** — the last hop, tested. A scheduled capability that nobody is told about is not automation, and the run has no model in it to notice. These tests drive a real tick: the capability's notification reaches the surface (its own words intact, titled with the name the owner chose rather than the internal `cap-` job handle), a repeat tick for the same minute does **not** message twice, a run with an empty `notifications` list stays silent, and `state` carries between scheduled runs.
   - **A trace of the loop, in the log.** The engine logs every tool call — the tool, its `op` when it has one, and whether it succeeded, failed, or was blocked, with a short reason on failure and a character count on success. **Arguments are never logged**, because they carry the owner's words; the trace records shape and outcome only. This exists because the failed acceptance run was invisible: sixteen identical tool calls left not one line behind, and the only way to see what the model had actually sent was to re-drive the turn by hand through a scripted probe.
   - **`tests/test_tool_schemas.py`** — the schema audit as a regression test. It fails if any tool offers a payload parameter (`content`, `run_py`, `query`, `command`, …) as optional, naming every offender at once. It caught two more instances on its first run (`process.command`, `memory.query`) that the live failure had not yet exposed.
 
@@ -118,6 +119,13 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 
 ### Fixed
 
+- **Scheduled alerts were titled with an internal job handle.** A capability's notification is
+  rendered as `**<title>**` plus its body, and the title fell back to `job.name` — the internal handle
+  `cap-disk_free_check` — rather than the capability's own name. The owner would have read a private
+  identifier every weekday morning. It now falls back to `job.target`, the name the owner and the
+  model actually use. The authoring contract also now states the shape a notification should take
+  (`{"title": …, "text": …}`) and that an empty list means stay quiet, so a capability can title
+  itself. *Supersedes:* the `job.name` fallback.
 - **The acceptance request failed on a tool schema, not on the model.** The owner asked, in free
   text, for a weekday disk-space check. The turn reached the capability substrate, asked for approval,
   was approved — and then spent its **entire sixteen-step budget** calling
