@@ -37,6 +37,9 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   capability and asked it to speak up, and silencing an alert at 03:00 would defeat
   the thing it was built for. The ledger is file-first `state/proactive.json`, so the
   day's decisions can be read by hand.
+  **No wake job ships.** The gate and the composition path are built and nothing uses
+  them until the owner asks for a cadence — an agent that starts talking before it has
+  been asked to is a decision, not an implementation detail, and it has not been made.
   - **A wake withholds `local_only` values.** The briefing is composed before the wake's
     model chain is resolved, so it has no honest way to know where it is going — it
     withholds, and it decides that on its own account rather than by reading the session.

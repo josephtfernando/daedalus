@@ -407,10 +407,11 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - **Scheduler transport — resolved.** The daemon pumps its own ticks in-process
   (`daedalus run`): there is deliberately no separate `tick` verb, so the systemd
   timer triggers `daedalus run` rather than a one-shot.
-- Proactive **cadence** — what the default wake schedule should be, if any. The gate
-  (quiet hours, daily cap) and the composition path are built; the cron expression is
-  the owner's to choose. A default that speaks without being asked is a decision, not
-  an implementation detail.
+- **Proactive cadence — resolved: none by default.** The gate (quiet hours, daily cap) and
+  the composition path are built, but **no wake job ships**. The agent speaks first only
+  once the owner asks for a cadence, and the cron expression is the owner's to choose. An
+  agent that starts talking before it has been asked to is a decision, not an
+  implementation detail — and that decision has not been made (owner, 2026-10-16).
 - Capability `manifest.toml` schema (scope, deps, schedule, io) and how the model invokes a named capability (registry lookup vs. generated tool-call).
 - Resource provisioning flow when a resource is added later (e.g. mail OAuth) — one-time local setup, never on Discord.
 - **Headless-browser choice — resolved.** Playwright, with its bundled headless Chromium;
