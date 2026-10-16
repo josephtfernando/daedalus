@@ -63,6 +63,9 @@ DEFAULT_CHEAP: dict[str, Any] = {
     "base_url": LOCAL_BASE,
     "model": "bonsai-8b",
     "api_key_env": "",  # local runner needs no key
+    # The stall ceiling is not about the provider being remote: a local runner
+    # that has no weights pulled, or is mid-load, hangs exactly the same way.
+    "timeout_s": 60,
 }
 
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..approvals.classify import Assessment
+from ..cabinet.seat import DEFAULT_SEAT
 from ..model.providers import NoProviderAvailable, ToolCall
 from ..surface.base import ApprovalRequest, InboundEvent
 from . import context as ctx_mod
@@ -57,10 +58,19 @@ class Engine:
         on_delta=None,
     ) -> TurnResult:
         ctx = self.ctx
+        from ..runtime import Session
+
+        ctx.session = Session(
+            seat=seat or DEFAULT_SEAT,
+            turn_ref=event.channel_id or event.user_id or "",
+            event=event,
+            local_only_ok=ctx.model.chain_is_local(event.text),
+        )
         messages = ctx_mod.build_messages(ctx, event, seat=seat)
         schemas = ctx.tools.schemas()
         used: list[str] = []
         failures: dict[str, int] = {}
+        denied: set[str] = set()
         steps = 0
         while steps < ctx.settings.max_steps:
             steps += 1
@@ -86,7 +96,20 @@ class Engine:
             messages.append(_assistant_message(result.content, result.tool_calls))
             for call in result.tool_calls:
                 used.append(call.name)
-                payload, ok, detail = await self._execute(call, event)
+                # The owner already answered this exact call. Asking again is
+                # how one denial becomes two identical prompts and the owner
+                # starts doubting whether the first click registered.
+                if _call_signature(call) in denied:
+                    return TurnResult(
+                        text=(
+                            "You denied that a moment ago, so I stopped rather than ask again. "
+                            "Tell me what you'd like instead and I'll pick it up from there."
+                        ),
+                        steps=steps,
+                        tools_used=used,
+                        error="denied",
+                    )
+                payload, ok, detail = await self._execute(call, event, denied)
                 messages.append(
                     {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": payload}
                 )
@@ -119,7 +142,9 @@ class Engine:
 
     # -- tool execution ---------------------------------------------------
 
-    async def _execute(self, call: ToolCall, event: InboundEvent) -> tuple[str, bool, str]:
+    async def _execute(
+        self, call: ToolCall, event: InboundEvent, denied: set[str]
+    ) -> tuple[str, bool, str]:
         """Run one tool call. Returns (payload for the model, ok, detail)."""
         ctx = self.ctx
         tool = ctx.tools.get(call.name)
@@ -167,14 +192,17 @@ class Engine:
                 reason=decision.reason,
                 args=args,
                 action_hash=decision.action_hash,
-                title=tool.title,
+                title=tool.title_for(args),
                 summary=assessment.summary,
                 level=assessment.level.value,
                 note=assessment.note(),
                 reasons=assessment.reasons,
+                affirm_label=tool.approval_labels(args)[0],
+                deny_label=tool.approval_labels(args)[1],
             )
             approved = await ctx.surface.approve(request)
             if not approved:
+                denied.add(_call_signature(call))
                 return done(False, "the owner denied this action")
             if tool.grantable and not assessment.dangerous:
                 ctx.approvals.grant_from(decision, note="approved in conversation")
@@ -215,6 +243,16 @@ class Engine:
             await ctx.surface.send("\n".join(lines))
         except Exception:  # noqa: BLE001 — cosmetic, the refusal already happened
             log.debug("could not report a refusal", exc_info=True)
+
+
+def _call_signature(call: ToolCall) -> str:
+    """Identify a call by *what it asks for*, so a denial sticks to it.
+
+    Keyed on name + arguments rather than the tool-call id: the model re-issues
+    the same request with a fresh id every step, which is exactly the repeat a
+    denial is meant to stop.
+    """
+    return f"{call.name}:{json.dumps(call.arguments or {}, sort_keys=True, default=str)}"
 
 
 def _assistant_message(content: str, calls: list[ToolCall]) -> dict[str, Any]:

@@ -77,6 +77,10 @@ class Assessment:
     reasons: tuple[str, ...] = ()
     recognised: bool = True
     target: str = ""
+    # An explicit replacement for the level's stock risk line, for the rare case
+    # where the level is right for *tiering* but misleads the owner as *prose* —
+    # e.g. a destructive op whose call is malformed and would actually do nothing.
+    note_text: str = ""
 
     @property
     def dangerous(self) -> bool:
@@ -87,6 +91,8 @@ class Assessment:
         return self.level is Level.CATASTROPHIC
 
     def note(self) -> str:
+        if self.note_text:
+            return self.note_text
         if not self.recognised:
             return UNRECOGNISED_NOTE
         return LEVEL_NOTE[self.level]

@@ -26,6 +26,24 @@ async def test_author_verifies_and_registers(runtime: Runtime) -> None:
     assert (runtime.capabilities.root / "probe" / "README.md").exists()
 
 
+async def test_each_capability_gets_its_own_venv(runtime: Runtime) -> None:
+    """Own venv per capability (SPEC §3.5).
+
+    Isolation is not only about dependency collisions: an artifact that runs on
+    the host interpreter can import the daemon's own installed packages by
+    accident, so what it can reach stops being declared by its manifest.
+    """
+    result = await CapabilityTool().run(
+        {"op": "author", "name": "isolated", "description": "no deps", "run_py": ECHO_RUN},
+        runtime,
+    )
+    assert result.ok, result.output
+    manifest = runtime.capabilities.get("isolated")
+    assert manifest is not None
+    python = runtime.runner.venv_python(manifest)
+    assert python.exists(), "the capability ran on the host interpreter, not its own venv"
+
+
 async def test_broken_artifact_fails_the_gate(runtime: Runtime) -> None:
     result = await CapabilityTool().run(
         {"op": "author", "name": "broken", "description": "raises", "run_py": "raise SystemExit(3)\n"},

@@ -12,9 +12,48 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 with `--live`) and a 112-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — now **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord._
+_Design frozen; **P0 and P1 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (8/8 offline; 9/9 with `--live`) and a 133-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **P1 — memory depth.** P0 shipped memory v0 (write a fact, recall a fact). P1 makes
+  it a memory that can be *corrected* and *trusted*:
+  - **The markdown is the source of truth; the index is a derived cache.**
+    `memory/facets/<facet>.md` holds every fact; `memory/index.sqlite` is an FTS5
+    cache that `MemoryStore.rebuild_index()` reconstructs from the notes at any time.
+    A table written before the bitemporal columns existed (FTS5 has no `ALTER TABLE`)
+    is rebuilt from the notes on open rather than silently losing recall. An owner
+    editing a facet by hand is no longer fighting a hidden second copy of the truth.
+  - **Supersession actually persists.** It was a no-op: `MemoryStore.get()` looked its
+    id up through the FTS index, where `id` is `UNINDEXED`, so it never found the row,
+    and `supersede()` mutated a detached object and wrote nothing. Entries now carry
+    `valid_from` / `valid_to` / `superseded_by`, `get()` reads by id, and superseding
+    a fact closes its validity in both the index and the note. **Recall returns what
+    is true now**; `include_invalid=True` (a new `memory op=recall` flag) returns
+    history.
+  - **`memory op=supersede`** — the model can retire a fact it can no longer stand
+    behind, given the old entry's id and the fact that replaces it.
+  - **Obsidian bridge.** A facet is now a valid vault note: YAML frontmatter
+    (`facet:`, `tags: daedalus/memory/<facet>`) and one list item per fact, its
+    metadata in a hidden HTML comment. A bullet written by hand is adopted into the
+    index with a **stable** id (a content hash), so it does not mint a new identity
+    on every rebuild.
+  - **`memory op=write` takes `data_class`** — the owner or model can mark a fact
+    `local_only`, which then never leaves the machine (see *Security*).
+- **`memory/markdown.py`** — the renderer/parser that makes the file canonical:
+  `render_entry`, `parse_facet`, `stable_id`, `normalise_content`. Facts are
+  single-line; whitespace is collapsed on write so an entry round-trips exactly.
+- **Tests** — the suite is now **133** (from 112). New coverage: supersession retires
+  a fact and survives an index rebuild, both timestamps round-trip, the index rebuilds
+  from hand-written markdown with stable ids, a facet is a valid Obsidian note, the
+  `memory` tool can supersede, `local_only` memory is withheld from a remote chain but
+  reaches a fully-local one (both in the prompt and through the tool channel), every
+  default provider carries a stall ceiling, and each capability gets its own venv.
+  The approval prompt is pinned too: the title names the real operation, a malformed
+  call says so and drops the irreversible-delete warning, the buttons carry the action's
+  labels, and a denial stops the turn instead of asking again. The self-test's memory
+  check now proves supersession, the rebuild, and the `local_only` gate, so the
+  acceptance gate exercises P1 rather than just v0.
 
 - **P0 runtime** — the loop and the substrate, as code:
   - **Package** — `src/daedalus/` with `loop/`, `model/`, `tools/`, `approvals/`, `capabilities/`, `resources/`, `memory/`, `scheduler/`, `surface/`, `cabinet/`, `security/`, `storage/`, plus `selftest.py` and `main.py`. CLI: `daedalus version | selftest | ask | run`.
@@ -67,6 +106,54 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **P0 definition** — the unseen free-text request, completed end-to-end with nothing hardcoded; the substrate is in P0 because the proof-of-life cannot happen without it.
 
 ### Changed
+
+- **An approval prompt names the operation, and its buttons say what they do.** The
+  headline came from the tool's static `title`, and `capability` is six tools in one —
+  so a *delete* was announced as **"Approval needed — Author a capability"** while the
+  body said "delete the authored capability". The first line the owner reads described
+  the wrong action, which is exactly how the prompt stopped being trusted. A tool now
+  supplies a per-call title (`Tool.title_for(args)`); `capability` returns
+  *Delete a capability* / *Run a capability* / *Schedule a capability* / … The two
+  buttons are likewise per-call (`Tool.approval_labels(args)`): **Delete it / Keep it**
+  for a delete, **Do it / Don't** otherwise, instead of a generic Approve/Deny that
+  forced a re-read to know what was being chosen. A denial's resolved line now also
+  says **"nothing ran"**, so the outcome is stated rather than implied.
+  *Supersedes:* the static `title` and the fixed Approve/Deny labels.
+
+- **A capability always runs in its own venv.** `ensure_env` returned the host
+  interpreter whenever a capability declared no `deps`, so a no-dependency artifact
+  ran on the daemon's own environment — it could import the daemon's installed
+  packages, and what it could reach stopped being described by its manifest. The
+  first dependency a capability gained would also have resolved against a shared
+  environment. Isolation is the point, not a side effect of having deps; `uv venv`
+  is cheap enough to pay on every capability. *Supersedes:* the `not manifest.deps`
+  early return.
+- **The cheap local route carries the same 60 s stall ceiling as the chain.**
+  `DEFAULT_CHEAP` set no `timeout_s`, so it silently inherited the dataclass default
+  of 180 s — three times the ceiling every other entry is held to, and the rule that
+  each provider bounds *silence* rather than answer length applied to exactly the
+  provider most likely to hang (a local runner with no weights pulled, or mid-load).
+  *Supersedes:* the un-set timeout on the local entry.
+- **The CLI REPL no longer swallows an empty turn.** Every surface already sends
+  through `deliver()`, which substitutes an explicit "no output" line for a turn with
+  no text; the terminal loop alone still had `if result.text`, so the one surface a
+  developer uses to reproduce a bug was also the one that went quiet on the exact
+  failure it existed to show. It now uses `deliver()` like the rest. *Supersedes:*
+  the inline `if result.text` guard.
+
+- **Stale design-doc lines brought back in line with the code.** `SPEC.md` still read
+  `Status: design settled; P0 not yet built`, contradicting the implemented loop the
+  rest of the file already describes — it now reads P0-implemented, `0.1.0` pending
+  the Discord proof-of-life. `SPEC.md` §11 step 3 listed 11 primitives and omitted
+  `process` + the `capability` tool the substrate runs on; both are now named.
+  `ARCHITECTURE.md` said "11 irreducible" tools, showed `surface/discord/dm.py +
+  threads.py` (which do not exist — the surface is `bot.py + approvals.py` over
+  `surface/base.py + cli.py`), omitted `tools/guard.py + capability.py` from the
+  layout, and showed the timer calling `dispatch_tick()` directly where the daemon
+  actually pumps its own ticks in-process (`main.py` `_ticker` → `dispatch_tick`).
+  `pyproject.toml` still said "a run of 52 tests" with 112 collected. No behaviour
+  changed; the docs describe the system that exists. *Supersedes:* the pre-build
+  status line and the pre-implementation component counts.
 
 - **A parameter that carries the substance of an action is now declared `required`.** An LLM treats a
   large *optional* string argument as skippable, and drops it without comment. That single behaviour
@@ -162,6 +249,24 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **A malformed call was described as destroying "an unnamed capability".** The model
+  sent `capability op=remove` with no `name`; `assess` filled the gap with the literal
+  string *"an unnamed capability"*, so the owner was shown
+  *"delete the authored capability 'an unnamed capability' — destructive, this cannot be
+  undone"* for a call that would in fact delete nothing (`remove("")` finds no
+  capability). The prompt now says plainly that the call named no target, and its risk
+  line reads *"incomplete call — approving it would change nothing"* rather than the
+  irreversible-delete warning. The tier stays `destructive` on purpose, so approving a
+  malformed call can never mint a standing grant for future deletes.
+  *Supersedes:* the `or "an unnamed capability"` fallback.
+- **Denying a call no longer invites the same prompt straight back.** A denial returned
+  `ok=False` and was counted by the repeat-failure guard, which only stops after three
+  identical failures — so one broken call produced the *same* approval prompt twice and
+  the owner clicked deny twice, unsure whether the first click had registered. A denied
+  call is now recorded by name + arguments, and the engine stops the turn the moment the
+  model re-issues it, saying so. *Supersedes:* treating a denial as an ordinary failure
+  that the model may simply retry.
 
 - **Scheduled alerts were titled with an internal job handle.** A capability's notification is
   rendered as `**<title>**` plus its body, and the title fell back to `job.name` — the internal handle
@@ -297,6 +402,18 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 
 ### Security
 
+- **`local_only` memory could reach a remote model.** `build_system_prompt` injected
+  the full recent-memory list into every turn's system prompt, with no regard for the
+  data class — so a fact marked `local_only` rode out to NIM or Z.ai on the very next
+  message, and a `memory op=recall` result did the same, straight back through the
+  tool channel. SPEC §5 says `local_only` content never goes to a remote model; the
+  rule was written but never wired. The engine now resolves the model chain for the
+  turn and sets a single flag, `Session.local_only_ok`, that is true only when
+  **every** provider the turn could reach is local — one remote fallback is enough to
+  withhold the fact. The prompt assembler and the `memory` tool both read that flag,
+  and the default is *withhold*, so a caller that never declared a local route cannot
+  leak. *Supersedes:* the unconditional `memory.inventory()` in the system prompt.
+
 - **Reach narrow** — local work reads the minimum needed; the agent never sweeps the filesystem, the vault, or unrelated projects to assemble context.
 - **Personal data is out of bounds** — passwords, `.env`, private folders, and health / financial / relationship / location data are never opened, read, logged, summarized, or transmitted.
 - **Bytes stay home** — nothing leaves the machine without approval; no secret or personal value in any prompt, request body, log, or message. **Structure travels; values stay local.**
@@ -312,7 +429,7 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 ### Notes
 
 - **Documentation set:** `SPEC.md` (what) · `ARCHITECTURE.md` (how) · `AGENTS.md` (working rules) · `CHANGELOG.md` (this file).
-- **Open implementation details** (not architectural decisions) are tracked in `SPEC.md` §13: the local runner for Bonsai 1-bit weights, memory-recall embedding choice, scheduler transport, the `manifest.toml` schema, the resource-provisioning flow, the headless-browser choice, the GenUI spec schema, the mood→token mapping, the dashboard regeneration trigger, the tuner set, and long-running-process supervision.
+- **Open implementation details** (not architectural decisions) are tracked in `SPEC.md` §13: the local runner for Bonsai 1-bit weights, scheduler transport, the `manifest.toml` schema, the resource-provisioning flow, the headless-browser choice, the GenUI spec schema, the mood→token mapping, the dashboard regeneration trigger, the tuner set, long-running-process supervision, and capability resource-cap enforcement (`cpu` / `mem_mb` are declared but not yet applied to the child). The memory-recall embedding choice is **resolved** — FTS5, with embeddings kept as a seam.
 - **gcal is provisioned but not yet implemented.** The owner's OAuth desktop client has been adopted into the encrypted credential store as `secret:gcal-client` (so it no longer sits as a world-readable file on disk), and `resources/registry.toml` carries a live `gcal` resource entry with `calendar.readonly` + `calendar.events`. **No code consumes it yet** — `integrations/gcal.py` and the internal calendar store of §5.5 do not exist, so today the agent can neither read nor write any calendar. The resource is registered carried-forward work, not a working integration.
 
 <!--

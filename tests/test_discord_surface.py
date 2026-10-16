@@ -155,6 +155,28 @@ async def test_working_without_a_channel_is_a_no_op() -> None:
         pass
 
 
+async def test_approval_buttons_name_the_action() -> None:
+    """Generic Approve/Deny makes the owner re-read the prompt to know what they
+    are choosing. The buttons should say what the action is."""
+    from daedalus.surface.base import ApprovalRequest
+    from daedalus.surface.discord.approvals import ApprovalView
+
+    request = ApprovalRequest(
+        action="capability",
+        scope="capability:remove",
+        reason="it can change things on this machine, so it asks first",
+        args={"op": "remove", "name": "probe"},
+        action_hash="h",
+        title="Delete a capability",
+        affirm_label="Delete it",
+        deny_label="Keep it",
+    )
+
+    view = ApprovalView(request, {OWNER})
+
+    assert [c.label for c in view.children] == ["Delete it", "Keep it"]
+
+
 def test_long_replies_are_chunked_under_the_discord_limit() -> None:
     body = "\n".join(f"line {i}" for i in range(500))
     chunks = chunk_text(body)

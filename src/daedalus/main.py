@@ -139,8 +139,7 @@ def _run_cli_repl(settings: Settings) -> int:
             result = await engine.run_turn(
                 InboundEvent(text=line, user_id="owner", is_dm=False, source="cli")
             )
-            if result.text:
-                await surface.send(result.text)
+            await deliver(surface, result)
         await rt.aclose()
         return 0
 

@@ -131,6 +131,151 @@ async def test_progress_between_failures_does_not_stop_the_turn(runtime: Runtime
     assert result.text == "Recovered."
 
 
+async def test_an_empty_turn_is_never_swallowed(runtime: Runtime) -> None:
+    """An empty answer and a dead daemon must not look the same from outside.
+
+    `deliver` is the one shared boundary every surface sends through; a turn
+    with no text is reported rather than silently dropped.
+    """
+    from daedalus.loop.engine import TurnResult
+    from daedalus.main import deliver
+
+    surface = runtime.surface
+    used_fallback = await deliver(surface, TurnResult(text="", error=""))
+
+    assert used_fallback is True
+    assert surface.sent and surface.sent[-1].strip(), "nothing was sent for an empty turn"
+
+
+async def test_local_only_memory_never_reaches_a_remote_model(runtime: Runtime) -> None:
+    """SPEC §5: `local_only` content never goes to a remote model.
+
+    The system prompt carries recent memory, so a `local_only` fact sitting in
+    the facade would ride out on every turn. It is withheld unless the whole
+    chain the turn will use is local.
+    """
+    from daedalus.security.provenance import DataClass
+
+    runtime.memory.write(facet="body", content="a shareable fact")
+    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
+
+    provider = ScriptedProvider([ChatResult(content="ok")])
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+
+    await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
+
+    sent = provider.calls[0][0]["content"]
+    assert "a shareable fact" in sent
+    assert "a local secret" not in sent, "a local_only fact left the machine"
+
+
+async def test_local_only_memory_reaches_a_fully_local_model(runtime: Runtime) -> None:
+    """When nothing leaves the machine, withholding the fact would be pointless."""
+    from daedalus.security.provenance import DataClass
+
+    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
+
+    provider = ScriptedProvider([ChatResult(content="ok")], is_local=True)
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+
+    await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
+
+    assert "a local secret" in provider.calls[0][0]["content"]
+
+
+async def test_the_memory_tool_withholds_local_only_from_a_remote_turn(runtime: Runtime) -> None:
+    """A recall result is fed straight back to the model — same rule applies."""
+    from daedalus.security.provenance import DataClass
+
+    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
+    provider = ScriptedProvider(
+        [
+            tool_call("memory", op="recall", query="local", content="", facet="body"),
+            ChatResult(content="done"),
+        ]
+    )
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+
+    await Engine(runtime).run_turn(InboundEvent(text="what do you know", user_id="owner"))
+
+    results = [m for m in provider.calls[-1] if m.get("role") == "tool"]
+    assert results, "the tool result never made it back to the model"
+    assert "a local secret" not in results[-1]["content"]
+
+
+async def test_the_approval_title_names_the_operation(settings: Settings) -> None:
+    """`capability` is six tools in one; the headline must not always say 'author'."""
+    surface = ScriptedSurface(approve=False)
+    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    tool_call("capability", op="remove", name="probe"),
+                    ChatResult(content="ok"),
+                ]
+            )
+        ],
+    )
+
+    await Engine(runtime).run_turn(InboundEvent(text="delete the probe capability", user_id="owner"))
+
+    request = surface.approvals[0]
+    assert request.title == "Delete a capability"
+    assert "Author" not in request.describe()
+
+
+async def test_a_malformed_call_says_what_is_wrong(settings: Settings) -> None:
+    """The model sent `op=remove` with no name; the prompt must not invent a noun.
+
+    It used to read "delete the authored capability 'an unnamed capability'" —
+    a destructive prompt for a call that would delete nothing.
+    """
+    surface = ScriptedSurface(approve=False)
+    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([tool_call("capability", op="remove"), ChatResult(content="ok")])],
+    )
+
+    await Engine(runtime).run_turn(InboundEvent(text="delete it", user_id="owner"))
+
+    described = surface.approvals[0].describe()
+    assert "an unnamed capability" not in described
+    assert "no target" in described or "named no" in described
+    # ...and it must not warn about an irreversible delete that would not happen.
+    assert "cannot be undone" not in described
+
+
+async def test_a_denial_stops_the_turn_asking_again(settings: Settings) -> None:
+    """A denied call is not retried: the owner already answered it.
+
+    Two identical prompts for one broken call is how the owner ends up clicking
+    deny twice and wondering whether the first one registered.
+    """
+    surface = ScriptedSurface(approve=False)
+    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    tool_call("capability", op="remove", name="probe"),
+                    tool_call("capability", op="remove", name="probe"),
+                    ChatResult(content="I'll stop."),
+                ]
+            )
+        ],
+    )
+
+    result = await Engine(runtime).run_turn(InboundEvent(text="delete the probe", user_id="owner"))
+
+    assert len(surface.approvals) == 1, "the owner was asked to deny the same call twice"
+    assert result.error == "denied"
+    assert "denied" in result.text.lower()
+
+
 async def test_one_huge_tool_result_cannot_flood_the_context(runtime: Runtime) -> None:
     """A 25 KB read in the failed run degraded every model call after it."""
     from daedalus.loop.engine import MAX_TOOL_CHARS

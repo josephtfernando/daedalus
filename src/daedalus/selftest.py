@@ -22,7 +22,7 @@ from .loop.engine import Engine
 from .model.client import ModelClient
 from .model.providers import ChatResult, ScriptedProvider, ToolCall  # noqa: F401
 from .runtime import Runtime, build_runtime
-from .security.provenance import Labeled, Origin
+from .security.provenance import DataClass, Labeled, Origin
 from .storage import paths
 from .surface.base import InboundEvent
 from .surface.cli import ScriptedSurface
@@ -165,7 +165,30 @@ def _check_memory(rt: Runtime) -> Check:
     hits = rt.memory.recall("daedalus", facet="projects")
     if not any(h.id == entry.id for h in hits):
         return Check("memory", False, "written entry not recalled")
-    return Check("memory", True, f"wrote+recalled {entry.id[:8]}")
+
+    # Supersession must retire the old fact, and it must survive a rebuild of the
+    # index from the notes — the markdown is the source of truth, the index is a
+    # cache. A superseded fact that comes back after a rebuild is a memory that
+    # cannot be corrected.
+    newer = rt.memory.write(facet="projects", content="selftest probe: daedalus P1")
+    if not rt.memory.supersede(entry.id, newer):
+        return Check("memory", False, "supersede did not take effect")
+    rt.memory.rebuild_index()
+    current = [h.content for h in rt.memory.recall("selftest", facet="projects")]
+    if "selftest probe: daedalus P0" in current:
+        return Check("memory", False, "a superseded fact returned after an index rebuild")
+
+    # A `local_only` fact must not appear in a prompt that could go remote.
+    rt.memory.write(
+        facet="body", content="selftest local-only probe", data_class=DataClass.LOCAL_ONLY
+    )
+    from .loop.context import build_system_prompt
+
+    prompt = build_system_prompt(rt, InboundEvent(text="hi", user_id="selftest"))
+    if "selftest local-only probe" in prompt:
+        return Check("memory", False, "a local_only fact was placed in a remote-bound prompt")
+
+    return Check("memory", True, f"wrote+recalled+superseded {entry.id[:8]}")
 
 
 def _check_approvals(rt: Runtime) -> Check:

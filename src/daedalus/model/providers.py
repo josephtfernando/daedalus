@@ -70,11 +70,12 @@ class HttpProvider:
         self.max_calls = cfg.max_calls
 
     @property
-    def _is_local(self) -> bool:
+    def is_local(self) -> bool:
+        """True when this provider runs on this machine (nothing crosses the wire)."""
         return "127.0.0.1" in self.base_url or "localhost" in self.base_url
 
     def available(self) -> bool:
-        return True if self._is_local else bool(self.api_key)
+        return True if self.is_local else bool(self.api_key)
 
     def _headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json"}
@@ -193,12 +194,22 @@ class ScriptedProvider:
     message list and returning either. Items are consumed one per call.
     """
 
-    def __init__(self, script: Sequence[Any], *, name: str = "scripted", model: str = "scripted") -> None:
+    def __init__(
+        self,
+        script: Sequence[Any],
+        *,
+        name: str = "scripted",
+        model: str = "scripted",
+        is_local: bool = False,
+    ) -> None:
         self._script = list(script)
         self.name = name
         self.model = model
         self.window_s = 60
         self.max_calls = 0
+        # Whether this stands in for a local runner. The memory facade reads it
+        # to decide if `local_only` content may be included.
+        self.is_local = is_local
         self.calls: list[list[dict[str, Any]]] = []
 
     def available(self) -> bool:

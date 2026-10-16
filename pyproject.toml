@@ -28,5 +28,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # discord.py still calls asyncio.iscoroutinefunction, deprecated in 3.14. Not
 # our code and not actionable from here -- ignore that message only, so a real
-# warning in a run of 52 tests is not buried under fourteen copies of this one.
+# warning in a run of 112 tests is not buried under fourteen copies of this one.
 filterwarnings = ["ignore:.*iscoroutinefunction.*:DeprecationWarning"]

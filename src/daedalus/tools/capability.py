@@ -68,10 +68,42 @@ class CapabilityTool(Tool):
             return Risk.AUTO
         return Risk.ASK
 
+    _TITLES = {
+        "author": "Author a capability",
+        "list": "List capabilities",
+        "get": "Read a capability",
+        "run": "Run a capability",
+        "verify": "Verify a capability",
+        "remove": "Delete a capability",
+        "schedule": "Schedule a capability",
+    }
+
+    def title_for(self, args: dict[str, Any]) -> str:
+        return self._TITLES.get(str(args.get("op", "")), self.title)
+
+    def approval_labels(self, args: dict[str, Any]) -> tuple[str, str]:
+        if str(args.get("op", "")) == "remove":
+            return ("Delete it", "Keep it")
+        return ("Do it", "Don't")
+
     def assess(self, args: dict[str, Any]) -> Assessment:
         """Say which operation this is, because `capability` is six tools in one."""
         op = str(args.get("op", ""))
-        name = str(args.get("name", "")) or "an unnamed capability"
+        name = str(args.get("name", "")).strip()
+        targeting = ("run", "verify", "schedule", "get")
+        if not name and (op == "remove" or op in targeting):
+            # The model sent the op without its target. Do not invent a noun for
+            # it — say plainly that the call is incomplete, so the owner is not
+            # asked to weigh a destructive action that would in fact do nothing.
+            return Assessment(
+                level=Level.DESTRUCTIVE if op == "remove" else Level.CAUTION,
+                summary=f"do nothing: this {op} named no capability",
+                reasons=(
+                    "the call is missing `name`, so there is no target",
+                    "approving it would change nothing — it should be retried with a target",
+                ),
+                note_text="incomplete call — approving it would change nothing",
+            )
         if op == "author":
             schedule = args.get("schedule")
             tail = f", then schedule it to run unattended ({schedule})" if schedule else ""

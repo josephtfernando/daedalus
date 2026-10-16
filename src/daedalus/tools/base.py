@@ -54,6 +54,24 @@ class Tool:
             },
         }
 
+    def title_for(self, args: dict[str, Any]) -> str:
+        """The headline for this call's approval prompt.
+
+        The static ``title`` is right for a single-purpose tool. A
+        multi-operation tool overrides this: otherwise a delete is announced as
+        "Author a capability", which is the first thing the owner reads and the
+        reason they stop trusting the prompt.
+        """
+        return self.title
+
+    def approval_labels(self, args: dict[str, Any]) -> tuple[str, str]:
+        """(affirm, deny) button labels for this call.
+
+        Generic Approve/Deny forces a re-read to know what is being chosen. A
+        tool that can say a sharper pair returns one here.
+        """
+        return ("Approve", "Deny")
+
     def risk_for(self, args: dict[str, Any]) -> Risk:
         """Risk can depend on the call. Default: the tool's static tier.
 

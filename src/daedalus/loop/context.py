@@ -64,16 +64,24 @@ Reply in plain text for the owner. Use tools when they help; otherwise just answ
 """
 
 
-def build_system_prompt(ctx: "Runtime", event: InboundEvent, *, seat: str | None = None) -> str:
+def build_system_prompt(
+    ctx: "Runtime",
+    event: InboundEvent,
+    *,
+    seat: str | None = None,
+    include_local_only: bool | None = None,
+) -> str:
     chosen = get_seat(seat)
     grants = ctx.approvals.grants.all()
     grant_text = "\n".join(f"- {g.action} on {g.scope}" for g in grants) or "(none)"
+    if include_local_only is None:
+        include_local_only = ctx.allows_local_only()
     return SYSTEM_PROMPT.format(
         seat_name=chosen.name,
         charter=chosen.charter,
         capabilities=ctx.capabilities.inventory(),
         resources=ctx.resources.inventory(),
-        memory=ctx.memory.inventory(),
+        memory=ctx.memory.inventory(allow_local_only=include_local_only),
         tools="\n".join(f"- {t.name}: {t.description.splitlines()[0]}" for t in ctx.tools.all()),
         grants=grant_text,
     )

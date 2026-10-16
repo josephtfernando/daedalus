@@ -33,6 +33,10 @@ class ApprovalRequest:
     note: str = ""
     reasons: tuple[str, ...] = ()
     detail: str = ""
+    # What the two buttons say. The tool supplies them so the choice names the
+    # action rather than a generic "Approve".
+    affirm_label: str = "Approve"
+    deny_label: str = "Deny"
 
     def detail_text(self) -> str:
         """The concrete thing being authorized: the command, the URL, the args."""

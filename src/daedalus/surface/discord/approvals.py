@@ -18,6 +18,9 @@ class ApprovalView(discord.ui.View):
         self.owner_ids = owner_ids
         self.result: bool | None = None
         self.future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
+        # Say what the choice is, not just that there is one.
+        self.approve.label = request.affirm_label[:80]
+        self.deny.label = request.deny_label[:80]
 
     def _is_owner(self, interaction: discord.Interaction) -> bool:
         return str(interaction.user.id) in self.owner_ids
@@ -46,7 +49,7 @@ class ApprovalView(discord.ui.View):
         self.stop()
 
     def _resolved_text(self, approved: bool) -> str:
-        mark = "✅ approved" if approved else "⛔ denied"
+        mark = "✅ approved" if approved else "⛔ denied — nothing ran"
         return f"{self.request.describe()}\n\n— {mark}"
 
     async def on_timeout(self) -> None:

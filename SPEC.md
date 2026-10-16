@@ -1,8 +1,8 @@
 # Daedalus — Spec
 
 **Scope:** single-user, local-first (only the owner can talk to it)
-**Status:** design settled; P0 not yet built
-**Date:** 2026-10-15
+**Status:** P0 and P1 implemented as code (loop + primitives + capability substrate + memory depth + scheduler v0 + Melinoë gate + Discord surface + setup wizard), 133 tests green; `0.1.0` pending Discord proof-of-life
+**Date:** 2026-10-16
 **Supersedes:** the Hermes-based `~/down/daedalus.md` plan (architecture reference retained; runtime decision reversed)
 
 ---
@@ -199,9 +199,27 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
 
 ## 5. Memory
 
-- **File-first:** human-readable markdown + a SQLite index; local embeddings optional.
-- Every entry carries **provenance, confidence, and supersession**. Bitemporal (valid-from/to) where useful. An Obsidian bridge is desirable.
-- `local_only` content never sent to remote models; untrusted text can never launder instructions into trusted memory.
+- **File-first, and the file wins.** The markdown under
+  `$DAEDALUS_HOME/memory/facets/<facet>.md` is the **source of truth**; the SQLite
+  FTS5 index is a **derived cache** that can be rebuilt from the notes
+  (`MemoryStore.rebuild_index`). An owner editing a facet by hand is not fighting a
+  hidden second copy of the truth.
+- Every entry carries **provenance, confidence, and supersession**, and is
+  **bitemporal** — `valid_from` / `valid_to` plus `superseded_by`. Superseding a fact
+  retires it: recall returns what is true *now*, history requires
+  `include_invalid=True`, and the retirement survives an index rebuild.
+- **`local_only` never reaches a remote model.** A fact marked `local_only` may
+  enter the prompt or a recall result only when the **entire resolved model chain is
+  local**; a single remote fallback is enough to withhold it. The decision is made
+  from the chain, never by the model.
+- Untrusted text can never launder instructions into trusted memory (§6 sink policy).
+- **Obsidian bridge.** Each facet is a valid vault note: YAML frontmatter
+  (`facet:` and `tags: daedalus/memory/<facet>`) and one list item per fact, metadata
+  in a hidden HTML comment. Point a vault at `memory/facets/` and the notes are
+  readable and hand-editable; a bullet written by hand is adopted into the index
+  with its own stable id.
+- **Recall is FTS5.** The embedding choice is recorded as resolved in §13:
+  embeddings remain a seam behind `MemoryStore.recall()`, not a build.
 - **Facets modeled for the owner:**
   - competitive-programming **rating + contest calendar**
   - **aptitude / DSA** practice reps
@@ -314,8 +332,8 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 
 ## 10. Phases
 
-- **P0 — the loop** *(build only this now)*
-- P1 — memory
+- **P0 — the loop** *(delivered: loop, primitives, capability substrate, memory v0, scheduler v0, Melinoë gate, Discord surface, setup wizard)*
+- **P1 — memory** *(delivered: file-first source of truth, supersession + bitemporal, `local_only` egress gate, Obsidian-compatible notes, index rebuildable from the notes)*
 - P2 — proactive scheduler
 - P3 — seats wired **one at a time, each as it earns its place**
 - P4 — remote / Tailscale Serve
@@ -336,7 +354,7 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 
 1. **Scaffold** — uv project, Python 3.14, package layout, config, `.env` (reuse existing creds: `NVIDIA_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS`), journald logging.
 2. **Model client** — one OpenAI-compatible client behind a single `base_url`; NIM chain + fallback; Bonsai 8B local; cross-process rate-limit ledger.
-3. **Primitives (Layer 1)** — `shell`, `code`, `files`, `http`, `browser`, `search`, `schedule`, `memory`, `discord`, `ask`, `secrets`.
+3. **Primitives (Layer 1 + capability tool)** — `shell`, `code`, `files`, `http`, `browser`, `search`, `schedule`, `process`, `memory`, `discord`, `ask`, `secrets`, plus `capability` (Layer 2 author/run/verify/schedule/remove).
 4. **Approval middleware** — trust tiers; egress needs one-time approval → standing grant; buttons.
 5. **Discord surface** — one bot, DM allowlist (owner only), free-text handler, approval buttons.
 6. **The loop** — message → context assembly → model → multi-step tool calls → streamed response.
@@ -366,7 +384,10 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 ## 13. Open implementation details (not design decisions)
 
 - Exact local runner for Bonsai 8B 1-bit weights (Ollama vs llama.cpp/PrismML fork).
-- Embedding choice for memory recall (local model vs FTS-only).
+- **Embedding choice for memory recall — resolved (P1).** Recall is **SQLite FTS5**
+  over the facet markdown, which is the source of truth and rebuilds the index at
+  will. Local embeddings stay a seam behind `MemoryStore.recall()`, to be added only
+  if recall quality actually demands it; nothing else in P1 depends on the choice.
 - Scheduler transport (reuse the cron-pumped wake approach from `daedalus.md`).
 - Capability `manifest.toml` schema (scope, deps, schedule, io) and how the model invokes a named capability (registry lookup vs. generated tool-call).
 - Resource provisioning flow when a resource is added later (e.g. mail OAuth) — one-time local setup, never on Discord.
@@ -378,6 +399,10 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Tuner control set — which token and system dimensions are directly adjustable on the dashboard.
 - Dashboard interactions that are *actions* (not tuning) — routed through the Discord approval split.
 - Long-running-process supervision (how `process` children survive restarts / sleep).
+- Capability resource-cap enforcement — `time_s` is enforced as a hard timeout, but
+  `cpu` / `mem_mb` are declared in the manifest and not yet applied to the child. A
+  rushed `RLIMIT_AS` can kill a healthy Python process, so this wants the rlimit-vs-cgroup
+  choice made deliberately rather than guessed.
 - gcal sync details — cursor/token storage, tombstone and delete semantics, conflict edge cases across the authority split.
 - Calendar dashboard scope — which views (day/week/month) and which edit operations ship first.
 - Mail summarize cadence — on-demand vs scheduled digest.

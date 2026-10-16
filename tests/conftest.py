@@ -23,5 +23,5 @@ def runtime(settings: Settings) -> Runtime:
     return build_runtime(settings, surface=ScriptedSurface(approve=True), provider=ScriptedProvider([]))
 
 
-def tool_call(name: str, **arguments) -> ChatResult:
-    return ChatResult(tool_calls=[ToolCall(id=f"call_{name}", name=name, arguments=arguments)])
+def tool_call(tool: str, **arguments) -> ChatResult:
+    return ChatResult(tool_calls=[ToolCall(id=f"call_{tool}", name=tool, arguments=arguments)])

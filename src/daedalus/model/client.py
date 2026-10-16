@@ -53,6 +53,19 @@ class ModelClient:
             return [self.cheap, *self.providers]
         return list(self.providers)
 
+    def chain_is_local(self, text_hint: str = "") -> bool:
+        """True only if *everything* this turn could reach is on this machine.
+
+        ``local_only`` memory may be included in a prompt only when the whole
+        resolved chain is local. One remote fallback is enough to make the fact
+        unsafe, so this is deliberately an "all", not a "first".
+        """
+        route = choose_route(text_hint, cheap_available=self.cheap_available())
+        available = [p for p in self._chain(route) if p.available()]
+        if not available:
+            return False
+        return all(getattr(p, "is_local", False) for p in available)
+
     async def chat(
         self,
         messages: list[dict[str, Any]],

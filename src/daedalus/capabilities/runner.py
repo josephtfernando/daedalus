@@ -47,8 +47,15 @@ class CapabilityRunner:
         return self.cap_dir(manifest) / ".venv" / "bin" / "python"
 
     async def ensure_env(self, manifest: Manifest) -> Path:
-        """Create the capability's venv and install deps. Returns the python to use."""
-        if not self.use_venv or not manifest.deps:
+        """Create the capability's venv and install deps. Returns the python to use.
+
+        Every capability gets its own venv, even one with no declared deps. A
+        capability that ran on the host interpreter could import the daemon's own
+        installed packages, so what it can reach would stop being described by its
+        manifest — and the first dep it gains would resolve against a shared
+        environment. Isolation is the point, not a side effect of having deps.
+        """
+        if not self.use_venv:
             return Path(sys.executable)
         cap_dir = self.cap_dir(manifest)
         venv = cap_dir / ".venv"

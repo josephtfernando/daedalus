@@ -42,6 +42,10 @@ class Session:
     event: InboundEvent | None = None
     trusted_sources: list[str] = field(default_factory=list)
     untrusted_sources: list[str] = field(default_factory=list)
+    # Whether `local_only` memory may enter this turn's prompt, set from the
+    # resolved model chain. False by default: a turn that never declared a
+    # local-only route must not leak local-only content.
+    local_only_ok: bool = False
 
 
 @dataclass
@@ -72,6 +76,15 @@ class Runtime:
         thread.append({"role": "user", "content": user_text})
         thread.append({"role": "assistant", "content": assistant_text})
         del thread[:-24]
+
+    def allows_local_only(self) -> bool:
+        """Whether `local_only` values may take part in the current turn.
+
+        Read from the session, which the engine sets from the resolved model
+        chain. Absent a session, the answer is no — a caller that never
+        declared a local route must not leak local-only content.
+        """
+        return bool(self.session and self.session.local_only_ok)
 
     def leak_guard(self, args: dict[str, Any]) -> str | None:
         """Bytes stay home: no secret value may ride out on an egress call."""

@@ -72,11 +72,11 @@ Derived from `SPEC.md` §1 and binding on every component:
 | Component | Responsibility | Key interface |
 | --- | --- | --- |
 | **Surface (Discord)** | Receive DMs/threads, stream replies, surface approvals as buttons | `Surface` port: `recv() → event`, `send(msg)`, `present(approval)` |
-| **Scheduler** | Trigger wakes and run authored capabilities on a period | `dispatch_tick()`; `agent_wakes` table |
+| **Scheduler** | Trigger wakes and run authored capabilities on a period | in-process ticker → `dispatch_tick()`; `agent_wakes` table |
 | **Turn engine** | Assemble context, drive model↔tool loop, emit output | `run_turn(event) → TurnResult` |
 | **Model client** | One OpenAI-compatible client, provider chain, local fallback | `chat(msgs, tools) → stream` |
 | **Rate-limit ledger** | Cross-process rolling-window accounting | SQLite `ratelimit.db` |
-| **Tools (primitives)** | The 11 irreducible capabilities | `Tool` protocol (name · schema · risk · `call`) |
+| **Tools (primitives)** | The 12 Layer-1 primitives + the `capability` tool | `Tool` protocol (name · schema · risk · `call`) |
 | **Approval middleware** | Tiering, standing grants, sink checks, action binding | `authorize(tool, args, provenance) → allow/ask/block` |
 | **Secrets** | Scoped credential access, never logged | `get(resource) → value` |
 | **Capability substrate** | Author · verify · register · run authored capabilities | `author()`, `registry`, `runner` |
@@ -109,9 +109,9 @@ daedalus/                      # code repo
       ratelimit.py             # SQLite ledger
       routing.py               # heavy vs cheap (Bonsai)
     tools/
-      base.py registry.py
+      base.py registry.py guard.py
       shell.py code.py files.py http.py browser.py search.py
-      schedule.py process.py memory.py discord.py ask.py secrets.py
+      schedule.py process.py memory.py discord.py ask.py secrets.py capability.py
     approvals/
       middleware.py grants.py risk.py classify.py
     capabilities/
@@ -119,11 +119,12 @@ daedalus/                      # code repo
     resources/
       registry.py provisioning.py
     memory/
-      store.py index.py schema.py facets.py
+      store.py index.py schema.py facets.py markdown.py
     scheduler/
       scheduler.py jobs.py wakes.py
     surface/
-      discord/ bot.py dm.py approvals.py threads.py
+      discord/ bot.py approvals.py
+      base.py cli.py
     cabinet/
       seat.py namespace.py protocol.py broker.py seats/
     genui/
@@ -157,7 +158,7 @@ $DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
 ## 6. Runtime & process model
 
 - **Daemon** — `daedalus.service` (systemd `--user`, `enable-linger`). Lightweight, always connected to Discord so DMs land; does **no idle reasoning on battery**.
-- **Scheduler** — `daedalus-tick.timer` fires every N minutes → `dispatch_tick()` drains due wakes/jobs. Cron-pumped, not a polling thread.
+- **Scheduler** — `daedalus-tick.timer` fires every N minutes → triggers `daedalus run`, whose in-process ticker pumps `dispatch_tick()` to drain due wakes/jobs. Cron-pumped, not a polling thread.
 - **Capabilities** — spawned as **child processes**, each in its own uv venv, resource-capped, killed on timeout.
 - **Power profiles** — AC: up to 3 workers, idle reasoning allowed. Battery: 1 worker, no idle reasoning.
 - **Suspend** — sleep ⇒ no work; on resume ⇒ a single **wake digest** (missed wakes coalesced; no duplicate external side effects).
@@ -204,7 +205,7 @@ request (free text)
 ### 7.3 Scheduled capability run (no model in the loop)
 
 ```
-daedalus-tick.timer ─▶ dispatch_tick ─▶ due job
+daedalus-tick.timer ─▶ daedalus run (in-process ticker) ─▶ dispatch_tick ─▶ due job
   1. runner.spawn(capability)            → child process, own venv, caps
   2. run.py reads JSON context on stdin, writes JSON result on stdout
   3. runner records result + state/ checkpoint
@@ -277,7 +278,7 @@ superseded_by id | null
 created_at    timestamp
 ```
 
-Store: `memory/facets/<facet>.md` (readable) + `memory/index.sqlite` (FTS5; optional embeddings column).
+Store: `memory/facets/<facet>.md` (**source of truth**, Obsidian-compatible: YAML frontmatter + one list item per entry) + `memory/index.sqlite` (**derived** FTS5 cache, rebuildable from the notes; optional embeddings column). Validity is enforced on read — a superseded or expired entry is not recalled unless history is asked for.
 
 ### 8.2 Capability manifest (`manifest.toml`)
 
@@ -336,6 +337,8 @@ Tool:
   risk: auto | ask | block    # the static tier; shell derives it from the command
   scopes: {net, fs, secrets}
   grantable: bool             # may an approval be remembered? (shell: no)
+  title_for(args) -> str      # per-call headline; a multi-op tool names the op
+  approval_labels(args) -> (affirm, deny)   # the buttons say the action
   assess(args) -> Assessment  # what this call does, and how bad it could get
   async call(args, ctx) -> Result
 ```
@@ -505,7 +508,7 @@ Adding any of 1–5 must **not** require editing the loop.
 | Phase | Delivers | Components touched |
 | --- | --- | --- |
 | **P0** | the loop + substrate + proof-of-life | engine, model client, primitives, approvals, Discord surface, capability substrate, memory v0, scheduler v0, Melinoë gate |
-| P1 | memory depth | `memory/*` |
+| **P1** | memory depth — file-first source of truth, supersession + bitemporal, `local_only` egress gate, Obsidian-compatible notes, rebuildable index | `memory/*` |
 | P2 | proactive scheduler | `scheduler/*` |
 | P3 | seats, one at a time | `cabinet/*` |
 | P4 | remote / Tailscale Serve | `genui/server.py`, `surface/*` |
