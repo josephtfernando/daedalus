@@ -150,14 +150,19 @@ and contains the calendar value it was given. **Done** — `_check_dashboard`, w
 two new renderer tests for what it exposed: `Component.check` was running before a
 binding resolved, so it is now deferred to the pass that has the values.
 
-### T7 — The calendar dashboard: day / week / month · `open`
+### T7 — The calendar dashboard: day / week / month · `done`
 *SPEC §5.5 line 317.*
 
-Read the internal store and render three views. Occurrences, not definitions —
-the same rule every other read follows (`SPEC.md` §5.5).
+`genui/dashboard.py` reads the store and returns a page (spec + values + mood);
+`genui/server.py` answers `/dashboard`, `/day/`, `/week/`, `/month/`, each
+optionally pinned to a date. Occurrences, not definitions; Monday → Sunday; a
+month in whole weeks; the spec carries keys and the values are bound locally.
 
 **Acceptance:** each view renders the right events for a fixed clock; a repeating
 event appears on each day it falls; the page is written to `ui/` and served by T1.
+**Done** — `tests/test_dashboard.py` (33 tests, including a live-socket render),
+verified end-to-end against `daedalus serve` in a scratch home. The one thing it
+was not built with: the *generative* dashboard (T9) and the controls (T8).
 
 ### T8 — Dashboard controls → the approval split · `open`
 *SPEC §3.6 ("visual → dashboard, action → Discord").*

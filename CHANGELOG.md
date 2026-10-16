@@ -12,9 +12,43 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 492-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 525-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The calendar is a page now — the day, the week, the month.** SPEC §5.5 asked for *"a full
+  dashboard view (`serve`) — day / week / month — used the way gcal is used"*, and `serve` was
+  serving a directory of files with nothing in it. `genui/dashboard.py` reads the internal store and
+  composes the three views; `genui/server.py` answers `/dashboard` (today) and `/day/`, `/week/`,
+  `/month/` (each optionally pinned to a date, so a rendered cell is linkable). `/dashboard` leaves
+  the routing table's *"not built yet"* list — it is built — while the four writes the approval
+  split owns (T8, T9) keep saying what they will be. Four decisions are worth the words:
+
+  - **Occurrences, never definitions.** Each day is read with the store's own day addressing, so a
+    repeating event appears on *every* day it falls and an instance the owner moved appears where
+    they moved it. A view built from definitions is correct on the day a rule began and wrong on
+    every other day of the year — which is the failure a calendar hides best, because the page still
+    looks like a calendar.
+  - **Monday → Sunday, and a month drawn as whole weeks.** A month grid whose first row is four
+    cells wide is a list, not a calendar. Days that spill in from the neighbouring months are drawn
+    with their date and nothing beside them: they exist, and they are not this month's.
+  - **The spec carries keys; the values are read here.** The page is composed the way a
+    model-composed page is — `Spec.parse` without values, bound at render time — so
+    `page.spec.to_dict()` holds no event summary and is safe to show, log, or hand back. That is
+    §3.6's *structure travels, values stay local* kept true on a page nothing remote will ever see,
+    and it is what lets a generative dashboard reuse the vocabulary later without the owner's data
+    ever entering a prompt. The self-test asserts the two halves separately, because a test that
+    only proves the page *contains* the event proves nothing about the spec.
+  - **`local_only` is shown here.** §6 withholds from **egress**. This page is the owner's own
+    surface on the owner's own loopback with no model in the loop — hiding the owner's own
+    appointment from the owner's own calendar would be the rule turned inside out.
+
+  Each render is also written to `$DAEDALUS_HOME/ui/` (`day-2026-10-16.html`, and today's view
+  becomes `index.html`), so the artifact outlives the request that made it; `daedalus serve` draws
+  today's page once at startup so `/` opens on the calendar rather than on a file listing. A date
+  the store cannot read is refused with the format it wanted rather than defaulted to today —
+  *"I asked for the 16th and got today"* is a page that looks right, which makes it worse than an
+  error. A server built without a calendar says exactly that, rather than claiming to be unbuilt.
 
 - **The self-test renders a dashboard, because the spec says it must.** SPEC §8.5 lists *"dashboard
   render"* among the checks that end provisioning, and it was the one item on that list nothing
@@ -628,6 +662,14 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **The page policy now travels as a header, not only inside the document.** The renderer writes the
+  CSP as a `<meta>`, and it was the only place it existed — but a `<meta>` policy begins to apply
+  where it is parsed, which leaves every byte before it, doctype and head included, served with no
+  policy in force at all. The loopback server now sends `Content-Security-Policy` on an HTML
+  response, and only on HTML: a policy attached to a PNG is not a policy, it is noise. Found while
+  wiring the dashboard through the real socket, which is the part of T7 a unit test of `get()`
+  cannot cover.
 
 - **A cross-prop rule no longer runs on a key.** `Component.check` refuses a `table` row wider than
   its headings and a `calendar` day that is not `[date, weekday, what is on it]` — but it ran during

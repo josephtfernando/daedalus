@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from daedalus.genui.server import LOOPBACK, LocalServer, control_token
+from daedalus.genui.server import ROUTES, LOOPBACK, LocalServer, control_token
 from daedalus.resources.secrets import SecretStore
 
 TOKEN = "a-token-the-owner-never-sees"
@@ -184,14 +184,20 @@ def test_reads_are_open_because_that_is_what_loopback_means(server: LocalServer)
 # -- the routing table tells the truth about what is missing ----------------
 
 
-@pytest.mark.parametrize("route", ["/dashboard", "/draft"])
+@pytest.mark.parametrize("route", ["/draft"])
 def test_an_unbuilt_read_says_so_rather_than_404(tmp_path: Path, route: str) -> None:
+    """`/dashboard` left this list when T7 built it; whatever remains says so.
+
+    The point of the table is that "not built yet" and "not a thing" are
+    distinguishable, so the test tracks the table rather than a fixed list.
+    """
     app = LocalServer(tmp_path, port=0)
 
     response = app.get(route)
 
     assert response.status == 501
     assert "not built yet" in response.text
+    assert ("GET", route) in ROUTES
 
 
 @pytest.mark.parametrize("route", ["/tune", "/approve", "/action"])
@@ -203,8 +209,6 @@ def test_an_unbuilt_control_says_so_rather_than_404(server: LocalServer, route: 
 
 
 # -- the token --------------------------------------------------------------
-
-
 def test_the_control_token_is_minted_once_and_kept_encrypted(tmp_path: Path) -> None:
     store = SecretStore(tmp_path)
 
@@ -235,6 +239,11 @@ def test_a_real_request_round_trips_and_carries_the_hardening_headers(tmp_path: 
             assert "Tuesday" in response.read().decode("utf-8")
             assert response.headers["X-Content-Type-Options"] == "nosniff"
             assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["Referrer-Policy"] == "no-referrer"
+            # The policy travels as a header as well as a <meta>: a meta policy
+            # only applies from where it is parsed, so a header is what covers
+            # the first bytes of the document.
+            assert response.headers["Content-Security-Policy"].startswith("default-src 'none'")
 
         request = urllib.request.Request(
             f"{app.url}/tune", data=b"{}", method="POST"
@@ -247,6 +256,18 @@ def test_a_real_request_round_trips_and_carries_the_hardening_headers(tmp_path: 
         with pytest.raises(urllib.error.HTTPError) as gated:
             urllib.request.urlopen(request, timeout=5)
         assert gated.value.code == 501
+    finally:
+        app.stop()
+
+
+def test_the_policy_follows_documents_and_not_bytes(tmp_path: Path) -> None:
+    """A policy on a PNG is not a policy, it is noise; on a document it is the point."""
+    app = LocalServer(tmp_path, token=TOKEN, port=0)
+    (app.artifacts / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    app.start()
+    try:
+        with urllib.request.urlopen(f"{app.url}/shot.png", timeout=5) as response:
+            assert "Content-Security-Policy" not in response.headers
     finally:
         app.stop()
 

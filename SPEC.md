@@ -329,6 +329,8 @@ is scoped to `state`, and an import reads a path of the owner's choosing.
 
 **Dashboard.** The internal calendar has a **full dashboard view** (`serve`) — day / week / month, create / edit / delete — used the way gcal is used. Controls route through the approval split (§3.6).
 
+The three views are read paths on the loopback server: `/dashboard` is today, and `/day/`, `/week/`, `/month/` take an optional `YYYY-MM-DD` so a rendered cell is linkable (`/week/2026-10-16`). A day is drawn from **occurrences**, not definitions, so a repeating event appears on every day it falls and an instance the owner moved appears where they moved it; a week runs **Monday → Sunday** and a month is drawn as **whole weeks**, because a grid whose first row is four cells wide is a list, not a calendar. Each render is also **written** to `$DAEDALUS_HOME/ui/` and today's becomes the front page. The views read with `local_only` included: this page is the owner's own surface on the owner's own loopback with no model in the loop, and §6's withholding rule is about *egress* — hiding the owner's own appointment from the owner's own calendar would be the rule turned inside out.
+
 **Mail — read-only.** Gmail `readonly` scope; read + summarize only. **No send, no labels, no delete.** Sending is not in the system; it would be a separate, deliberately added grant.
 
 ---

@@ -137,17 +137,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
     its own ticket (T2), because "open a port" and "open a port to the internet"
     should never be the same keystroke.
     """
+    from .calendar.store import CalendarStore
+    from .genui.dashboard import VIEWS, calendar_page, write_page
     from .genui.server import LocalServer, control_token
     from .resources.secrets import SecretStore
 
     settings = _settings(args)
+    calendar = CalendarStore(settings.home / "calendar")
     server = LocalServer(
         settings.home,
         token=control_token(SecretStore(settings.home)),
         port=args.port,
+        calendar=calendar,
     )
+    # Today's view is drawn once at start so that `/` opens on the calendar rather
+    # than on a directory of files. A broken read must not stop the server — the
+    # owner opening the dashboard is how they find out something is wrong — so it
+    # reports and carries on.
+    try:
+        write_page(calendar_page(calendar), settings.home, front=True)
+    except (OSError, ValueError) as exc:
+        print(f"the calendar dashboard did not render at startup: {type(exc).__name__}: {exc}")
     url = server.start()
     print(f"serving {server.artifacts} at {url}  (loopback only — nothing is published)")
+    print(f"the calendar is at {url}/dashboard  ({' · '.join(VIEWS)}: {url}/week, {url}/month)")
     print("ctrl-c to stop")
     try:
         while True:

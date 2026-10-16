@@ -32,9 +32,13 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from secrets import token_urlsafe
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..resources.secrets import SecretStore
+from .renderer import CSP
+
+if TYPE_CHECKING:
+    from ..calendar.store import CalendarStore
 
 logger = logging.getLogger("daedalus.genui")
 
@@ -45,6 +49,10 @@ DEFAULT_PORT = 8787
 TOKEN_HEADER = "X-Daedalus-Token"
 #: Artifact names become file names, so they are *matched* before they are joined.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+#: The dashboard's views, as read paths: `/day/2026-10-16`, `/week/…`, `/month/…`.
+#: The day is optional and defaults to today, so the shortest address is the one
+#: the owner would type.
+_VIEW_PATH = re.compile(r"^/(day|week|month)(?:/(\d{4}-\d{2}-\d{2}))?$")
 
 _TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -59,10 +67,13 @@ _TYPES = {
     ".txt": "text/plain; charset=utf-8",
 }
 
-#: The control API (ARCHITECTURE §9.5), by route. Listed so that an unbuilt
-#: control can say so; each is implemented by the ticket that owns it.
+#: The control API (ARCHITECTURE §9.5), by route. Listed so that a control that is
+#: designed but is not built yet can say so; each is implemented by the ticket
+#: that owns it. `GET /dashboard` is built (T7) and answered below, together with
+#: its view paths (`/day/`, `/week/`, `/month/`); the four that remain unbuilt are
+#: the writes the approval split owns (T8, T9).
 ROUTES: dict[tuple[str, str], str] = {
-    ("GET", "/dashboard"): "the generated dashboard",
+    ("GET", "/dashboard"): "the generated dashboard — day, week or month",
     ("GET", "/draft"): "a live preview of a pending theme or component",
     ("POST", "/tune"): "set pending token or knob values",
     ("POST", "/approve"): "commit the pending set into the owner-approved store",
@@ -97,6 +108,7 @@ class LocalServer:
         token: str = "",
         port: int = DEFAULT_PORT,
         artifacts: Path | None = None,
+        calendar: "CalendarStore | None" = None,
     ) -> None:
         self.home = Path(home)
         self.artifacts = Path(artifacts) if artifacts is not None else self.home / "ui"
@@ -104,6 +116,9 @@ class LocalServer:
         self.token = token
         self.port = int(port)
         self.host = LOOPBACK
+        #: What `/dashboard` draws. Absent means there is nothing to draw, which
+        #: the route says plainly rather than pretending to be unbuilt.
+        self.calendar = calendar
         self._http: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -115,6 +130,9 @@ class LocalServer:
             return _json({"ok": True, "artifacts": len(self.artifact_names())})
         if route in ("/", "/index.html"):
             return self._entry()
+        view = _view_route(route)
+        if view is not None:
+            return self._dashboard(*view)
         if ("GET", route) in ROUTES:
             return _not_built(route, ROUTES[("GET", route)])
         return self._artifact(route.lstrip("/"))
@@ -132,6 +150,37 @@ class LocalServer:
         if not self.token:
             return False
         return hmac.compare_digest(self.token, offered or "")
+
+    # -- the dashboard -----------------------------------------------------
+
+    def _dashboard(self, view: str, anchor: str) -> Response:
+        """Draw a day, week or month from the internal calendar (SPEC §5.5).
+
+        The page is generated *and written*: it lands in `ui/` like every other
+        artifact, so the file is there after the request that made it, and the
+        front page becomes today's view. Reading the calendar on every request is
+        the point — a cached dashboard is a dashboard that lies about today.
+        """
+        from .dashboard import calendar_page, write_page
+
+        if self.calendar is None:
+            return Response(
+                501,
+                _PLAIN,
+                b"/dashboard has nothing to draw: this server was built without a calendar\n",
+            )
+        try:
+            page = calendar_page(self.calendar, view=view, anchor=anchor or None)
+        except ValueError as exc:
+            return Response(400, _PLAIN, f"{exc}\n".encode("utf-8"))
+        try:
+            write_page(page, self.home, front=view == "day" and not anchor)
+        except OSError as exc:
+            # Serving the page matters more than keeping the copy: the owner asked
+            # to *see* the calendar, and a full disk is not a reason to show them
+            # nothing.
+            logger.warning("could not write the dashboard artifact: %s", exc)
+        return Response(200, _TYPES[".html"], page.html().encode("utf-8"))
 
     # -- artifacts ---------------------------------------------------------
 
@@ -259,6 +308,12 @@ def _handler_for(app: LocalServer) -> type[BaseHTTPRequestHandler]:
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
+            if response.content_type == _TYPES[".html"]:
+                # The policy is *in* the document, as a <meta> the renderer writes
+                # — but a meta policy only begins to apply where it is parsed, so
+                # the bytes before it are a document with no policy at all. Sent as
+                # a header it covers the whole response, from the first byte.
+                self.send_header("Content-Security-Policy", CSP)
             # Whatever is served here is the owner's own data, in a document
             # nothing else should hold onto or be able to embed.
             self.send_header("Cache-Control", "no-store")
@@ -284,6 +339,19 @@ def _route(path: str) -> str:
     if not route.startswith("/"):
         route = "/" + route
     return route if route == "/" else route.rstrip("/")
+
+
+def _view_route(route: str) -> tuple[str, str] | None:
+    """The dashboard view a path asks for, or ``None`` for any other path.
+
+    `/dashboard` is the day the owner is having; a view may be named on its own
+    (`/week`) or pinned to a day (`/week/2026-10-16`), which is what makes a
+    rendered cell linkable.
+    """
+    if route == "/dashboard":
+        return ("day", "")
+    found = _VIEW_PATH.match(route)
+    return (found.group(1), found.group(2) or "") if found else None
 
 
 def _content_type(name: str) -> str:

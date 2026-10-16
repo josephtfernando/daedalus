@@ -131,7 +131,7 @@ daedalus/                      # code repo
     cabinet/
       seat.py namespace.py protocol.py broker.py seats/
     genui/
-      spec.py components/ renderer.py theming.py server.py tuners.py
+      spec.py components/ renderer.py theming.py dashboard.py server.py tuners.py
     security/
       provenance.py sink.py quarantine.py env.py
     integrations/
@@ -261,6 +261,12 @@ POST /approve ─▶ tokens.commit(pending)   ▸ owner-approved store
 POST /action ─▶ approvals route (visual actions vs. Discord split)
 ```
 
+**Status.** The calendar views are built: `/dashboard`, `/day/`, `/week/`,
+`/month/` read the internal store through `genui/dashboard.py` and render the
+owner's day. What is *not* yet built is the generative half — a model composing
+structure from the full context signal set — and the three `POST` controls below,
+which the routing table still answers as *"not built yet"*.
+
 **The server.** `genui/server.py` binds the **loopback only** (`127.0.0.1` — not a
 parameter, not a default) and serves the generated artifacts in
 `$DAEDALUS_HOME/ui/`. `daedalus serve` starts it; publishing it to the tailnet is
@@ -275,6 +281,28 @@ anything running as this user can reach the loopback, and a dashboard write is a
 real action against the owner's calendar. The routing table (§9.5) is written
 down, so a control that is designed but not yet built answers *"not built yet"*
 rather than a 404.
+
+**The calendar view.** `genui/dashboard.py` is the *producer*: it reads the
+internal store and returns a spec, its local values, and the mood — and
+`genui/server.py` serves it at `/dashboard`, `/day/`, `/week/`, `/month/` (each
+optionally pinned to a date). The split matters because it is the same seam the
+model crosses: the page's spec carries **keys** and the values are bound at render
+time, so a generative dashboard can reuse the vocabulary without the owner's data
+ever entering a prompt (§3.6). Two rules are worth stating because they look like
+details and are not:
+
+- **Occurrences, never definitions.** Each day is read with the store's own day
+  addressing, so a repeating event appears on every day it falls and a moved
+  instance appears where it was moved. A calendar built from definitions is
+  correct on the day a rule began and wrong every day after.
+- **`local_only` is shown here.** §6 withholds from *egress*. This page is the
+  owner's own surface, on the owner's own loopback, with no model in the loop.
+
+The page is written to `$DAEDALUS_HOME/ui/` on generation — today's becomes
+`index.html` — so the artifact outlives the request that made it. The response
+also carries the CSP **as a header**, not only as the `<meta>` the renderer
+writes: a meta policy begins at the point it is parsed, which leaves the bytes
+before it unprotected.
 
 ### 7.5 Seat-to-seat collaboration
 
