@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
 from .base import Tool, ToolResult, params
 
@@ -19,6 +20,7 @@ MAX_TEXT = 200 * 1024
 
 class BrowserTool(Tool):
     name = "browser"
+    title = "Drive a browser"
     description = "Load a page in headless Chromium, return its text, or take a screenshot."
     risk = Risk.ASK
     scopes = {"net": ["*"]}
@@ -27,6 +29,13 @@ class BrowserTool(Tool):
         url=({"type": "string"}, True),
         selector=({"type": "string", "description": "optional CSS selector to narrow the result"}, False),
     )
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        return Assessment(
+            level=Level.CAUTION,
+            summary="open a page in a browser on this machine",
+            reasons=("the page and its scripts load and run locally",),
+        )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         try:

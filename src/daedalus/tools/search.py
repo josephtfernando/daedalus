@@ -8,6 +8,7 @@ from typing import Any, TYPE_CHECKING
 
 import httpx
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
 from .base import Tool, ToolResult, params
 
@@ -26,6 +27,7 @@ def _clean(text: str) -> str:
 
 class SearchTool(Tool):
     name = "search"
+    title = "Search the web"
     description = "Search the web and return titles, URLs, and snippets."
     risk = Risk.ASK
     scopes = {"net": ["duckduckgo.com"]}
@@ -33,6 +35,13 @@ class SearchTool(Tool):
         query=({"type": "string"}, True),
         max_results=({"type": "integer", "default": 5}, False),
     )
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        return Assessment(
+            level=Level.CAUTION,
+            summary="search the web",
+            reasons=("your query leaves the machine",),
+        )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         query = str(args.get("query", "")).strip()

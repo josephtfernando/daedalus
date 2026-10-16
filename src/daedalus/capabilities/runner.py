@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..security.env import scrubbed
 from .manifest import Manifest
 
 MAX_OUTPUT = 256 * 1024
@@ -85,6 +86,7 @@ class CapabilityRunner:
             str(python),
             str(entry),
             cwd=str(cap_dir),
+            env=scrubbed(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

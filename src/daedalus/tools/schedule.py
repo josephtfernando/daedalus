@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
 from .base import Tool, ToolResult, params
 
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 
 class ScheduleTool(Tool):
     name = "schedule"
+    title = "Schedule a job"
     description = (
         "Add, list, or remove scheduled jobs. A job either runs an authored capability "
         "(no model) or wakes the agent to compose a message."
@@ -26,6 +28,19 @@ class ScheduleTool(Tool):
         kind=({"type": "string", "enum": ["capability", "wake"], "default": "capability"}, False),
         target=({"type": "string", "description": "capability name, or a wake prompt"}, False),
     )
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        op = str(args.get("op", ""))
+        name = str(args.get("name", "")) or "a job"
+        if op == "list":
+            return Assessment(level=Level.OK, summary="list the scheduled jobs")
+        if op == "remove":
+            return Assessment(
+                level=Level.DESTRUCTIVE,
+                summary=f"remove the scheduled job {name!r}",
+                reasons=("that automation stops running, silently",),
+            )
+        return Assessment(level=Level.CAUTION, summary=f"add the scheduled job {name!r}")
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         op = str(args.get("op", ""))

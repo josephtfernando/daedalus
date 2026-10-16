@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
 from ..capabilities.authoring import materialize
 from ..capabilities.manifest import Caps, Manifest, Scopes
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 class CapabilityTool(Tool):
     name = "capability"
+    title = "Author a capability"
     description = (
         "The tool-making machine: author, list, get, run, verify, remove, or schedule a capability.\n"
         "`op=author` ALWAYS needs `name` and `run_py`. `run_py` is the complete Python source of "
@@ -65,6 +67,32 @@ class CapabilityTool(Tool):
         if op in ("list", "get"):
             return Risk.AUTO
         return Risk.ASK
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        """Say which operation this is, because `capability` is six tools in one."""
+        op = str(args.get("op", ""))
+        name = str(args.get("name", "")) or "an unnamed capability"
+        if op == "author":
+            schedule = args.get("schedule")
+            tail = f", then schedule it to run unattended ({schedule})" if schedule else ""
+            return Assessment(
+                level=Level.CAUTION,
+                summary=f"write a new program to disk and run it once to check it{tail}",
+                reasons=("authored code runs on this machine, and a scheduled one runs with no model in the loop",),
+            )
+        if op == "run":
+            return Assessment(level=Level.CAUTION, summary=f"run the authored capability {name!r}")
+        if op == "verify":
+            return Assessment(level=Level.CAUTION, summary=f"run {name!r} once, to check it works")
+        if op == "schedule":
+            return Assessment(level=Level.CAUTION, summary=f"schedule {name!r} to run unattended")
+        if op == "remove":
+            return Assessment(
+                level=Level.DESTRUCTIVE,
+                summary=f"delete the authored capability {name!r}",
+                reasons=("its run.py and its remembered state are removed",),
+            )
+        return Assessment(summary=f"ask about the authored capabilities ({op})")
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         op = str(args.get("op", ""))

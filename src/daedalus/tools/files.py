@@ -18,6 +18,7 @@ MAX_BYTES = 256 * 1024
 
 class FilesTool(Tool):
     name = "files"
+    title = "Read or write a file"
     description = (
         "Read, write, list, glob, or grep files inside the permitted workspace. "
         "Protected paths (.env, private docs) are refused."

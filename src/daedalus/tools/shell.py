@@ -1,7 +1,10 @@
 """``shell`` primitive — run a command, scoped and audited.
 
-Risk ``ask``: an arbitrary command is not a *self-contained* action in the
-sense of SPEC §6, so it asks until the owner grants it.
+Risk comes from the command, not from the tool (SPEC §6): a command that only
+reads state is self-contained and runs; one that can change the machine asks
+first; one the classifier refuses never runs. This is also why ``shell`` is not
+*grantable* — there is no scope that describes "whatever commands I might run
+next", so an approval here covers exactly the command that was approved.
 """
 
 from __future__ import annotations
@@ -10,7 +13,9 @@ import asyncio
 import shlex
 from typing import Any, TYPE_CHECKING
 
+from ..approvals.classify import Assessment, Level, classify_command
 from ..approvals.risk import Risk
+from ..security.env import scrubbed
 from . import guard
 from .base import Tool, ToolResult, params
 
@@ -22,14 +27,34 @@ MAX_OUTPUT = 64 * 1024
 
 class ShellTool(Tool):
     name = "shell"
+    title = "Run a shell command"
     description = "Run a shell command in the workspace and return its output."
     risk = Risk.ASK
+    grantable = False
     scopes = {"fs": ["workspace"], "exec": ["shell"]}
     parameters = params(
         command=({"type": "string"}, True),
         cwd=({"type": "string"}, False),
         timeout_s=({"type": "integer", "default": 60}, False),
     )
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        """Judge the command itself, so the owner is told what it does."""
+        return classify_command(str(args.get("command", "")))
+
+    def risk_for(self, args: dict[str, Any]) -> Risk:
+        assessment = self.assess(args)
+        # A refused command is not a choice to offer: the owner should not have
+        # to read `rm -rf /` and decide. This is also why `files` must not be the
+        # only tool that respects the out-of-bounds paths.
+        if assessment.refused:
+            return Risk.BLOCK
+        # Reading is self-contained, so it does not need permission. Asking for
+        # `git status` was how a prompt stopped carrying information: if every
+        # command asks, "it asked" no longer means "it might change something".
+        if assessment.level is Level.OK:
+            return Risk.AUTO
+        return Risk.ASK
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         command = str(args.get("command", "")).strip()
@@ -45,6 +70,7 @@ class ShellTool(Tool):
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=cwd,
+            env=scrubbed(ctx.settings),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             executable="/bin/bash",

@@ -2,7 +2,9 @@
 
 Precedence (highest first):
 
-1. environment variables (``$DAEDALUS_HOME/.env`` is loaded into ``os.environ``)
+1. environment variables (``$DAEDALUS_HOME/.env`` is parsed into ``Settings.env``, and
+   consulted from there — it is *not* written into ``os.environ``, so it is not
+   inherited by commands the agent runs)
 2. ``$DAEDALUS_HOME/config.toml``
 3. built-in defaults below
 

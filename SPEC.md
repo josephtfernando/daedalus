@@ -244,6 +244,9 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
 - **Bytes stay home.** Nothing leaves the machine without approval: no secret or personal value in any prompt, request body, log, or message. **Structure travels; values stay local** (§3.6).
 - Approvals surface as **Discord buttons** for actions, **on the artifact** for visuals (§3.6).
 - Standing grants (bounded, scoped, revocable) preferred over approval spam; strong confirmation retained for purchases, sensitive disclosure, irreversible ops.
+- **The tier is decided from the call, deterministically** — never by the model, and never by a model round-trip. A call is judged by the worst plausible outcome of what it actually does: reads state → auto; changes something → ask; destroys data or history → ask loudly; can take the machine with it, or reaches a path that is out of bounds → **refused outright, never offered as a choice**. A command that cannot be judged is not called safe.
+- **Consent is narrow.** A standing grant is remembered only for an action that is bounded, repeatable, and not destructive — an approval covers what was approved, and nothing more. Irreversible ops are never covered by a standing grant, and a refusal is always reported to the owner: silently stopping makes *tried and was stopped* indistinguishable from *never tried*.
+- **The process environment is part of "bytes stay home."** Commands the agent runs do not inherit credentials; what a command prints returns into the conversation and on to a model.
 
 ---
 

@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from ..config import Settings
 from ..security.sink import may_authorize
 from ..security.provenance import Labeled
+from .classify import Assessment
 from .grants import Grant, Grants
 from .risk import Risk
 
@@ -32,6 +33,7 @@ class Decision:
     action: str
     scope: str
     action_hash: str
+    assessment: Assessment | None = None
 
     @property
     def blocked(self) -> bool:
@@ -88,6 +90,11 @@ class ApprovalMiddleware:
         target = args.get("target") or args.get("path")
         if isinstance(target, str) and target:
             return f"{tool_name}:{target}"
+        # A tool that is several operations in one (`capability` authors, runs,
+        # schedules, and deletes) must not let consent for one cover another.
+        op = args.get("op")
+        if isinstance(op, str) and op:
+            return f"{tool_name}:{op}"
         return f"{tool_name}:*"
 
     # -- the decision -----------------------------------------------------
@@ -100,13 +107,23 @@ class ApprovalMiddleware:
         risk: Risk,
         scopes: dict[str, Any] | None = None,
         authorizing: list[Labeled] | None = None,
+        assessment: Assessment | None = None,
     ) -> Decision:
         scopes = scopes or {}
         scope = self.derive_scope(tool_name, args)
         ahash = self.action_hash(tool_name, args)
 
         def decide(allow: bool, ask: bool, reason: str) -> Decision:
-            d = Decision(allow=allow, ask=ask, risk=risk, reason=reason, action=tool_name, scope=scope, action_hash=ahash)
+            d = Decision(
+                allow=allow,
+                ask=ask,
+                risk=risk,
+                reason=reason,
+                action=tool_name,
+                scope=scope,
+                action_hash=ahash,
+                assessment=assessment,
+            )
             self.log.write(d)
             return d
 
@@ -116,8 +133,10 @@ class ApprovalMiddleware:
             if not ok:
                 return decide(False, False, f"sink: {why}")
 
-        # 2. Hard block.
+        # 2. Hard block — by policy, or because the classifier refused the call.
         if risk is Risk.BLOCK:
+            if assessment is not None and assessment.reasons:
+                return decide(False, False, f"refused: {assessment.summary} — {assessment.reasons[0]}")
             return decide(False, False, "tool risk tier is block")
 
         egress = bool(scopes.get("net"))
@@ -133,11 +152,12 @@ class ApprovalMiddleware:
 
         # 5. Everything else asks.
         if egress:
-            return decide(False, True, "egress requires approval")
+            return decide(False, True, "this leaves your machine — approving it remembers the host")
         # Reached by an ask-tier local tool (shell, code, capability authoring).
         # Saying "egress" here was simply wrong, and told the owner the agent was
-        # trying to leave the machine when it wanted to run `date`.
-        return decide(False, True, f"{tool_name} always asks before it runs")
+        # trying to leave the machine when it wanted to run `date`. The reason now
+        # says why a local action needs consent at all.
+        return decide(False, True, "it can change things on this machine, so it asks first")
 
     def grant_from(self, decision: Decision, *, note: str = "", expires_at: float | None = None) -> Grant:
         return self.grants.add(

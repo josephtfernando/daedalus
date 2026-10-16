@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 class MemoryTool(Tool):
     name = "memory"
+    title = "Remember or recall something"
     description = (
         "Store a durable fact about the owner, or recall facts. "
         "Every fact carries provenance, confidence, and supersession."

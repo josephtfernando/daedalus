@@ -113,7 +113,7 @@ daedalus/                      # code repo
       shell.py code.py files.py http.py browser.py search.py
       schedule.py process.py memory.py discord.py ask.py secrets.py
     approvals/
-      middleware.py grants.py risk.py
+      middleware.py grants.py risk.py classify.py
     capabilities/
       authoring.py manifest.py runner.py registry.py verify.py
     resources/
@@ -129,7 +129,7 @@ daedalus/                      # code repo
     genui/
       spec.py components/ renderer.py theming.py server.py tuners.py
     security/
-      provenance.py sink.py quarantine.py
+      provenance.py sink.py quarantine.py env.py
     integrations/
       gcal.py mail.py calendar_sync.py
     storage/
@@ -331,13 +331,18 @@ added_at = timestamp
 ```
 Tool:
   name: str
+  title: str                  # the human name, for the approval prompt
   schema: JSONSchema          # args
-  risk: auto | ask | block
+  risk: auto | ask | block    # the static tier; shell derives it from the command
   scopes: {net, fs, secrets}
+  grantable: bool             # may an approval be remembered? (shell: no)
+  assess(args) -> Assessment  # what this call does, and how bad it could get
   async call(args, ctx) -> Result
 ```
 
-The model sees only `name + schema + description`. Risk, scopes, and authorization are **invisible to the model** and enforced by the middleware.
+The model sees only `name + schema + description`. Risk, scopes, authorization,
+and the danger assessment are **invisible to the model** and enforced by the
+middleware.
 
 ### 9.2 Seat message protocol
 
@@ -398,6 +403,44 @@ untrusted_source ─▶ quarantine.read ─▶ local_derived (may inform a draft
 - **Action** approvals (egress, purchases, irreversible ops) → **Discord buttons**.
 - **Visual** approvals (themes, components, dashboards) → **on the artifact** in the dashboard.
 - Approvals bound to **action hash + scope + expiry + idempotency**.
+
+**Danger classifier** (`approvals/classify.py`). Which tier a call falls in is
+decided **from the call itself**, deterministically — never by the model, and
+never by a model round-trip, because an approval prompt must not be something the
+agent can stall, reword, or talk its way past. Every tool declares, for a given
+call, what the call does and how bad its worst plausible outcome is:
+
+```
+ok            reads state; nothing changes                  ▸ auto
+caution       changes something, reversibly                 ▸ ask
+destructive   destroys data or history; not recoverable     ▸ ask, loudly
+catastrophic  can take the machine with it, or reaches a    ▸ refused outright
+              path the owner put out of bounds                 (never offered)
+```
+
+The tier drives the risk the middleware sees: `ok → auto`, `caution |
+destructive → ask`, `catastrophic → block`. Two consequences are load-bearing:
+
+- **A prompt has to carry information.** If every command asks, then asking stops
+  meaning anything. Read-only commands run; what remains asking is exactly what
+  can change something.
+- **A refusal is the owner's business.** A blocked call is reported to the owner,
+  because silently stopping means the agent tried something it was not allowed to
+  do and nobody ever knew.
+
+**Consent is narrow.** An approval is remembered as a standing grant only when it
+was **not** destructive *and* the tool's scope actually describes what was
+approved. `shell` is never grantable — no scope describes "whatever command I run
+next", so its approval covers one command. A multi-operation tool scopes by
+operation (`capability:author` ≠ `capability:remove`). The rule: *consent for
+something irreversible is not consent for it later, forever.*
+
+**Environment scrubbing** (`security/env.py`). Commands the agent runs inherit a
+scrubbed environment: the install's own `.env` keys and anything whose name looks
+like a credential are removed. A command's output flows back into the conversation
+and on to a model provider, so the ambient environment is a place a value could
+leave from — *structure travels, values stay local* applies to the process
+environment too, not only to request bodies.
 
 **Restraint rules** (`SPEC.md` §6, `AGENTS.md`): reach narrow; personal data out of bounds; bytes stay home; structure travels, values stay local.
 

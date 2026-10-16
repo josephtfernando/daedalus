@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
 
 if TYPE_CHECKING:
@@ -32,9 +33,16 @@ class ToolResult:
 class Tool:
     name: str = ""
     description: str = ""
+    # The human name for an approval prompt. The owner should read
+    # "Run a shell command", never `shell` on `shell:*`.
+    title: str = ""
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
     risk: Risk = Risk.AUTO
     scopes: dict[str, Any] = {}
+    # Whether an approval for this tool may be remembered as a standing grant.
+    # False when no scope on the call actually describes what was approved —
+    # a `shell` approval covers one command and nothing else.
+    grantable: bool = True
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -53,6 +61,22 @@ class Tool:
         middleware from the tool itself.
         """
         return self.risk
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        """Say what this call does, and how bad it could get — in the owner's words.
+
+        Derived from the arguments alone. A tool that can say something sharper
+        about its own danger overrides this; ``shell`` judges the actual command.
+
+        The default level follows the tool's own risk tier and nothing else. A
+        tool that asks for approval is, by definition, not known to be
+        read-only — labelling an unknown ask-tier call "read-only" is how a
+        dangerous prompt gets waved through.
+        """
+        return Assessment(
+            level=Level.CAUTION if self.risk is Risk.ASK else Level.OK,
+            summary=self.title or f"use the {self.name} tool",
+        )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:  # pragma: no cover
         raise NotImplementedError(f"{self.name} does not implement run()")

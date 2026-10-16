@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 class AskTool(Tool):
     name = "ask"
+    title = "Ask you a question"
     description = "Ask the owner a question and wait for their answer."
     risk = Risk.AUTO
     scopes = {}

@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 with `--live`) and a 65-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — now **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord._
+_Design frozen; **P0 is implemented as code** — the loop, the primitives, the capability substrate, memory v0, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 with `--live`) and a 112-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — now **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord._
 
 ### Added
 
@@ -29,10 +29,13 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
   - **Secrets** — an encrypted credential store (Fernet, per-install master key at `0600`) and a **bytes-stay-home** guard that blocks any outbound request whose body carries a provisioned secret value.
   - **Self-test** — `daedalus selftest` runs layout · secrets · memory · approvals · the Melinoë gate · the scheduler tick · a full free-text turn · and **the daemon lifecycle**, all offline with a scripted model; `--live` additionally walks the configured provider chain and reports which entry answered.
   - **Setup wizard (code)** — `scripts/setup.sh`: the `template.sh` library **vendored verbatim** from the `wizard` skill (every line from `set -euo pipefail` through the `STAGES` marker byte-identical), with the 13 stages authored below it, plus `-y/--yes` and `--non-interactive` modes. Deliberate deviations from the §8.5 stage list, each because the runtime disagreed with the prose: the secret-store **directory** is `0700` (a directory needs `+x` to be traversable; the files inside stay `0600`), the master key sits at `resources/master.key` because that is where `SecretStore` reads it, stage 10 installs only the two named units (the runtime pumps ticks **in-process**, so the timer triggers `daedalus.service` with `Persistent=true` rather than inventing a `tick` verb), and stage 12 runs `selftest --live` when a heavy key is configured. Nothing from the wizard is written to CI — no secret leaves the machine.
-  - **Tests** — 65 tests across cron, approvals, capabilities, memory, the engine loop, the tool schemas, scheduled notifications, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
+  - **Tests** — 112 tests across cron, approvals, the danger classifier, capabilities, memory, the engine loop, the tool schemas, scheduled notifications, the files guard, the secret store, the daemon lifecycle, the Discord surface, and the self-test's own isolation guarantee.
   - **`tests/test_notifications.py`** — the last hop, tested. A scheduled capability that nobody is told about is not automation, and the run has no model in it to notice. These tests drive a real tick: the capability's notification reaches the surface (its own words intact, titled with the name the owner chose rather than the internal `cap-` job handle), a repeat tick for the same minute does **not** message twice, a run with an empty `notifications` list stays silent, and `state` carries between scheduled runs.
   - **A trace of the loop, in the log.** The engine logs every tool call — the tool, its `op` when it has one, and whether it succeeded, failed, or was blocked, with a short reason on failure and a character count on success. **Arguments are never logged**, because they carry the owner's words; the trace records shape and outcome only. This exists because the failed acceptance run was invisible: sixteen identical tool calls left not one line behind, and the only way to see what the model had actually sent was to re-drive the turn by hand through a scripted probe.
   - **`tests/test_tool_schemas.py`** — the schema audit as a regression test. It fails if any tool offers a payload parameter (`content`, `run_py`, `query`, `command`, …) as optional, naming every offender at once. It caught two more instances on its first run (`process.command`, `memory.query`) that the live failure had not yet exposed.
+  - **A danger classifier for approval** — `approvals/classify.py`. The owner reported that an approval reading `Approval needed — shell on shell:*` told them nothing: not what the command was, not what it did, and not why they were being asked. It also treated `git status --short` and `rm -rf ~` as the same event, so a prompt carried no information either way. Every call is now judged on a four-level scale by **how bad its worst plausible outcome is** — `ok` (reads state) · `caution` (changes something, reversibly) · `destructive` (destroys data or history) · `catastrophic` (can take the machine with it, or reaches a path the owner put out of bounds) — and that judgement drives the risk tier: `ok → auto`, `caution | destructive → ask`, `catastrophic → block`. The rules cover fork bombs, `rm` on a root/home/wildcard or one level inside a system root, `mkfs`/`fdisk`/`parted`, `dd of=/dev/*`, redirects into a block device, `git reset --hard` / `clean -fd` / `push --force` / `branch -D`, pipe-to-shell, recursive `chmod`/`chown`, shutdown, `kill -9`, `sudo`, service control, package installs, and writes — while a deliberate read-only allow-list (`ls`, `cat`, `df`, `rg`, `git status|log|diff`, `systemctl is-active`, …) keeps ordinary inspection from asking at all. It is **deterministic on purpose**: an approval decision must never wait on a model round-trip, and a model's opinion of its own safety is exactly what SPEC §6 says never to trust. Both error directions have a cost, so a command that matches nothing is **not** called safe — it is reported as unrecognised and asks.
+  - **`Tool.title` and `Tool.assess`** — a tool now describes its own call. `title` is the human name (`"Run a shell command"`, never `shell`); `assess(args)` returns the level, a one-line summary of what the call does, and the reasons it was flagged. `shell` judges the actual command text; `capability` speaks per operation (`author` / `run` / `verify` / `schedule` / `remove`); `code`, `discord`, `http`, `search`, `browser`, `secrets`, `schedule`, and `process` each state their own case. The default follows the tool's own risk tier — a tool that cannot describe itself does not get to claim it is read-only.
+  - **`tests/test_classify.py`** — 47 tests over the two halves of this. The classifier is checked against a spread of real commands (the catastrophic cases refused, the read-only cases quiet, `rm -rf /usr/lib` refused but `rm -rf /usr/local/myapp` merely destructive, `cd X && …` peeled so navigation cannot hide what follows, and the out-of-bounds paths refused from the shell as well as from `files`); the rendered prompt is checked to contain the action, the level, and the command rather than an internal scope glob; and the consent rules are checked end-to-end through the engine — a read-only command runs with no approval, a mutating one asks, **approving one shell command does not cover the next**, a destructive approval is never remembered, and a refused command is stopped *and* reported.
 
 - **`SPEC.md`** — the requirements and design source of truth. Covers purpose, design principles, the harness/stack decision, the capability substrate, Generative UI, the model stack, memory, trust & safety, the cabinet, runtime, the Discord surface, phases, the P0 definition and build order, reconciliation notes, and open implementation details.
 - **`ARCHITECTURE.md`** — the build-level companion: system context, component map, repository and package layout, runtime & process model, the five core flows, the data model, the interface/protocol contracts, the security architecture, failure modes, extension points, and the phase map.
@@ -116,6 +119,47 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **Remoting:** public exposure → **Tailscale Serve only** (loopback-bound, **no public Funnel**).
 - **Output taxonomy:** a single "output modes" list → **output channels** (`message` · `file` · `serve` · `push`) **+ external actions** (mail, calendar, git, social, payments, data). The first is delivery to the owner; the second is acting on other systems — they were wrongly merged.
 - **Settings are home-relative:** the grant store and the rate-limit ledger resolve from `$DAEDALUS_HOME` rather than a process-global path, so a self-test or a second install can never read or write another install's state.
+- **The approval prompt now says what is happening, in the owner's words.** It read
+  `**Approval needed** — shell on shell:*`, then a reason, then the command. The owner's response
+  was, verbatim: *"I genuinely have no idea what shell on shell:* is about, or what that command is
+  supposed to do, there's no explanation."* They were right: the prompt named an internal tool and a
+  scope glob, and omitted the one thing that decides the answer — what the action actually does. It
+  now reads: a human title (`**Approval needed — Run a shell command**`), **What it does** (`delete
+  files`), **Risk** (`destructive — this cannot be undone`), the reasons that raised the level, then
+  the exact command in a code block, and finally why consent is being asked for at all. The tool's
+  raw arguments are summarised rather than dumped, with oversized values replaced by their length
+  (`run_py: …(1300 characters)`) so a 1,300-character program cannot bury the prompt.
+  *Supersedes:* the `action` + `scope` head line and the bare joined-arguments body.
+- **The reason a *local* action asks now explains itself.** The previous session replaced the
+  universally-wrong *"egress requires approval"* with *"`<tool>` always asks before it runs"* — true,
+  but a description of the mechanism rather than a reason, and it still sounded like jargon to the
+  owner. It now reads *"it can change things on this machine, so it asks first"*; egress keeps its
+  own wording, which now also says that approving remembers the host. *Supersedes:* the
+  *"always asks before it runs"* wording added earlier in this same unreleased section.
+- **`shell` risk is derived from the command, not declared once for the tool.** It was a flat
+  `ask`, which meant `git status --short` and `rm -rf ~` produced the same prompt. Asking is the
+  expensive part of the relationship, so it has to be reserved for what it is for: a read-only
+  command is self-contained and now runs without a prompt (matching SPEC §6's rule that
+  self-contained actions are auto), anything that can change state asks every time, and a
+  `catastrophic` command is refused rather than offered. The consequence is that a prompt now
+  *carries information* — if everything asks, "it asked" stops meaning anything.
+  *Supersedes:* the flat `risk = ask` on the shell primitive.
+- **Consent is narrow: an approval covers what was approved, and nothing more.** Approving any shell
+  command wrote a standing grant scoped `shell:*` — there is no scope that describes a command, so
+  the fallback glob covered every command that would ever run afterwards, including destructive ones
+  the classifier had merely rated *ask*. Three rules now hold. A tool is **grantable** only when its
+  scope actually describes the call, and `shell` is not. A multi-operation tool is scoped **by
+  operation** (`capability:author` no longer covers `capability:remove`). And a **destructive**
+  approval is never remembered at all — *consent for something irreversible is not consent for it
+  later, forever.* *Supersedes:* the `{tool}:*` fallback grant and the unconditional `grant_from` on
+  approval.
+- **`SPEC.md` §6 and `ARCHITECTURE.md` §9.1 / §10** now carry the rule that decides a call's tier
+  deterministically, the level → risk-tier mapping, the narrow-consent rules, and the environment
+  scrub, so the design documents describe the system that exists rather than the one that was
+  intended. §6's *"strong confirmation retained for … irreversible ops"* is the line this change
+  finally makes true.
+- **The suite is 112 tests** (from 65) — the new 47 in `tests/test_classify.py`, and no existing test
+  was weakened to accommodate the change.
 
 ### Fixed
 
@@ -219,6 +263,28 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **`Scheduler.add_job` crashed on any cron expression** — the `cron` parameter shadowed the `cron` module inside the method, so validation hit a string. The validator is now imported under an explicit name. Caught by the self-test, not by luck.
 - **`Manifest.save()` assumed its capability directory existed** and raised `FileNotFoundError` when writing a manifest into a fresh directory; it now creates the directory first.
 - **A malformed line in the CLI REPL** (a stray walrus expression) would not have run; rewritten to a plain event construction.
+- **Approving one shell command silently consented to every later one.** The owner approved a
+  `capability` call, then watched two `shell` prompts arrive — `git status --short && …` and a
+  `systemctl …` query. Consenting to either wrote a standing grant scoped `shell:*`, because
+  `derive_scope` falls back to `{tool}:*` when the arguments carry no URL or path, and a shell
+  command's arguments are just its command text. From that moment **every** shell command ran with no
+  prompt at all — including the destructive ones the new classifier rates merely *ask*: `rm -rf
+  ~/code`, `git reset --hard`, `git push --force`. Only the `catastrophic` tier would still have been
+  refused, which means the owner's grant was doing more of the guarding than the classifier was. It
+  was found by asking the classifier's own question back at the grants — *what can this approval
+  reach?* — and not from a failing test, because no test had ever approved a command and then run a
+  different one. Three rules now close it, recorded under *Changed*.
+- **A tool that could not describe itself was labelled "read-only".** The default `assess` returned
+  `Level.OK`, so `code` and `discord` rendered as `**Risk:** read-only` — a false statement in the
+  one place the owner is being asked to trust a judgement. A prompt is only worth reading if its
+  labels are true, so the default now follows the tool's own risk tier: a tool that has not said what
+  it does is *not known* to be read-only, and an ask-tier call is labelled as one. Caught by printing
+  the rendered prompts and reading them, which is also how the next item was caught.
+- **A refused command was stopped silently.** When the classifier blocked a call, the model was told
+  and the owner was told nothing — so an agent that tried `rm -rf /` and was stopped was
+  indistinguishable from an agent that never tried. The owner now receives a short note naming what
+  the agent wanted to do and confirming nothing ran. Found by reading the blocked path rather than
+  the allowed one.
 
 ### Removed
 
@@ -236,6 +302,11 @@ _Design frozen; **P0 is implemented as code** — the loop, the primitives, the 
 - **Bytes stay home** — nothing leaves the machine without approval; no secret or personal value in any prompt, request body, log, or message. **Structure travels; values stay local.**
 - **Sink policy** — untrusted text may inform a draft but can never authorize a recipient, URL, command, or scope.
 - **Approval binding** — approvals are bound to action hash + scope + expiry + idempotency.
+- **The process environment is scrubbed** — `security/env.py`. Found while building the classifier, which is the first component to ask "what could this command actually reach?" Commands the agent runs inherit its environment, and that is a reasonable place for a credential to be sitting: the install's own `.env`, or the owner's shell when the agent is driven from the CLI. Whatever a command prints comes straight back into the conversation and on to a model provider. Every subprocess the agent launches — `shell`, `code`, `process`, and a capability's `run.py` — now receives an environment with the install's `.env` keys and anything whose name looks like a credential (`*_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `AUTH`, …) removed, verified by a test that exports a key, runs `printenv` through the loop, and asserts the value never reaches the fed-back tool result. *Supersedes:* nothing — this was not previously considered, and the same rule ("structure travels, values stay local") simply had not been applied to the process environment, only to request bodies.
+- **`config.py` claimed `.env` was loaded into `os.environ`; it never was.** `load_env` parses `$DAEDALUS_HOME/.env` into a dict and reads it from there. The docstring said otherwise, and that inaccuracy is security-relevant — reasoning about what a subprocess can inherit from a wrong statement about the environment is how a scrub gets skipped. The docstring now says what the code does.
+- **`Approval needed — shell on shell:*` was shown for a command that would read a private key.** `files` refuses the out-of-bounds paths (`.env`, `~/.ssh`, `~/.aws`, `docs/private`, the vault) but `shell` could walk straight through that refusal, and reading a key into the conversation is precisely a path by which a value leaves the machine. The classifier now refuses those paths from *any* tool, which is the point: a guard on one tool is worth nothing.
+- **A refused command is now reported to the owner.** Blocking was silent — the model was told the call was blocked and the owner was told nothing, so an agent that tried `rm -rf /` and was stopped looked exactly like an agent that never tried. A refusal now sends the owner a short note saying what it wanted to do and that nothing ran. Silence and safety should not be indistinguishable.
+- **One approval used to cover every future command.** See *Fixed* — an approval for `shell` wrote a `shell:*` standing grant, so consenting to `git status` silently consented to `rm -rf ~/code` for as long as the grant lived.
 - **Capability safety** — manifest-scoped access, resource caps, audit log, and kill switch per capability.
 
 ### Notes

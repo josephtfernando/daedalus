@@ -9,7 +9,9 @@ import asyncio
 import sys
 from typing import Any, TYPE_CHECKING
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
+from ..security.env import scrubbed
 from .base import Tool, ToolResult, params
 
 if TYPE_CHECKING:
@@ -29,6 +31,7 @@ MAX_OUTPUT = 64 * 1024
 
 class CodeTool(Tool):
     name = "code"
+    title = "Run code on this machine"
     description = (
         "Write and run a short script (python, node, or bash) in the workspace scratch dir. "
         "stdin is available; print results to stdout."
@@ -42,6 +45,14 @@ class CodeTool(Tool):
         timeout_s=({"type": "integer", "default": 60}, False),
         keep=({"type": "boolean", "default": False}, False),
     )
+
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        language = str(args.get("language", "code"))
+        return Assessment(
+            level=Level.CAUTION,
+            summary=f"run {language} code on this machine",
+            reasons=("it runs with your privileges — nothing confines it to the workspace",),
+        )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         language = str(args.get("language", "python")).lower()
@@ -57,6 +68,7 @@ class CodeTool(Tool):
             *LANG_CMD[language],
             str(path),
             cwd=str(scratch),
+            env=scrubbed(ctx.settings),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,

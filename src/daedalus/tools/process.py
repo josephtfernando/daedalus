@@ -7,7 +7,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
+from ..security.env import scrubbed
 from . import guard
 from .base import Tool, ToolResult, params
 
@@ -29,10 +31,13 @@ class ProcessManager:
     def __init__(self) -> None:
         self._procs: dict[str, Managed] = {}
 
-    async def start(self, name: str, command: str, cwd: str | None = None) -> Managed:
+    async def start(
+        self, name: str, command: str, cwd: str | None = None, env: dict[str, str] | None = None
+    ) -> Managed:
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=cwd,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             executable="/bin/bash",
@@ -73,6 +78,7 @@ class ProcessManager:
 
 class ProcessTool(Tool):
     name = "process"
+    title = "Start a long-running process"
     description = "Start, list, read logs from, or stop long-running processes."
     risk = Risk.ASK
     scopes = {"fs": ["workspace"], "exec": ["process"]}
@@ -92,6 +98,19 @@ class ProcessTool(Tool):
         cwd=({"type": "string"}, False),
     )
 
+    def assess(self, args: dict[str, Any]) -> Assessment:
+        op = str(args.get("op", ""))
+        name = str(args.get("name", "")) or "a process"
+        if op in ("list", "logs"):
+            return Assessment(level=Level.OK, summary=f"read what {name!r} is doing")
+        if op == "stop":
+            return Assessment(level=Level.CAUTION, summary=f"stop the process {name!r}")
+        return Assessment(
+            level=Level.CAUTION,
+            summary=f"start {name!r} and leave it running",
+            reasons=("it keeps running in the background after this turn ends",),
+        )
+
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         op = str(args.get("op", ""))
         name = str(args.get("name", "")).strip()
@@ -106,7 +125,7 @@ class ProcessTool(Tool):
                     cwd = str(guard.resolve(str(args["cwd"]), ctx.settings))
                 except guard.OutOfBounds as exc:
                     return ToolResult.error(str(exc))
-            managed = await manager.start(name, command, cwd)
+            managed = await manager.start(name, command, cwd, env=scrubbed(ctx.settings))
             return ToolResult(output=f"started {name!r} (pid {managed.proc.pid})", data={"pid": managed.proc.pid})
         if op == "list":
             rows = [
