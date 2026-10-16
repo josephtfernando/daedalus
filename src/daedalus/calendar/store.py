@@ -289,28 +289,61 @@ class CalendarStore:
     # -- bulk, by name -----------------------------------------------------
 
     def matching(
-        self, text: str, *, limit: int = 200, allow_local_only: bool = True
+        self,
+        text: str = "",
+        *,
+        on: str = "",
+        limit: int = 200,
+        allow_local_only: bool = True,
     ) -> list[Event]:
-        """Series whose summary contains ``text``, case-insensitively.
+        """Series whose summary contains ``text`` and/or that fall on ``on``.
 
         Matched on the *summary*, not the description: "move all my standups"
         means the things *called* standup. A bulk change that also caught every
         event merely mentioning the word in its notes would be a surprise in the
         worst place — someone else's meeting, retitled by proxy.
+
+        ``on`` is a day (``"2026-10-25"``) and keeps the series that *produce an
+        occurrence* that day, so a set can be addressed by **when** it falls as
+        well as by what it is called. On its own — no ``text`` — the day is the
+        whole address, which is what "move the two things on Sunday" needs. A
+        blank text and no day selects nothing.
         """
         needle = str(text).strip().lower()
-        if not needle:
+        day = str(on).strip()
+        if not needle and not day:
             return []
         rows = self.series(limit=max(limit * 4, limit), allow_local_only=allow_local_only)
-        return [event for event in rows if needle in event.summary.lower()][:limit]
+        if needle:
+            rows = [event for event in rows if needle in event.summary.lower()]
+        if day:
+            falling = {
+                e.uid
+                for e in self.occurrences_on(day, allow_local_only=allow_local_only)
+            }
+            rows = [event for event in rows if event.uid in falling]
+        return rows[:limit]
 
-    def bulk_update(self, match: str, *, at: str = "", **changes: Any) -> list[Event]:
-        """Change every series whose summary matches. Returns what changed.
+    def bulk_update(
+        self,
+        match: str,
+        *,
+        at: str = "",
+        on: str = "",
+        allow_local_only: bool = True,
+        **changes: Any,
+    ) -> list[Event]:
+        """Change every series whose summary matches and/or falls on ``on``.
 
         ``at`` is a clock (``"10:00"``) applied to each event's **own** date. That
         is what "move all my standups to 10" actually means; handing the same
         full ``start`` to all of them would collapse a week of standups onto one
         day. The duration is preserved.
+
+        ``shift`` (a signed day offset, ``"-7d"``) is the date-shaped sibling:
+        every match moves by a delta, keeping its own time of day and length,
+        which is how "wrong Sunday — I meant this one" is said. ``on`` narrows
+        the set to a day, with or without a name ``match``.
 
         Events are edited one at a time, so the file is re-read and rewritten per
         match. On a personal calendar that is the right trade — correctness and a
@@ -319,9 +352,12 @@ class CalendarStore:
         wanted = _wanted(changes)
         clock = str(at or "").strip()
         if not wanted and not clock:
-            raise ValueError("nothing to change — give `at` (a time) or a field to set")
+            raise ValueError(
+                "nothing to change — give `at` (a time of day), `shift` (a day "
+                "offset) or a field to set"
+            )
         changed: list[Event] = []
-        for event in self.matching(match):
+        for event in self.matching(match, on=on, allow_local_only=allow_local_only):
             per_event = dict(wanted)
             if clock:
                 moved = _retimed(event, clock)
@@ -337,10 +373,12 @@ class CalendarStore:
                 changed.append(updated)
         return changed
 
-    def bulk_delete(self, match: str) -> int:
-        """Remove every series whose summary matches. Returns how many went."""
+    def bulk_delete(
+        self, match: str, *, on: str = "", allow_local_only: bool = True
+    ) -> int:
+        """Remove every series whose summary matches and/or falls on ``on``."""
         removed = 0
-        for event in self.matching(match):
+        for event in self.matching(match, on=on, allow_local_only=allow_local_only):
             if self.delete(event.uid):
                 removed += 1
         return removed
@@ -472,6 +510,25 @@ class CalendarStore:
         return self.occurrences(
             datetime.combine(moment.date(), datetime.min.time()),
             datetime.combine(moment.date(), datetime.min.time()) + timedelta(days=days),
+            limit=limit,
+            allow_local_only=allow_local_only,
+        )
+
+    def occurrences_on(
+        self, day: str, *, limit: int = 500, allow_local_only: bool = True
+    ) -> list[Event]:
+        """The dated events that fall on one local day, ``"2026-10-25"``.
+
+        A day is the span ``[00:00, next 00:00)`` in **local wall time**, so a
+        recurring rule lands on the day the owner reads it on and a multi-day
+        event is on every day it covers. This is the addressing `matching`
+        borrows: "the things on Sunday" needs a day, not a name.
+        """
+        begin = parse_iso(normalise_when(day)[0]).date()
+        start = datetime.combine(begin, datetime.min.time())
+        return self.occurrences(
+            start,
+            start + timedelta(days=1),
             limit=limit,
             allow_local_only=allow_local_only,
         )
@@ -814,6 +871,12 @@ def _wanted(changes: dict[str, Any]) -> dict[str, Any]:
 def _apply(event: Event, wanted: dict[str, Any]) -> None:
     if "reminders" in wanted:
         event.reminders = _reminders(wanted["reminders"])
+    if "shift" in wanted:
+        # A signed offset moves the event by a delta, keeping its own time of day
+        # and length. It fills in start/end only where an explicit value did not,
+        # so naming both is unambiguous: the explicit date wins.
+        for key, value in _shifted(event, _delta(wanted["shift"])).items():
+            wanted.setdefault(key, value)
     for key, value in wanted.items():
         if key == "reminders":
             continue
@@ -892,6 +955,46 @@ def _retimed(event: Event, clock: str) -> dict[str, str]:
     if event.end:
         # Keep the length the owner chose, not the length the old digits implied.
         changes["end"] = (moved + (parse_iso(event.end) - start)).strftime("%Y-%m-%dT%H:%M")
+    return changes
+
+
+def _delta(value: Any) -> timedelta:
+    """A signed day or week offset, e.g. ``"-7d"`` or ``"2w"``.
+
+    Days are the unit when the value does not name one, so ``"-7"`` and
+    ``"-7d"`` mean the same week back. Anything else raises rather than guessing
+    a magnitude: a shift read wrong moves the owner's events silently, which is
+    the failure this whole path exists to avoid.
+    """
+    text = str(value or "").strip().lower()
+    sign = -1 if text.startswith("-") else 1
+    body = text.lstrip("+-").strip()
+    unit = "d"
+    if body[-1:] in ("d", "w"):
+        unit = body[-1]
+        body = body[:-1].strip()
+    try:
+        amount = int(body)
+    except ValueError as exc:
+        raise ValueError(
+            f"{value!r} is not a shift I can read — use a signed number of days "
+            "or weeks, e.g. '-7d' (a week earlier) or '3d'."
+        ) from exc
+    days = amount * (7 if unit == "w" else 1)
+    return timedelta(days=sign * days)
+
+
+def _shifted(event: Event, delta: timedelta) -> dict[str, str]:
+    """The event's own clock and length, moved by ``delta``.
+
+    Unlike ``at``, a day offset is meaningful for an all-day event too, so
+    nothing is skipped: a re-timed event keeps its hour, a shifted one keeps its
+    shape. The clock stays floating local — date arithmetic never invents a zone.
+    """
+    shape = "%Y-%m-%d" if event.all_day else "%Y-%m-%dT%H:%M"
+    changes = {"start": (parse_iso(event.start) + delta).strftime(shape)}
+    if event.end:
+        changes["end"] = (parse_iso(event.end) + delta).strftime(shape)
     return changes
 
 

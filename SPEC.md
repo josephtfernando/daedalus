@@ -282,6 +282,19 @@ morning, which is the failure mode that makes bulk editing worse than doing noth
 is on the summary alone, so an event that merely mentions the word in its notes is not swept
 along, and the approval prompt names the set it is about to move.
 
+**A set can be addressed by the day it falls on, and moved by a date delta.** `match` names a
+set by *what it is called*; `on` (`"2026-10-25"`) names one by **when it falls** — the events
+that produce an occurrence that local day, with or without a name to narrow them. `on` on its
+own is the whole address, which is what "move the two things on Sunday" needs when the things
+are called different names. A date move is `shift`, a signed day or week offset (`"-7d"`,
+`"2w"`): each matched event keeps its own time of day and length and moves by the delta, where
+`at` sets a clock and `start` names one shared date. This is the tool's answer to "nah, wrong
+Sunday — I meant the coming one", where the owner's two Sunday events share no word to match
+on. `delete` takes the same `on` addressing. Both are bulk writes, so both still pass the
+`CAUTION` approval that names the set, and the day-addressed set is filtered through the same
+`local_only` gate as every other read: on a remote-bound turn the model cannot address an event
+it was not allowed to see.
+
 **Clocks other than this one.** An event may name a `TZID`; the zone travels with the time, and
 `recur.py` stays pure wall-clock arithmetic, so "9:00 every weekday" stays 9:00 in the zone it
 was written in across a daylight-saving change. Real instants — not wall-time strings — are what

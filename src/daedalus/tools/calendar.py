@@ -67,6 +67,31 @@ def _slot(start: datetime, end: datetime) -> str:
     return f"{start:%a %d %b %H:%M} – {end:%a %d %b %H:%M}"
 
 
+def _set_phrase(match: str, on: str) -> str:
+    """What a bulk target *is*, in the owner's words, for the approval prompt."""
+    if match and on:
+        return f"whose name matches {match!r} on {on}"
+    if on:
+        return f"on {on}"
+    return f"whose name matches {match!r}"
+
+
+def _sent(args: dict[str, Any]) -> str:
+    """The argument names a call actually carried, so an error can echo them.
+
+    A model that reached for a plausible alias (``id`` for ``uid``) is otherwise
+    told only *what is missing*, and repeats the same wrong key — which is
+    exactly the loop this is here to break. Empty required placeholders are not
+    named, so the list is what the model meant to say.
+    """
+    names = [
+        key
+        for key, value in args.items()
+        if key != "op" and value not in ("", None, [], {})
+    ]
+    return ", ".join(f"`{name}`" for name in names) if names else "(no arguments)"
+
+
 class CalendarTool(Tool):
     name = "calendar"
     title = "Read or change the calendar"
@@ -76,8 +101,10 @@ class CalendarTool(Tool):
         "`busy` shows the stretches they are not free in (and anything that "
         "overlaps); `free` finds slots they are; `search` finds events by text; "
         "`get`, `create`, `update` and `delete` manage them — `update`/`delete` take "
-        "one event by `uid`, or every event whose name contains `match` (with `at` to "
-        "give a whole set a new time of day). Times are local: "
+        "one event by `uid`, or a set: every event whose name contains `match`, "
+        "and/or every event that falls on the day `on` (with `at` to give a set a "
+        "new time of day, or `shift` to move a set by a date delta such as '-7d'). "
+        "Times are local: "
         "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. A repeating "
         "event is one event with an rrule, not many copies."
     )
@@ -131,7 +158,19 @@ class CalendarTool(Tool):
                 "description": (
                     "for op=update/delete *instead of* `uid`: act on every event whose "
                     "name contains this text, e.g. 'standup'. Use with `at` to change a "
-                    "whole set's time at once."
+                    "whole set's time, `shift` to move a set by days, or `on` to narrow "
+                    "it to a day."
+                ),
+            },
+            False,
+        ),
+        on=(
+            {
+                "type": "string",
+                "description": (
+                    "for op=update/delete: the day to act on, 'YYYY-MM-DD'. On its own it "
+                    "means every event that falls on that day; with `match` it narrows the "
+                    "set to events that day. This is 'move the two things on Sunday'."
                 ),
             },
             False,
@@ -140,9 +179,21 @@ class CalendarTool(Tool):
             {
                 "type": "string",
                 "description": (
-                    "for op=update with `match`: the time of day to set, 'HH:MM', keeping "
+                    "for op=update with `match`/`on`: the time of day to set, 'HH:MM', keeping "
                     "each event's own date and length. This is what 'move all my standups "
                     "to 10' means — `start` would not do it."
+                ),
+            },
+            False,
+        ),
+        shift=(
+            {
+                "type": "string",
+                "description": (
+                    "for op=update: move the event (or the `match`/`on` set) by a signed day or "
+                    "week offset, e.g. '-7d' (a week earlier) or '3d'. Each keeps its own time "
+                    "of day and length. This is what a date move needs — `start` names one "
+                    "shared date, which would pile a set onto it."
                 ),
             },
             False,
@@ -227,12 +278,16 @@ class CalendarTool(Tool):
             return Assessment(level=Level.OK, summary="read the calendar")
         # A bulk write is one more thing than it looks: the prompt should say how
         # many events are about to move, in the owner's own words.
-        bulk = str(args.get("match", "")).strip() and not str(args.get("uid", "")).strip()
+        uid = str(args.get("uid", "")).strip()
+        match = str(args.get("match", "")).strip()
+        on = str(args.get("on", "")).strip()
+        bulk = not uid and (match or on)
+        target = _set_phrase(match, on)
         if op == "delete":
             return Assessment(
                 level=Level.CAUTION,
                 summary=(
-                    f"remove every event whose name matches {args.get('match')!r}"
+                    f"remove every event {target}"
                     if bulk
                     else "remove an event from the internal calendar"
                 ),
@@ -241,7 +296,7 @@ class CalendarTool(Tool):
         return Assessment(
             level=Level.CAUTION,
             summary=(
-                f"change every event whose name matches {args.get('match')!r}"
+                f"change every event {target}"
                 if bulk
                 else f"change the internal calendar ({op})"
             ),
@@ -393,20 +448,31 @@ class CalendarTool(Tool):
     def _update(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         uid = str(args.get("uid", "")).strip()
         match = str(args.get("match", "")).strip()
+        on = str(args.get("on", "")).strip()
         at = str(args.get("at", "")).strip()
-        if not uid and match:
-            return self._bulk_update(args, ctx, match, at)
+        if uid and (match or on):
+            return ToolResult.error(
+                "give either `uid` (one event) or `match`/`on` (a set), not both. "
+                f"You sent: {_sent(args)}"
+            )
+        if not uid and (match or on):
+            return self._bulk_update(args, ctx, match, on, at)
         if not uid:
             return ToolResult.error(
-                "op=update needs `uid` (one event) or `match` (every event whose name "
-                "contains the text); `list` prints the ids"
+                "op=update needs a target: `uid` (one event, as `list` prints it), or "
+                '`match`/`on` for a set — `on="2026-10-25"` is a day, `shift="-7d"` '
+                "moves the set by a week. "
+                f"You sent: {_sent(args)}"
             )
-        if match:
-            return ToolResult.error("give either `uid` or `match`, not both")
         changes: dict[str, Any] = {
             key: str(args.get(key, "")).strip()
             for key in ("summary", "start", "end", "location", "description", "rrule")
         }
+        # A delta works on one event too: `uid` + `shift` moves it by days and
+        # keeps its clock, exactly as the matched form does for a set.
+        shift = str(args.get("shift", "")).strip()
+        if shift:
+            changes["shift"] = shift
         if args.get("data_class"):
             changes["data_class"] = args["data_class"]
         if args.get("remind") is not None:
@@ -414,7 +480,8 @@ class CalendarTool(Tool):
         if not any(value not in ("", [], None) for value in changes.values()):
             return ToolResult.error(
                 "op=update needs at least one field to change, alongside `uid` — e.g. "
-                'uid="ab12cd34ef56", start="2026-10-20T10:00".'
+                'uid="ab12cd34ef56", start="2026-10-20T10:00". '
+                f"You sent: {_sent(args)}"
             )
         event = ctx.calendar.update(
             uid,
@@ -427,56 +494,87 @@ class CalendarTool(Tool):
         return ToolResult(output=f"updated {event.line(show_id=True)}", data={"uid": uid})
 
     def _bulk_update(
-        self, args: dict[str, Any], ctx: "Runtime", match: str, at: str
+        self, args: dict[str, Any], ctx: "Runtime", match: str, on: str, at: str
     ) -> ToolResult:
-        """One change, applied to every event whose name matches."""
+        """One change, applied to every event that matches and/or falls on a day."""
         if str(args.get("start", "")).strip():
             return ToolResult.error(
-                "with `match`, use `at` (a time of day) rather than `start`: the matching "
-                "events fall on different days, and one shared date would pile them all "
-                "onto it."
+                "with `match`/`on`, use `at` (a time of day) or `shift` (a day offset) "
+                "rather than `start`: the matching events fall on different days, and "
+                "one shared date would pile them all onto it. "
+                f"You sent: {_sent(args)}"
             )
         if str(args.get("recurrence_id", "")).strip():
             return ToolResult.error(
-                "with `match`, a change applies to whole events — pick one instance with "
-                "`uid` and `recurrence_id` instead."
+                "with `match`/`on`, a change applies to whole events — pick one instance "
+                "with `uid` and `recurrence_id` instead. "
+                f"You sent: {_sent(args)}"
             )
         changes: dict[str, Any] = {
             key: str(args.get(key, "")).strip()
             for key in ("summary", "location", "description", "rrule", "end")
         }
+        shift = str(args.get("shift", "")).strip()
+        if shift:
+            changes["shift"] = shift
         if args.get("data_class"):
             changes["data_class"] = args["data_class"]
         if args.get("remind") is not None:
             changes["reminders"] = [int(args["remind"])]
-        changed = ctx.calendar.bulk_update(match, at=at, **changes)
+        changed = ctx.calendar.bulk_update(
+            match, at=at, on=on, allow_local_only=ctx.allows_local_only(), **changes
+        )
         if not changed:
-            return ToolResult.error(
-                f"nothing in the event names matched {match!r}; `list` shows what exists"
-            )
+            return ToolResult.error(self._no_match(match, on, ctx))
         return ToolResult(
             output=f"changed {len(changed)}:\n"
             + "\n".join(f"- {e.line(show_id=True)}" for e in changed),
             data={"count": len(changed), "uids": [e.uid for e in changed]},
         )
 
+    def _no_match(self, match: str, on: str, ctx: "Runtime") -> str:
+        """Say what did not match *and* hand back what is there, in one call.
+
+        "Nothing matched" plus a second round trip to `list` is a turn spent on
+        bookkeeping; the ids the model needs are one line away, so they travel
+        with the refusal.
+        """
+        if match and on:
+            said = f"nothing on {on} has a name containing {match!r}"
+        elif on:
+            said = f"nothing falls on {on}"
+        else:
+            said = f"nothing has a name containing {match!r}"
+        rows = ctx.calendar.series(limit=8, allow_local_only=ctx.allows_local_only())
+        if not rows:
+            return f"{said}, and the calendar is empty"
+        listing = "\n".join(f"- {e.line(show_id=True)}" for e in rows)
+        return f"{said}. What exists:\n{listing}"
+
     def _delete(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         uid = str(args.get("uid", "")).strip()
         match = str(args.get("match", "")).strip()
-        if not uid and match:
-            removed = ctx.calendar.bulk_delete(match)
+        on = str(args.get("on", "")).strip()
+        if uid and (match or on):
+            return ToolResult.error(
+                "give either `uid` (one event) or `match`/`on` (a set), not both. "
+                f"You sent: {_sent(args)}"
+            )
+        if not uid and (match or on):
+            removed = ctx.calendar.bulk_delete(
+                match, on=on, allow_local_only=ctx.allows_local_only()
+            )
             if not removed:
-                return ToolResult.error(
-                    f"nothing in the event names matched {match!r}; `list` shows what exists"
-                )
+                return ToolResult.error(self._no_match(match, on, ctx))
             return ToolResult(
-                output=f"removed {removed} event{'s' if removed != 1 else ''} matching {match!r}",
+                output=f"removed {removed} event{'s' if removed != 1 else ''} {_set_phrase(match, on)}",
                 data={"count": removed},
             )
         if not uid:
             return ToolResult.error(
-                "op=delete needs `uid` (one event) or `match` (every event whose name "
-                "contains the text); `list` prints the ids"
+                "op=delete needs a target: `uid` (one event, as `list` prints it), or "
+                '`match`/`on` for a set — `on="2026-10-25"` is a day. '
+                f"You sent: {_sent(args)}"
             )
         if not ctx.calendar.delete(
             uid,

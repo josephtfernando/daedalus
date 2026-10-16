@@ -849,6 +849,180 @@ async def test_the_approval_prompt_names_the_set(runtime: Runtime) -> None:
     assert "every" in assessment.summary
 
 
+# -- addressing a set by the day it falls on, and moving it by a date --------
+
+
+def test_a_bulk_shift_moves_each_event_by_a_day_and_keeps_its_clock(
+    store: CalendarStore,
+) -> None:
+    """A `shift` is a date delta: every match keeps its own hour and length."""
+    first = store.add(summary="Alpha", start="2026-10-25T09:00", end="2026-10-25T10:00")
+    second = store.add(summary="Beta", start="2026-10-25T19:00", end="2026-10-25T21:30")
+    store.add(summary="Gamma", start="2026-10-26T09:00")
+
+    changed = store.bulk_update("", on="2026-10-25", shift="-7d")
+
+    assert {e.uid for e in changed} == {first.uid, second.uid}
+    assert store.get(first.uid).start == "2026-10-18T09:00"  # type: ignore[union-attr]
+    assert store.get(first.uid).end == "2026-10-18T10:00"  # type: ignore[union-attr]
+    assert store.get(second.uid).start == "2026-10-18T19:00"  # type: ignore[union-attr]
+    assert store.get(second.uid).end == "2026-10-18T21:30"  # type: ignore[union-attr]
+    assert [e.summary for e in store.occurrences_on("2026-10-25")] == []
+
+
+def test_a_bulk_shift_moves_a_whole_day_event(store: CalendarStore) -> None:
+    """`at` skips an all-day event; a day offset is exactly its shape."""
+    holiday = store.add(summary="Market", start="2026-10-25", end="2026-10-27")
+
+    changed = store.bulk_update("", on="2026-10-25", shift="-7d")
+
+    assert [e.uid for e in changed] == [holiday.uid]
+    assert store.get(holiday.uid).start == "2026-10-18"  # type: ignore[union-attr]
+    assert store.get(holiday.uid).end == "2026-10-20"  # type: ignore[union-attr]
+    assert store.get(holiday.uid).all_day is True  # type: ignore[union-attr]
+
+
+def test_a_day_narrows_a_named_set(store: CalendarStore) -> None:
+    """`match` and `on` compose: the name picks the kind, the day picks which."""
+    here = store.add(summary="Standup", start="2026-10-25T09:00")
+    later = store.add(summary="Standup", start="2026-10-26T09:00")
+
+    changed = store.bulk_update("standup", on="2026-10-25", shift="2d")
+
+    assert [e.uid for e in changed] == [here.uid]
+    assert store.get(here.uid).start == "2026-10-27T09:00"  # type: ignore[union-attr]
+    assert store.get(later.uid).start == "2026-10-26T09:00"  # type: ignore[union-attr]
+
+
+def test_a_week_shift_is_spelled_w(store: CalendarStore) -> None:
+    event = store.add(summary="Review", start="2026-10-25T09:00")
+
+    store.bulk_update("review", shift="-1w")
+
+    assert store.get(event.uid).start == "2026-10-18T09:00"  # type: ignore[union-attr]
+
+
+def test_an_unreadable_shift_is_refused_rather_than_guessed(store: CalendarStore) -> None:
+    store.add(summary="Review", start="2026-10-25T09:00")
+
+    with pytest.raises(ValueError, match="not a shift I can read"):
+        store.bulk_update("review", shift="next tuesday")
+
+
+async def test_the_tool_shifts_one_event_by_its_uid(runtime: Runtime) -> None:
+    """A delta is not only for a set: `uid` + `shift` moves one event by days."""
+    event = runtime.calendar.add(
+        summary="Review", start="2026-10-25T09:00", end="2026-10-25T10:00"
+    )
+
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "", "start": "", "query": "", "uid": event.uid, "shift": "-7d"},
+        runtime,
+    )
+
+    assert result.ok, result.output
+    assert runtime.calendar.get(event.uid).start == "2026-10-18T09:00"  # type: ignore[union-attr]
+    assert runtime.calendar.get(event.uid).end == "2026-10-18T10:00"  # type: ignore[union-attr]
+
+
+async def test_the_tool_moves_the_two_things_on_sunday_in_one_call(runtime: Runtime) -> None:
+    """The owner's own correction, end to end.
+
+    "Nah, wrong Sunday — I meant the coming one" landed on two events that share
+    no word to match on and fall on the same day. Addressing that day and
+    shifting the set is one call; before this, the model had none to make.
+    """
+    practice = runtime.calendar.add(
+        summary="Guitar practice", start="2026-10-25T09:00", end="2026-10-25T10:00"
+    )
+    club = runtime.calendar.add(
+        summary="Book club", start="2026-10-25T19:00", end="2026-10-25T21:30"
+    )
+    other = runtime.calendar.add(
+        summary="Market run", start="2026-10-24T08:00", end="2026-10-24T09:00"
+    )
+
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "", "start": "", "query": "", "on": "2026-10-25", "shift": "-7d"},
+        runtime,
+    )
+
+    assert result.ok, result.output
+    assert runtime.calendar.get(practice.uid).start == "2026-10-18T09:00"  # type: ignore[union-attr]
+    assert runtime.calendar.get(practice.uid).end == "2026-10-18T10:00"  # type: ignore[union-attr]
+    assert runtime.calendar.get(club.uid).start == "2026-10-18T19:00"  # type: ignore[union-attr]
+    assert runtime.calendar.get(other.uid).start == "2026-10-24T08:00"  # type: ignore[union-attr]
+    assert runtime.calendar.occurrences_on("2026-10-25") == []
+
+
+async def test_the_tool_deletes_a_day(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="Alpha", start="2026-10-25T09:00")
+    runtime.calendar.add(summary="Beta", start="2026-10-25T19:00")
+    keeper = runtime.calendar.add(summary="Gamma", start="2026-10-26T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "delete", "summary": "", "start": "", "query": "", "on": "2026-10-25"}, runtime
+    )
+
+    assert result.ok, result.output
+    assert "2" in result.output
+    assert [e.uid for e in runtime.calendar.series()] == [keeper.uid]
+
+
+async def test_the_tool_says_what_it_received_when_it_has_no_target(runtime: Runtime) -> None:
+    """An id under an alias must not read as "you gave me nothing"."""
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "", "start": "2026-10-25", "query": "", "id": "abc123"},
+        runtime,
+    )
+
+    assert not result.ok
+    assert "uid" in result.output and "on" in result.output
+    assert "`id`" in result.output, "the wrong key the model sent was not echoed back"
+    assert "`start`" in result.output
+
+
+async def test_a_bulk_change_that_finds_nothing_hands_back_the_ids(runtime: Runtime) -> None:
+    """A recovery one call away travels with the refusal, not after another call."""
+    keeper = runtime.calendar.add(summary="Dentist", start="2026-10-20T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "", "start": "", "query": "", "on": "2026-10-25", "shift": "-7d"},
+        runtime,
+    )
+
+    assert not result.ok
+    assert "2026-10-25" in result.output
+    assert keeper.uid in result.output, "the ids that do exist were not handed back"
+
+
+async def test_the_tool_reports_an_unreadable_shift(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="Review", start="2026-10-25T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "", "start": "", "query": "", "on": "2026-10-25", "shift": "next tuesday"},
+        runtime,
+    )
+
+    assert not result.ok
+    assert "not a shift I can read" in result.output
+
+
+def test_the_approval_prompt_names_the_day(runtime: Runtime) -> None:
+    assessment = CalendarTool().assess({"op": "update", "on": "2026-10-25", "shift": "-7d"})
+
+    assert "2026-10-25" in assessment.summary
+    assert "every" in assessment.summary
+
+
+def test_the_prompt_teaches_the_day_and_the_delta(runtime: Runtime) -> None:
+    """The model's only vocabulary for the calendar is the context prompt."""
+    prompt = build_system_prompt(runtime, InboundEvent(text="move my Sunday", user_id="owner"))
+
+    assert 'on="2026-10-25"' in prompt
+    assert 'shift="-7d"' in prompt
+
+
 # -- dates the rule does not produce ----------------------------------------
 
 
