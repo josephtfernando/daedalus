@@ -10,6 +10,7 @@ def build_registry() -> ToolRegistry:
     """Register the primitives. Adding a primitive must not touch the loop."""
     from .ask import AskTool
     from .browser import BrowserTool
+    from .calendar import CalendarTool
     from .capability import CapabilityTool
     from .code import CodeTool
     from .discord import DiscordTool
@@ -32,6 +33,7 @@ def build_registry() -> ToolRegistry:
         BrowserTool(),
         ProcessTool(),
         MemoryTool(),
+        CalendarTool(),
         ScheduleTool(),
         DiscordTool(),
         AskTool(),

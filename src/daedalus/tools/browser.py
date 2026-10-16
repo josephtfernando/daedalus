@@ -54,16 +54,23 @@ class BrowserTool(Tool):
             page = await browser.new_page()
             try:
                 await page.goto(url, wait_until="networkidle", timeout=45000)
-                target = page.locator(selector) if selector else page
                 if op == "screenshot":
                     shot = ctx.settings.home / "state" / "screenshot.png"
                     shot.parent.mkdir(parents=True, exist_ok=True)
-                    await (target if selector else page).screenshot(path=str(shot))
+                    if selector:
+                        await page.locator(selector).screenshot(path=str(shot))
+                    else:
+                        await page.screenshot(path=str(shot))
                     return ToolResult(output=f"screenshot saved to {shot}", data={"path": str(shot)})
-                if op == "html":
-                    content = await target.inner_html()
+                if selector:
+                    target = page.locator(selector)
+                    content = await (target.inner_html() if op == "html" else target.inner_text())
+                elif op == "html":
+                    # `Page.inner_html()`/`inner_text()` both demand a selector;
+                    # asked for the whole page, so take the whole document.
+                    content = await page.content()
                 else:
-                    content = await target.inner_text()
+                    content = await page.inner_text("body")
             finally:
                 await browser.close()
         return ToolResult(output=content[:MAX_TEXT], data={"url": url, "untrusted": True})

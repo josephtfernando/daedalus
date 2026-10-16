@@ -111,7 +111,7 @@ daedalus/                      # code repo
     tools/
       base.py registry.py guard.py
       shell.py code.py files.py http.py browser.py search.py
-      schedule.py process.py memory.py discord.py ask.py secrets.py capability.py
+      schedule.py process.py memory.py calendar.py discord.py ask.py secrets.py capability.py
     approvals/
       middleware.py grants.py risk.py classify.py
     capabilities/
@@ -120,6 +120,8 @@ daedalus/                      # code repo
       registry.py provisioning.py
     memory/
       store.py index.py schema.py facets.py markdown.py
+    calendar/
+      store.py index.py event.py ical.py
     scheduler/
       scheduler.py jobs.py wakes.py
     surface/

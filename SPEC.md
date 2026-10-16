@@ -1,7 +1,7 @@
 # Daedalus — Spec
 
 **Scope:** single-user, local-first (only the owner can talk to it)
-**Status:** P0 and P1 implemented as code (loop + primitives + capability substrate + memory depth + scheduler v0 + Melinoë gate + Discord surface + setup wizard), 133 tests green; `0.1.0` pending Discord proof-of-life
+**Status:** P0 and P1 implemented as code (loop + primitives + capability substrate + memory depth + internal calendar + scheduler v0 + Melinoë gate + Discord surface + setup wizard), 160 tests green; `0.1.0` pending Discord proof-of-life
 **Date:** 2026-10-16
 **Supersedes:** the Hermes-based `~/down/daedalus.md` plan (architecture reference retained; runtime decision reversed)
 
@@ -69,6 +69,7 @@ The system is **not** a fixed toolbox. It **authors its own tools** on demand, k
 | `schedule` | cron-like: run *anything* on a period |
 | `process` | start / stop / monitor long-running processes (servers, demos) |
 | `memory` | read / write facts |
+| `calendar` | the internal Daedalus calendar: agenda, add / change / delete (§5.5) |
 | `discord` | send messages, incl. proactive |
 | `ask` | approval requests as buttons |
 | `secrets` | scoped credential access |
@@ -235,6 +236,16 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
 
 **Internal calendar — a first-class store.** `$DAEDALUS_HOME/calendar/` — file-first `.ics` + a SQLite index. This is the agent's own calendar and the owner's primary interface to it. It is also a **context signal** (§3.6) and a **dashboard view** (§3.6).
 
+**Built.** `calendar/events.ics` is written by `daedalus.calendar.CalendarStore` and reached
+through the `calendar` primitive (Layer 1). It is genuinely file-first: every mutation
+re-reads the file before changing it, so an event the owner added by hand — and any property
+line the module does not model — survives a tool write, and `index.sqlite` is a derived cache
+that rebuilds itself whenever `events.ics` changes underneath it. Times are **floating
+local**, and an event's shape decides whether it is all-day (`2026-10-16`) or a moment
+(`2026-10-16T09:10`). Events carry a data class, so a `local_only` event is withheld from any
+prompt that could reach a remote model, exactly as memory is. `gcal` is **not** built: it
+remains the read-all / write-own resource below, and `sync_state.json` is its empty cursor slot.
+
 **`gcal` — a resource, read all / write one.**
 
 - **Read** every calendar the owner has — context for the day.
@@ -334,11 +345,15 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 
 - **P0 — the loop** *(delivered: loop, primitives, capability substrate, memory v0, scheduler v0, Melinoë gate, Discord surface, setup wizard)*
 - **P1 — memory** *(delivered: file-first source of truth, supersession + bitemporal, `local_only` egress gate, Obsidian-compatible notes, index rebuildable from the notes)*
+- **The internal calendar** *(delivered ahead of P2: file-first `.ics` + a derived index, served by the `calendar` primitive; `gcal` still unbuilt)*
 - P2 — proactive scheduler
 - P3 — seats wired **one at a time, each as it earns its place**
 - P4 — remote / Tailscale Serve
 - P5 — OpenCode delegation
 - P6 — the group chat (last)
+- **Mail (read-only) — deliberately last, after everything above.** Cut from the
+  calendar/integrations bundle by the owner: the calendar is the useful half, and a
+  read-only mail scope that is never exercised is a standing risk taken for nothing.
 
 ---
 
@@ -391,7 +406,10 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Scheduler transport (reuse the cron-pumped wake approach from `daedalus.md`).
 - Capability `manifest.toml` schema (scope, deps, schedule, io) and how the model invokes a named capability (registry lookup vs. generated tool-call).
 - Resource provisioning flow when a resource is added later (e.g. mail OAuth) — one-time local setup, never on Discord.
-- Headless-browser choice (Playwright vs a lighter driver) under the available RAM budget.
+- **Headless-browser choice — resolved.** Playwright, with its bundled headless Chromium;
+  `browser` returns an actionable error when it is not installed, so the primitive
+  degrades instead of failing obscurely. Chromium's footprint is paid only while a page
+  is open.
 - Resource-registry schema — how a resource declares access + credentials.
 - Generative-UI spec schema + component-registry (component + token) format.
 - Mood → token mapping details (source resolved: inferred by default from **structured signals**, one-word override; message tone read only by a **local** model).

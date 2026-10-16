@@ -95,6 +95,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
         try:
             report.checks.append(_check_secrets(rt))
             report.checks.append(_check_memory(rt))
+            report.checks.append(_check_calendar(rt))
             report.checks.append(_check_approvals(rt))
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
@@ -189,6 +190,47 @@ def _check_memory(rt: Runtime) -> Check:
         return Check("memory", False, "a local_only fact was placed in a remote-bound prompt")
 
     return Check("memory", True, f"wrote+recalled+superseded {entry.id[:8]}")
+
+
+def _check_calendar(rt: Runtime) -> Check:
+    """The calendar is file-first, and gated like memory (SPEC §5.5, §6)."""
+    from datetime import datetime, timedelta
+
+    from .loop.context import build_system_prompt
+
+    event = rt.calendar.add(summary="selftest probe", start="2099-01-01T09:00")
+    if rt.calendar.get(event.uid) is None:
+        return Check("calendar", False, "a written event was not read back")
+
+    # A hand edit must be visible to the very next read: the index is a cache
+    # over `events.ics`, not a second source of truth.
+    rt.calendar.ics_path.write_text(
+        rt.calendar.ics_path.read_text(encoding="utf-8").replace(
+            "END:VCALENDAR",
+            "BEGIN:VEVENT\r\nUID:selftest-hand\r\nDTSTAMP:20990101T090000Z\r\n"
+            "DTSTART:20990102T090000\r\nSUMMARY:added by hand\r\nEND:VEVENT\r\n"
+            "END:VCALENDAR",
+        ),
+        encoding="utf-8",
+    )
+    if not any(e.uid == "selftest-hand" for e in rt.calendar.all()):
+        return Check("calendar", False, "a hand edit was hidden by the stale index")
+
+    # A `local_only` event must not reach a prompt that could go remote — and it
+    # has to be *in the window* for that to prove anything, so both events sit
+    # inside the next few days rather than in a decade.
+    soon = (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
+    later = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M")
+    rt.calendar.add(summary="selftest shareable event", start=soon)
+    rt.calendar.add(summary="selftest local-only event", start=later, data_class=DataClass.LOCAL_ONLY)
+
+    prompt = build_system_prompt(rt, InboundEvent(text="hi", user_id="selftest"))
+    if "selftest shareable event" not in prompt:
+        return Check("calendar", False, "an in-window event never reached the agenda")
+    if "selftest local-only event" in prompt:
+        return Check("calendar", False, "a local_only event was placed in a remote-bound prompt")
+
+    return Check("calendar", True, f"wrote+hand-edited+read {event.uid[:8]}")
 
 
 def _check_approvals(rt: Runtime) -> Check:

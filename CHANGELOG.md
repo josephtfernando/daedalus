@@ -12,9 +12,30 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 and P1 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (8/8 offline; 9/9 with `--live`) and a 133-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0 and P1 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the internal calendar, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 offline; 10/10 with `--live`) and a 160-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The internal calendar — a store the owner actually owns.** `$DAEDALUS_HOME/calendar/`
+  now holds a real calendar: `events.ics` written as valid iCalendar (RFC 5545), an
+  `index.sqlite` derived from it, and a `calendar` primitive to reach it (`agenda`,
+  `list`, `get`, `create`, `update`, `delete`). Two things make it *file-first* rather
+  than merely file-*formatted*:
+  - **Every mutation re-reads the file before changing it.** `add`/`update`/`delete` load
+    `events.ics`, apply the change, and write the whole document back — so an event the
+    owner added by hand, a property this module does not model (`RRULE`, `VALARM`), and a
+    `VTIMEZONE` block all survive a tool write instead of being flattened by a private copy
+    of the truth. The index records the file's revision at nanosecond resolution and
+    rebuilds whenever it moves, so a hand edit is never shadowed by a stale cache — a
+    coarse `mtime` comparison would have missed an edit landing in the same second as the
+    last write.
+  - **The shape of a time decides the kind of event.** `2026-10-16` is all-day;
+    `2026-10-16T09:10` is a moment. There is no separate flag to contradict it.
+  Events carry a **data class**, so a `local_only` event is withheld from any prompt that
+  could reach a remote model — the same gate memory has — and the calendar is a **context
+  signal** in the system prompt, so the agent knows the day without being asked. `gcal`
+  remains **unbuilt**: `sync_state.json` is an empty cursor slot, and the tool never reaches
+  another calendar. *Supersedes:* `calendar/` as a declared-but-empty directory.
 
 - **P1 — memory depth.** P0 shipped memory v0 (write a fact, recall a fact). P1 makes
   it a memory that can be *corrected* and *trusted*:
@@ -43,7 +64,7 @@ _Design frozen; **P0 and P1 are implemented as code** — the loop, the primitiv
 - **`memory/markdown.py`** — the renderer/parser that makes the file canonical:
   `render_entry`, `parse_facet`, `stable_id`, `normalise_content`. Facts are
   single-line; whitespace is collapsed on write so an entry round-trips exactly.
-- **Tests** — the suite is now **133** (from 112). New coverage: supersession retires
+- **Tests** — the suite is now **160** (from 112). New coverage: supersession retires
   a fact and survives an index rebuild, both timestamps round-trip, the index rebuilds
   from hand-written markdown with stable ids, a facet is a valid Obsidian note, the
   `memory` tool can supersede, `local_only` memory is withheld from a remote chain but
@@ -51,9 +72,16 @@ _Design frozen; **P0 and P1 are implemented as code** — the loop, the primitiv
   default provider carries a stall ceiling, and each capability gets its own venv.
   The approval prompt is pinned too: the title names the real operation, a malformed
   call says so and drops the irreversible-delete warning, the buttons carry the action's
-  labels, and a denial stops the turn instead of asking again. The self-test's memory
-  check now proves supersession, the rebuild, and the `local_only` gate, so the
-  acceptance gate exercises P1 rather than just v0.
+  labels, and a denial stops the turn instead of asking again. The calendar is pinned the
+  way the store claims to work: an event round-trips through the `.ics`, a hand-added
+  event and an unmodelled `RRULE` survive the next tool write, a `VTIMEZONE` block is not
+  deleted, a same-second hand edit is not hidden by the cache, structural characters
+  (`;`, `,`, newline) escape and unescape, and a `local_only` event reaches neither the
+  prompt nor the tool channel. `browser` is pinned against a stub Playwright, so the
+  no-selector path that used to raise is now a test that needs no Chromium. The
+  self-test's memory check now proves supersession, the rebuild, and the `local_only`
+  gate, and a calendar check proves the same three properties, so the acceptance gate
+  exercises P1 rather than just v0.
 
 - **P0 runtime** — the loop and the substrate, as code:
   - **Package** — `src/daedalus/` with `loop/`, `model/`, `tools/`, `approvals/`, `capabilities/`, `resources/`, `memory/`, `scheduler/`, `surface/`, `cabinet/`, `security/`, `storage/`, plus `selftest.py` and `main.py`. CLI: `daedalus version | selftest | ask | run`.
@@ -106,6 +134,19 @@ _Design frozen; **P0 and P1 are implemented as code** — the loop, the primitiv
 - **P0 definition** — the unseen free-text request, completed end-to-end with nothing hardcoded; the substrate is in P0 because the proof-of-life cannot happen without it.
 
 ### Changed
+
+- **Mail moves to the end of the plan.** Read-only Gmail was bundled with the calendar
+  under "Calendar & integrations" (ARCHITECTURE §8.2). The owner cut it away: the calendar
+  is the half that earns its keep, and a read-only mail scope that is never exercised is a
+  standing risk taken for nothing. Mail now sits **after P6**, deliberately last (SPEC §10).
+  The calendar half is built; `gcal` and the sync path it needs are not.
+
+- **`browser` has a real backend.** Playwright is now a dependency and its headless
+  Chromium is installed, so the primitive does the thing it advertises instead of
+  returning *"browser backend not installed"*. Verified against a **local** page rather
+  than the open network: JavaScript execution, selector narrowing, whole-page reads, and
+  screenshots all round-trip. Chromium's footprint is paid only while a page is open.
+  *Supersedes:* the headless-browser backend as an open detail (SPEC §13).
 
 - **An approval prompt names the operation, and its buttons say what they do.** The
   headline came from the tool's static `title`, and `capability` is six tools in one —
@@ -250,6 +291,13 @@ _Design frozen; **P0 and P1 are implemented as code** — the loop, the primitiv
 
 ### Fixed
 
+- **The `browser` primitive crashed on its own default argument.** `op=text` with no
+  selector called `Page.inner_text()`, which *requires* a selector, and raised
+  `TypeError` — so the tool threw on its most common use, "read this page". `op=html`
+  had the same fault. Both now read the whole document when no selector is given
+  (`inner_text("body")` / `content()`) and narrow to the element when one is. Found by
+  running the tool rather than reading it. *Supersedes:* passing a `Page` to a method
+  that expects a `Locator`.
 - **A malformed call was described as destroying "an unnamed capability".** The model
   sent `capability op=remove` with no `name`; `assess` filled the gap with the literal
   string *"an unnamed capability"*, so the owner was shown

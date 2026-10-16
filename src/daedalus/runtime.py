@@ -14,6 +14,7 @@ from typing import Any
 
 from .approvals.middleware import ApprovalMiddleware
 from .cabinet.seat import DEFAULT_SEAT
+from .calendar.store import CalendarStore
 from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
 from .config import Settings
@@ -54,6 +55,7 @@ class Runtime:
     tools: ToolRegistry
     model: ModelClient
     memory: MemoryStore
+    calendar: CalendarStore
     capabilities: CapabilityRegistry
     runner: CapabilityRunner
     scheduler: Scheduler
@@ -141,6 +143,7 @@ def build_runtime(
         tools=registry,
         model=model,
         memory=MemoryStore(settings.home / "memory"),
+        calendar=CalendarStore(settings.home / "calendar"),
         capabilities=CapabilityRegistry(settings.home / "capabilities"),
         runner=CapabilityRunner(settings.home / "capabilities"),
         scheduler=Scheduler(settings.home / "state"),

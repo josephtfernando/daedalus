@@ -51,6 +51,9 @@ owner's laptop. You are reached over Discord by one person. You are their chief 
 ### Provisioned resources
 {resources}
 
+### The calendar
+{calendar}
+
 ### Recent memory
 {memory}
 
@@ -81,6 +84,7 @@ def build_system_prompt(
         charter=chosen.charter,
         capabilities=ctx.capabilities.inventory(),
         resources=ctx.resources.inventory(),
+        calendar=ctx.calendar.inventory(allow_local_only=include_local_only),
         memory=ctx.memory.inventory(allow_local_only=include_local_only),
         tools="\n".join(f"- {t.name}: {t.description.splitlines()[0]}" for t in ctx.tools.all()),
         grants=grant_text,

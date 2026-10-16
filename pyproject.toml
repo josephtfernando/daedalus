@@ -8,6 +8,7 @@ dependencies = [
     "discord.py>=2.4",
     "tomli-w>=1.0",
     "cryptography>=43",
+    "playwright>=1.64.0",
 ]
 
 [project.scripts]
