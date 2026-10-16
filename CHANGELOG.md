@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 525-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 542-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -662,6 +662,32 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **A series is several entries in the file, and a change now moves all of them.** One repeating
+  event is a rule, an `EXDATE` per skipped day, an `RDATE` per added day, and a `VEVENT` of its own
+  per instance the owner edited — each with its own `DTSTART`, joined by the series' `UID` and pinned
+  by `RECURRENCE-ID`. `shift` rewrote the rule's `DTSTART`/`DTEND` and nothing else, so shifting a
+  series that had exceptions made the calendar wrong **twice at once, in opposite directions**: the
+  skipped day came back (its `EXDATE` named a date the rule no longer produced, and it looked like any
+  other event) and the edited instance was stranded where it was (which reads as one more thing on).
+  Nothing errored; the week just quietly held events that were not there. The delta is now applied to
+  the rule *and* to everything it excepts, by the same delta — an instance moved to the 13th is *the
+  12th's* instance, so a series shifted a week back puts it on the 6th — and `UNTIL` moves with the
+  rule it bounds, since `UNTIL` is a date inside it. `COUNT` needs nothing: it counts from a `DTSTART`
+  that is moving too. An explicit new `start` is a translation as well and carries the same exceptions.
+  Fifteen tests, including the round trip: shift a series a week back and forward and the file reads
+  as it started. One consequence is a change in its own right — an explicit new `start` now carries
+  the event's **length** with it (the end moves by the same delta), where before the end stayed put
+  and a moved half-hour standup silently became one that ended before it began. A translation is a
+  translation, and it cannot be one rule for the series and another for the instances.
+
+- **A `scope="future"` split hands its overrides to the series that inherits them.** `_update_future`
+  truncated the master's rule at the cut and gave the new tail a fresh `UID` — but left the instances
+  the owner had edited pointing at the *master*, whose rule now stopped before them. Nothing superseded
+  the tail's own occurrence on that day, so one moved standup became **two**: the tail produced the
+  day the owner had moved away from, and the override showed up at its new date beside it. Found while
+  making the shift above carry its exceptions — the same question, one layer over. The inherited
+  `VEVENT`s are re-pointed at the tail's `UID`, which is what makes an override that series' override.
 
 - **The page policy now travels as a header, not only inside the document.** The renderer writes the
   CSP as a `<meta>`, and it was the only place it existed — but a `<meta>` policy begins to apply

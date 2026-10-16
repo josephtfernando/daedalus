@@ -30,6 +30,23 @@ updated, and it is committed on its own.
 
 Fixes that belong to no stream, recorded so the plan is the whole story.
 
+### T17 — A series is several entries, and a change must move all of them · `done`
+*`calendar/store.py` (`_move`, `_shift_exceptions`, `_update_future`). Found while testing the shift.*
+
+`shift` moved a repeating event's rule and nothing else. Everything the rule *excepts* — a `VEVENT`
+per instance the owner edited, an `EXDATE` per skipped day, an `RDATE` per added day, the `UNTIL`
+inside the rule — stayed on the old dates, so the skipped days came back and the edited instances
+were stranded. A `scope="future"` split had the sibling fault: the overrides it inherited kept
+pointing at the master, and the tail produced its own occurrence on the same day, so one moved
+standup read as two.
+
+**Acceptance:** shifting a series moves its exceptions by the same delta and the count of what is on
+does not change (beyond the one the window gains at its far edge, because a weekly rule has no
+beginning to run out of); an `UNTIL` moves with its rule and a `COUNT` does not need to; a split
+gives its overrides to the tail. **Done** — `_move` takes the delta before the rest of the change and
+carries it through `_shift_exceptions`; `_update_future` re-points the inherited `VEVENT`s. Sixteen
+tests, including a round trip that shifts a series a week back and forward.
+
 ### T16 — A pinned tick was judged against the wall clock · `done`
 *`scheduler/scheduler.py`, `scheduler/jobs.py`. Found at 12:01.*
 

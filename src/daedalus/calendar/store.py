@@ -150,7 +150,7 @@ class CalendarStore:
         if master is None:
             return None
         if not master.rrule or scope == ALL:
-            _apply(master, wanted)
+            _move(parsed, master, wanted)
             master.updated_at = time.time()
             self._write(parsed)
             return master
@@ -190,6 +190,9 @@ class CalendarStore:
             )
             _copy_span(master, existing, counter=_offset_for(master, key))
             parsed.events.append(existing)
+        # Deliberately *not* `_move`: this edit is about one instance, and the
+        # instance's RECURRENCE-ID names which occurrence of the rule it replaces.
+        # Moving that is moving the series, which is the other scope.
         _apply(existing, wanted)
         existing.updated_at = time.time()
         self._write(parsed)
@@ -232,7 +235,16 @@ class CalendarStore:
         master.rdates = [value for value in master.rdates if str(value) < key]
         master.updated_at = time.time()
         parsed.events.append(tail)
-        _apply(tail, wanted)
+        # An override at or after the cut belongs to the tail now: its
+        # RECURRENCE-ID names an instance of the tail's rule. Left pointing at
+        # the master it is not merely out of place — the master's rule was
+        # truncated just above, so nothing supersedes the tail's own instance on
+        # that day and the same standup appears twice.
+        for event in parsed.events:
+            if event.uid == master.uid and str(event.recurrence_id or "") >= key:
+                event.uid = tail.uid
+                event.updated_at = time.time()
+        _move(parsed, tail, wanted)
         self._write(parsed)
         return tail
 
@@ -868,13 +880,85 @@ def _wanted(changes: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in changes.items() if value not in (None, "", [])}
 
 
+def _move(
+    parsed: ical.ParsedCalendar,
+    event: Event,
+    wanted: dict[str, Any],
+) -> None:
+    """Apply a change, carrying any date translation through the exceptions.
+
+    A series is not one entry in the file. An instance the owner moved is a
+    VEVENT of its own — its date lives in its own DTSTART, and its RECURRENCE-ID
+    records *which* occurrence of the rule it replaces — and a day the owner
+    skipped is an EXDATE naming a moment on the old rule. So a change that moves
+    the rule has to move them by the same delta, or the calendar quietly becomes
+    wrong in two directions at once: the skipped day comes back (its EXDATE now
+    falls on a date the rule no longer produces) and the moved instance is
+    stranded where it was, which reads as an extra event.
+
+    That is why this exists rather than a plain ``_apply``: the delta is taken
+    here, applied to the event and to everything it excepts, and only then is the
+    rest of the change applied. An explicit ``start``/``end`` still wins for the
+    field it names — and, being a translation too, it is what the delta is read
+    from when no ``shift`` was given.
+    """
+    delta = _delta(wanted.pop("shift")) if "shift" in wanted else timedelta(0)
+    if not delta and "start" in wanted:
+        moved = parse_iso(str(wanted["start"]))
+        if moved != parse_iso(event.start):
+            delta = moved - parse_iso(event.start)
+    if delta:
+        _shift_exceptions(parsed, event, delta)
+        if "start" not in wanted:
+            wanted["start"] = _shift(event.start, delta, event.all_day)
+        if event.end and "end" not in wanted:
+            wanted["end"] = _shift(event.end, delta, event.all_day)
+        if "rrule" not in wanted and event.rrule:
+            # `UNTIL` is a date inside the rule, so leaving it where it was
+            # shortens or lengthens the series. `COUNT` needs nothing: it counts
+            # from a start that is moving with it.
+            until = recur.parse_rule(event.rrule).until
+            if until is not None:
+                wanted["rrule"] = _with_until(event, until + delta)
+    _apply(event, wanted)
+
+
+def _shift_exceptions(
+    parsed: ical.ParsedCalendar,
+    series: Event,
+    delta: timedelta,
+) -> None:
+    """Move a series' moved instances, skipped days and added days by ``delta``.
+
+    Same delta as the rule, because these entries are the series' own history
+    rather than events of their own: an instance moved to the 13th is *the
+    12th's* instance, so moving the rule a week back puts it on the 6th. The
+    series is joined by uid, which is what makes an override an override.
+    """
+    if not delta:
+        return
+    for event in parsed.events:
+        if event.uid != series.uid or not str(event.recurrence_id or "").strip():
+            continue
+        event.recurrence_id = _shift(event.recurrence_id, delta, event.all_day)
+        event.start = _shift(event.start, delta, event.all_day)
+        if event.end:
+            event.end = _shift(event.end, delta, event.all_day)
+        event.updated_at = time.time()
+    series.exdates = [_shift(value, delta, series.all_day) for value in series.exdates]
+    series.rdates = [_shift(value, delta, series.all_day) for value in series.rdates]
+
+
 def _apply(event: Event, wanted: dict[str, Any]) -> None:
     if "reminders" in wanted:
         event.reminders = _reminders(wanted["reminders"])
     if "shift" in wanted:
-        # A signed offset moves the event by a delta, keeping its own time of day
-        # and length. It fills in start/end only where an explicit value did not,
-        # so naming both is unambiguous: the explicit date wins.
+        # A signed offset moves *this* event by a delta, keeping its own time of
+        # day and length. A change to a series never arrives here with a `shift`
+        # left on it — `_move` has already taken it and carried it through the
+        # series' exceptions, which is the whole point of that function. What
+        # reaches this branch is one instance being moved on its own, where
+        # nothing else has to follow.
         for key, value in _shifted(event, _delta(wanted["shift"])).items():
             wanted.setdefault(key, value)
     for key, value in wanted.items():
@@ -991,10 +1075,9 @@ def _shifted(event: Event, delta: timedelta) -> dict[str, str]:
     nothing is skipped: a re-timed event keeps its hour, a shifted one keeps its
     shape. The clock stays floating local — date arithmetic never invents a zone.
     """
-    shape = "%Y-%m-%d" if event.all_day else "%Y-%m-%dT%H:%M"
-    changes = {"start": (parse_iso(event.start) + delta).strftime(shape)}
+    changes = {"start": _shift(event.start, delta, event.all_day)}
     if event.end:
-        changes["end"] = (parse_iso(event.end) + delta).strftime(shape)
+        changes["end"] = _shift(event.end, delta, event.all_day)
     return changes
 
 

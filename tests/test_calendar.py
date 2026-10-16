@@ -909,6 +909,291 @@ def test_an_unreadable_shift_is_refused_rather_than_guessed(store: CalendarStore
         store.bulk_update("review", shift="next tuesday")
 
 
+# -- a shift carries the series' exceptions ---------------------------------
+#
+# A series is several entries in the file, and only one of them is the rule.
+# Moving the rule alone does not move the instance the owner moved (it is a
+# VEVENT with its own DTSTART) and does not move the day the owner skipped (it is
+# an EXDATE naming a moment on the old rule). Left like that the calendar is
+# wrong twice at once, in opposite directions — a skipped day reappears and a
+# moved instance is stranded — and both look like ordinary events.
+
+
+def _weekly_with_exceptions(store: CalendarStore) -> str:
+    """A Monday standup whose 12th was moved to the 13th and whose 19th is off."""
+    series = store.add(
+        summary="Standup",
+        start="2026-10-05T09:00",
+        end="2026-10-05T09:15",
+        rrule="FREQ=WEEKLY",
+    )
+    store.update(
+        series.uid,
+        scope="this",
+        recurrence_id="2026-10-12T09:00",
+        start="2026-10-13T11:00",
+        end="2026-10-13T11:30",
+    )
+    store.update(series.uid, exdates=["2026-10-19T09:00"])
+    return series.uid
+
+
+def test_a_shift_moves_the_whole_series_including_what_it_excepts(
+    store: CalendarStore,
+) -> None:
+    """Every instance that was on is still on, a week earlier — none left behind.
+
+    The window is fixed and a weekly rule is not, so the far edge gains the one
+    occurrence the rule now reaches into it. What must not change is the rest:
+    not one stranded exception (reads as an extra event) and not one skipped day
+    come back.
+    """
+    uid = _weekly_with_exceptions(store)
+    before = {
+        event.start for event in store.occurrences(datetime(2026, 9, 1), datetime(2026, 12, 1))
+    }
+
+    store.update(uid, shift="-7d")
+
+    after = {
+        event.start for event in store.occurrences(datetime(2026, 9, 1), datetime(2026, 12, 1))
+    }
+    earlier = {_by_days(start, -7) for start in before}
+
+    assert earlier <= after, "an instance or an exception was left behind"
+    assert after - earlier == {"2026-11-30T09:00"}, "the window gained more than its edge"
+    assert "2026-10-12T09:00" not in after, "the skipped day came back"
+    assert "2026-10-13T11:00" not in after, "the moved instance stayed at its old date"
+
+
+def _by_days(start: str, days: int) -> str:
+    """`start` moved by whole days, in the shape it arrived in."""
+    moment = datetime.fromisoformat(start) + timedelta(days=days)
+    return moment.strftime("%Y-%m-%d" if len(start) == 10 else "%Y-%m-%dT%H:%M")
+
+
+def test_a_shift_keeps_the_skipped_day_skipped(store: CalendarStore) -> None:
+    uid = _weekly_with_exceptions(store)
+
+    store.update(uid, shift="-7d")
+
+    assert store.occurrences_on("2026-10-12") == []
+    assert [e.start for e in store.occurrences_on("2026-10-19")] == ["2026-10-19T09:00"]
+
+
+def test_a_shift_moves_a_moved_instances_recurrence_id_with_it(
+    store: CalendarStore,
+) -> None:
+    """The override says *which* occurrence it replaces, so that moves too.
+
+    Its own dates are what the owner edited; the id is what ties it to the rule.
+    Moving one without the other detaches it, and the rule then produces its own
+    instance at the date the owner had moved away from.
+    """
+    uid = _weekly_with_exceptions(store)
+
+    store.update(uid, shift="-7d")
+
+    moved = [e for e in store.overrides(uid) if e.start == "2026-10-06T11:00"]
+    assert len(moved) == 1
+    assert moved[0].recurrence_id == "2026-10-05T09:00"
+    assert moved[0].end == "2026-10-06T11:30", "the instance's length was not kept"
+
+
+def test_a_shifted_series_keeps_the_clock_it_was_given(store: CalendarStore) -> None:
+    """A delta moves dates; it is not a chance to re-time anything."""
+    uid = _weekly_with_exceptions(store)
+
+    store.update(uid, shift="2d")
+
+    assert [e.start for e in store.occurrences_on("2026-10-07")] == ["2026-10-07T09:00"]
+    # The 12th's instance, which the owner had put on the 13th at 11:00.
+    assert [e.start for e in store.occurrences_on("2026-10-15")] == ["2026-10-15T11:00"]
+
+
+def test_an_all_day_series_carries_its_exceptions_as_dates(store: CalendarStore) -> None:
+    """The keys of an all-day series are bare dates, and must stay bare."""
+    series = store.add(summary="Market", start="2026-10-05", end="2026-10-07", rrule="FREQ=WEEKLY")
+    store.update(series.uid, scope="this", recurrence_id="2026-10-12", summary="Big market")
+
+    store.update(series.uid, shift="-7d")
+
+    assert store.get(series.uid).start == "2026-09-28"  # type: ignore[union-attr]
+    assert store.get(series.uid).end == "2026-09-30"  # type: ignore[union-attr]
+    override = store.overrides(series.uid)[0]
+    assert override.recurrence_id == "2026-10-05"
+    assert override.start == "2026-10-05"
+    assert override.all_day is True
+
+
+def test_an_explicit_new_start_translates_the_exceptions_too(store: CalendarStore) -> None:
+    """Putting a series on a different date moves what it excepts, by definition."""
+    uid = _weekly_with_exceptions(store)
+
+    store.update(uid, start="2026-10-07T09:00")
+
+    starts = [e.start for e in store.occurrences(datetime(2026, 10, 1), datetime(2026, 11, 15))]
+    assert "2026-10-07T09:00" in starts
+    assert "2026-10-15T11:00" in starts, "the moved instance did not follow the series"
+    assert "2026-10-13T11:00" not in starts
+    assert store.occurrences_on("2026-10-21") == [], "the skipped day did not move"
+
+
+def test_an_explicit_start_keeps_the_length_the_owner_chose(store: CalendarStore) -> None:
+    """Moving an event is a translation, so its end goes with it.
+
+    Before this the end stayed where it was, which silently turned a half-hour
+    standup into one that ends before it starts. The same delta is what the
+    exceptions of a series are moved by, so it cannot be one rule for the rule
+    and another for the instances.
+    """
+    event = store.add(summary="Review", start="2026-10-05T09:00", end="2026-10-05T09:30")
+
+    store.update(event.uid, start="2026-10-20T14:00")
+
+    assert store.get(event.uid).start == "2026-10-20T14:00"  # type: ignore[union-attr]
+    assert store.get(event.uid).end == "2026-10-20T14:30"  # type: ignore[union-attr]
+
+
+def test_a_shift_touches_only_its_own_series_exceptions(store: CalendarStore) -> None:
+    """The uid is the join, so a shift must not reach a sibling series' instances
+    just because their dates look similar."""
+    uid = _weekly_with_exceptions(store)
+    other = store.add(summary="Review", start="2026-10-05T15:00", rrule="FREQ=WEEKLY")
+    store.update(other.uid, scope="this", recurrence_id="2026-10-12T15:00", start="2026-10-12T16:00")
+
+    store.update(uid, shift="-7d")
+
+    assert store.get(other.uid).start == "2026-10-05T15:00"  # type: ignore[union-attr]
+    assert store.overrides(other.uid)[0].recurrence_id == "2026-10-12T15:00"
+
+
+def test_shifting_one_instance_leaves_the_series_rule_alone(store: CalendarStore) -> None:
+    """The other half of the same rule: `scope=this` moves *a* standup, not the rule."""
+    uid = _weekly_with_exceptions(store)
+
+    store.update(uid, scope="this", recurrence_id="2026-10-26T09:00", start="2026-10-27T10:00")
+
+    assert store.get(uid).start == "2026-10-05T09:00"  # type: ignore[union-attr]
+    assert [e.start for e in store.occurrences_on("2026-10-27")] == ["2026-10-27T10:00"]
+
+
+def test_a_tail_carries_only_the_exceptions_after_the_cut(store: CalendarStore) -> None:
+    """`future` splits a series; each half keeps the exceptions on its own side."""
+    uid = _weekly_with_exceptions(store)
+
+    store.update(uid, scope="future", recurrence_id="2026-10-19T09:00", shift="2d")
+
+    # The instance moved to the 13th stayed with the master, and did not move.
+    assert [e.start for e in store.occurrences_on("2026-10-13")] == ["2026-10-13T11:00"]
+    # The skipped 19th went with the tail and moved with it — and stayed skipped.
+    assert store.occurrences_on("2026-10-21") == []
+    starts = [e.start for e in store.occurrences(datetime(2026, 10, 1), datetime(2026, 11, 15))]
+    assert "2026-10-28T09:00" in starts, "the tail did not carry on from its new day"
+    assert "2026-10-21T09:00" not in starts, "a day the owner had skipped came back"
+
+
+def test_a_split_hands_its_overrides_to_the_series_that_inherits_them(
+    store: CalendarStore,
+) -> None:
+    """An override belongs to the rule it excepts, and the split moves that line.
+
+    Left pointing at the master — whose rule now stops before the override —
+    nothing supersedes the tail's own instance on that day, so one moved standup
+    turns into two.
+    """
+    series = store.add(summary="Standup", start="2026-10-05T09:00", rrule="FREQ=WEEKLY")
+    store.update(
+        series.uid,
+        scope="this",
+        recurrence_id="2026-10-26T09:00",
+        start="2026-10-27T10:00",
+    )
+
+    store.update(series.uid, scope="future", recurrence_id="2026-10-19T09:00", summary="Retro")
+
+    # One standup on the 27th, where the owner had put it, and none left over on
+    # the 26th: the tail's own instance there is superseded by the override.
+    assert store.occurrences_on("2026-10-26") == []
+    assert [e.start for e in store.occurrences_on("2026-10-27")] == ["2026-10-27T10:00"]
+    assert sum(
+        len(store.occurrences_on(day)) for day in ("2026-10-26", "2026-10-27")
+    ) == 1, "the split duplicated a day"
+    # And the master does not keep a copy of a day it no longer reaches.
+    assert [e.summary for e in store.occurrences_on("2026-10-05")] == ["Standup"]
+    assert store.occurrences_on("2026-10-13") == []
+
+
+def test_a_shift_moves_an_until_with_the_rule_it_ends(store: CalendarStore) -> None:
+    """`UNTIL` is a date inside the rule. Leave it and the series is truncated."""
+    series = store.add(
+        summary="Course",
+        start="2026-10-05T18:00",
+        rrule="FREQ=WEEKLY;UNTIL=20261102T230000",
+    )
+    before = [e.start for e in store.occurrences(datetime(2026, 9, 1), datetime(2027, 1, 1))]
+    assert before[-1] == "2026-11-02T18:00", "the fixture drifted"
+
+    store.update(series.uid, shift="-7d")
+
+    after = [e.start for e in store.occurrences(datetime(2026, 9, 1), datetime(2027, 1, 1))]
+    assert len(after) == len(before), "the series lost or gained an instance"
+    assert after[0] == "2026-09-28T18:00"
+    assert after[-1] == "2026-10-26T18:00", "the series was cut short at the old UNTIL"
+
+
+def test_a_count_rule_moves_without_being_recounted(store: CalendarStore) -> None:
+    """`COUNT` counts from a start that is moving too, so it needs nothing."""
+    series = store.add(
+        summary="Course", start="2026-10-05T18:00", rrule="FREQ=WEEKLY;COUNT=3"
+    )
+
+    store.update(series.uid, shift="3d")
+
+    starts = [e.start for e in store.occurrences(datetime(2026, 9, 1), datetime(2027, 1, 1))]
+    assert starts == ["2026-10-08T18:00", "2026-10-15T18:00", "2026-10-22T18:00"]
+
+
+def test_a_bulk_shift_carries_the_exceptions_of_every_series_it_moves(
+    store: CalendarStore,
+) -> None:
+    """The tool's `on=… shift=…` form is the one the model reaches for."""
+    uid = _weekly_with_exceptions(store)
+    on_day = [e.start for e in store.occurrences_on("2026-10-05")]
+
+    store.bulk_update("standup", on="2026-10-05", shift="-7d")
+
+    assert on_day == ["2026-10-05T09:00"], "the fixture drifted"
+    assert store.get(uid).start == "2026-09-28T09:00"  # type: ignore[union-attr]
+    starts = [
+        e.start for e in store.occurrences(datetime(2026, 9, 21), datetime(2026, 11, 15))
+    ]
+    assert "2026-10-06T11:00" in starts, "the moved instance did not come with it"
+
+
+def test_a_shifted_and_put_back_series_reads_as_it_started(store: CalendarStore) -> None:
+    """A translation is reversible: the file is the truth, and it round-trips."""
+    uid = _weekly_with_exceptions(store)
+    before = sorted(e.start for e in store.occurrences(datetime(2026, 9, 1), datetime(2026, 12, 1)))
+
+    store.update(uid, shift="-7d")
+    store.update(uid, shift="1w")
+
+    after = sorted(e.start for e in store.occurrences(datetime(2026, 9, 1), datetime(2026, 12, 1)))
+    assert after == before
+
+
+def test_an_unreadable_shift_is_refused_after_the_fact_too(store: CalendarStore) -> None:
+    """A refusal must not have half-moved anything on its way out."""
+    uid = _weekly_with_exceptions(store)
+
+    with pytest.raises(ValueError, match="not a shift I can read"):
+        store.update(uid, shift="next tuesday")
+
+    assert store.get(uid).start == "2026-10-05T09:00"  # type: ignore[union-attr]
+    assert [e.start for e in store.occurrences_on("2026-10-13")] == ["2026-10-13T11:00"]
+
+
 async def test_the_tool_shifts_one_event_by_its_uid(runtime: Runtime) -> None:
     """A delta is not only for a set: `uid` + `shift` moves one event by days."""
     event = runtime.calendar.add(
@@ -923,6 +1208,49 @@ async def test_the_tool_shifts_one_event_by_its_uid(runtime: Runtime) -> None:
     assert result.ok, result.output
     assert runtime.calendar.get(event.uid).start == "2026-10-18T09:00"  # type: ignore[union-attr]
     assert runtime.calendar.get(event.uid).end == "2026-10-18T10:00"  # type: ignore[union-attr]
+
+
+async def test_the_tool_moves_a_set_and_the_moved_instance_inside_it(
+    runtime: Runtime,
+) -> None:
+    """The set the model addresses is not always *only* a rule.
+
+    "The standups move a week later" is one call on the day they fall — and the
+    standup the owner had already moved to another day is still one of the
+    standups. Moving the rule alone would leave the edited one where it was and
+    bring back any day that had been skipped, which reads as two new events.
+    """
+    series = runtime.calendar.add(
+        summary="Standup", start="2026-10-05T09:00", end="2026-10-05T09:15", rrule="FREQ=WEEKLY"
+    )
+    runtime.calendar.update(
+        series.uid,
+        scope="this",
+        recurrence_id="2026-10-12T09:00",
+        start="2026-10-13T11:00",
+        end="2026-10-13T11:30",
+    )
+
+    result = await CalendarTool().run(
+        {
+            "op": "update",
+            "summary": "",
+            "start": "",
+            "query": "",
+            "on": "2026-10-05",
+            "shift": "-7d",
+        },
+        runtime,
+    )
+
+    assert result.ok, result.output
+    assert [e.start for e in runtime.calendar.occurrences_on("2026-10-06")] == [
+        "2026-10-06T11:00"
+    ], "the instance the owner had moved was left behind"
+    assert runtime.calendar.occurrences_on("2026-10-13") == []
+    assert [e.start for e in runtime.calendar.occurrences_on("2026-09-28")] == [
+        "2026-09-28T09:00"
+    ]
 
 
 async def test_the_tool_moves_the_two_things_on_sunday_in_one_call(runtime: Runtime) -> None:

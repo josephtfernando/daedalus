@@ -295,6 +295,18 @@ on. `delete` takes the same `on` addressing. Both are bulk writes, so both still
 `local_only` gate as every other read: on a remote-bound turn the model cannot address an event
 it was not allowed to see.
 
+**A series is several entries, and a change moves all of them.** One repeating event is a rule, an
+`EXDATE` per skipped day, an `RDATE` per added day, and a `VEVENT` of its own per instance the owner
+edited — each with its own `DTSTART`, joined by the series' `UID` and pinned by `RECURRENCE-ID`. So a
+change that moves the rule by a delta moves those with it, by the same delta: an instance moved to the
+13th is *the 12th's* instance, and shifting the series a week back puts it on the 6th. Moving the rule
+alone is wrong twice at once, in opposite directions — a skipped day comes back (its `EXDATE` now names
+a date the rule no longer produces, and it looks like an ordinary event) and an edited instance is
+stranded where it was (which reads as one more thing on). `UNTIL` is a date *inside* the rule and moves
+with it; `COUNT` counts from a `DTSTART` that is moving too, so it needs nothing. An explicit new
+`start` is a translation as well, and carries the same exceptions. A `scope="future"` split gives the
+`VEVENT`s at or after the cut to the new series, because an override belongs to the rule it excepts.
+
 **Clocks other than this one.** An event may name a `TZID`; the zone travels with the time, and
 `recur.py` stays pure wall-clock arithmetic, so "9:00 every weekday" stays 9:00 in the zone it
 was written in across a daylight-saving change. Real instants — not wall-time strings — are what
