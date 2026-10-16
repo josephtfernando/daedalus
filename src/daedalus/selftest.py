@@ -281,7 +281,28 @@ def _check_calendar(rt: Runtime) -> Check:
     ):
         return Check("calendar", False, "a bulk retime did not move each event onto its own day")
 
-    return Check("calendar", True, f"wrote+repeated+moved+searched+retimed {event.uid[:8]}")
+    # And an outside calendar has to be able to come in — a calendar you cannot
+    # bring your history into is a calendar you cannot move to.
+    handover = rt.settings.home / "state" / "selftest-import.ics"
+    handover.write_text(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Google Inc//Google Calendar//EN\r\n"
+        "X-WR-CALNAME:owner@example.com\r\n"
+        "BEGIN:VTIMEZONE\r\nTZID:Europe/London\r\nEND:VTIMEZONE\r\n"
+        "BEGIN:VEVENT\r\nUID:selftest-imported@example.com\r\n"
+        "DTSTART;TZID=Europe/London:20990103T090000\r\n"
+        "SUMMARY:selftest imported probe\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        encoding="utf-8",
+    )
+    report = rt.calendar.import_ics(handover)
+    arrived = rt.calendar.get("selftest-imported@example.com")
+    if report.added != 1 or arrived is None or arrived.authority != "imported":
+        return Check("calendar", False, "an outside calendar did not come in")
+    if rt.calendar.import_ics(handover).added != 0:
+        return Check("calendar", False, "importing the same file twice added it twice")
+
+    return Check(
+        "calendar", True, f"wrote+repeated+moved+searched+bulk+imported {event.uid[:8]}"
+    )
 
 
 def _check_approvals(rt: Runtime) -> Check:

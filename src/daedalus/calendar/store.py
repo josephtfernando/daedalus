@@ -12,21 +12,24 @@ recurring standup appears as itself on today's date (see :mod:`.occurrences`).
 Writes can address either the whole series or one instance of it, which is the
 difference between "the standup moved" and "today's standup moved".
 
-Only the ``Daedalus`` calendar is writable here. The owner's other calendars
-are gcal's, and gcal is not wired yet — see :meth:`sync_state`.
+Only the ``Daedalus`` calendar is one the agent *owns*; events from elsewhere can
+be brought in with :meth:`CalendarStore.import_ics`, which keeps the name of the
+calendar they came from. ``Daedalus`` is also the only calendar gcal would ever
+be *pushed* to — see :meth:`sync_state`.
 """
 
 from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
 from ..security.provenance import DataClass
 from . import ical, recur, zones
-from .event import INTERNAL, OPAQUE, Event, Reminder, normalise_when, parse_iso
+from .event import IMPORTED, INTERNAL, OPAQUE, Event, Reminder, normalise_when, parse_iso
 from .index import CalendarIndex
 from .occurrences import expand as expand_occurrences
 
@@ -340,6 +343,75 @@ class CalendarStore:
                 removed += 1
         return removed
 
+    # -- import ------------------------------------------------------------
+
+    def import_ics(
+        self,
+        path: Path,
+        *,
+        replace: bool = False,
+        data_class: DataClass | None = None,
+    ) -> ImportReport:
+        """Adopt the events in someone else's ``.ics`` into this calendar.
+
+        This exists because the owner has a real calendar already: a calendar you
+        cannot bring your history into is a calendar you cannot move to. Google's
+        export is the case it was written for — thousands of ``VEVENT``s, one
+        ``VTIMEZONE`` per zone, ``TZID``s, rules, alarms — and it is the ordinary
+        iCalendar slice, so any other exporter works too.
+
+        Identity is ``(uid, recurrence_id)``, the same pair the index keys on.
+        That is what lets an override arrive *with* its series instead of
+        replacing it, and what makes re-running the command safe: a second import
+        of the same file changes nothing unless ``replace`` says to overwrite.
+
+        What arrives keeps the name of the calendar it came from (the file's
+        ``X-WR-CALNAME``) and is marked ``authority="imported"``, so nothing here
+        pretends a foreign event was written by the agent.
+        """
+        source = Path(path).expanduser()
+        if not source.exists():
+            raise ValueError(f"no such file: {source}")
+        try:
+            parsed = ical.parse_calendar(source.read_text(encoding="utf-8"))
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"{source} is not a text file I can read: {exc}") from exc
+
+        report = ImportReport(file=str(source), source=ical.calendar_name(parsed))
+        ours = "daedalus" in ical.prodid(parsed).lower()
+        document = self._load()
+        known = {(event.uid, event.recurrence_id) for event in document.events}
+
+        for event in parsed.events:
+            report.events += 1
+            if not ours:
+                # A file we did not write: take its provenance from the document
+                # rather than trusting whatever each VEVENT left out.
+                if event.calendar == INTERNAL:
+                    event.calendar = report.source or IMPORTED
+                event.authority = "imported"
+            if data_class is not None:
+                event.data_class = data_class
+                report.local_only += 1 if data_class is DataClass.LOCAL_ONLY else 0
+            key = (event.uid, event.recurrence_id)
+            if key in known:
+                if not replace:
+                    report.skipped += 1
+                    continue
+                document.events = [
+                    e for e in document.events if (e.uid, e.recurrence_id) != key
+                ]
+                report.replaced += 1
+            else:
+                report.added += 1
+            known.add(key)
+            document.events.append(event)
+
+        report.zones, report.ignored = _adopt_components(document, parsed.passthrough)
+        if report.added or report.replaced or report.zones:
+            self._write(document)
+        return report
+
     # -- reads -------------------------------------------------------------
 
     def get(self, uid: str) -> Event | None:
@@ -570,6 +642,87 @@ class CalendarStore:
 
 
 # -- helpers ----------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class ImportReport:
+    """What an import did, in numbers and in words.
+
+    Counted rather than summarised away: "12 already on the calendar" is the
+    difference between a command that worked and one that quietly did nothing,
+    and the owner is the one who has to tell them apart.
+    """
+
+    file: str = ""
+    source: str = ""
+    events: int = 0
+    added: int = 0
+    replaced: int = 0
+    skipped: int = 0
+    zones: int = 0
+    ignored: int = 0
+    local_only: int = 0
+
+    def render(self) -> str:
+        if not self.events:
+            return f"{self.file}: no events in it"
+        from_where = f" from {self.source!r}" if self.source else ""
+        plural = "" if self.events == 1 else "s"
+        parts = [f"read {self.events} event{plural}{from_where}"]
+        if self.added:
+            parts.append(f"added {self.added}")
+        if self.replaced:
+            parts.append(f"replaced {self.replaced}")
+        if self.skipped:
+            parts.append(f"already here: {self.skipped}")
+        if not self.added and not self.replaced:
+            parts.append("nothing changed")
+        if self.zones:
+            parts.append(f"{self.zones} time zone rule{'s' if self.zones != 1 else ''}")
+        if self.ignored:
+            parts.append(f"left {self.ignored} other component{'s' if self.ignored != 1 else ''} alone")
+        if self.local_only:
+            parts.append(f"marked {self.local_only} local-only")
+        return ", ".join(parts)
+
+
+def _zone_id(block: list[str]) -> str:
+    """The ``TZID`` a ``VTIMEZONE`` block defines."""
+    for line in block:
+        name, _, value = line.partition(":")
+        if name.strip().upper() == "TZID":
+            return value.strip()
+    return ""
+
+
+def _adopt_components(
+    document: ical.ParsedCalendar, blocks: list[list[str]]
+) -> tuple[int, int]:
+    """Carry a file's ``VTIMEZONE`` blocks over. Returns ``(zones, ignored)``.
+
+    A zone definition is not decoration: an event naming a zone whose rules the
+    file does not carry is a time some readers cannot place, so the rules travel
+    with their events — once each, so re-importing does not stack them up.
+    Anything else that is not a ``VEVENT`` (a ``VTODO``, a ``VJOURNAL``) is
+    counted rather than copied, because nothing here models it and quietly
+    keeping a component the store cannot read is worse than saying so.
+    """
+    have = {_zone_id(block) for block in document.passthrough}
+    zones = ignored = 0
+    for block in blocks:
+        if not block:
+            continue
+        opener = block[0].upper()
+        if not opener.startswith("BEGIN:VTIMEZONE"):
+            ignored += 1
+            continue
+        name = _zone_id(block)
+        if name and name in have:
+            continue
+        document.passthrough.append(block)
+        have.add(name)
+        zones += 1
+    return zones, ignored
 
 
 def _clock(value: str) -> datetime.time:  # type: ignore[name-defined]

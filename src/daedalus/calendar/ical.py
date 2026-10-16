@@ -62,6 +62,38 @@ class ParsedCalendar:
     #: Component blocks that are not VEVENTs, kept as raw lines so a caller that
     #: rewrites the file does not delete them.
     passthrough: list[list[str]] = field(default_factory=list)
+    #: The document's own top-level properties — ``X-WR-CALNAME``,
+    #: ``X-WR-TIMEZONE``, ``VERSION`` and whatever else the writer put there.
+    #: Read, not re-rendered: the store writes its own header.
+    header: list[str] = field(default_factory=list)
+
+
+def calendar_name(parsed: ParsedCalendar) -> str:
+    """The name the document calls itself — ``X-WR-CALNAME:owner@gmail.com``.
+
+    This is how a Google Calendar export says who it belongs to, and it is the
+    one piece of provenance worth keeping when the owner brings a file in.
+    """
+    for line in parsed.header:
+        name, _, value = line.partition(":")
+        if name.strip().upper().endswith("X-WR-CALNAME"):
+            return unescape(value).strip()
+    return ""
+
+
+def prodid(parsed: ParsedCalendar) -> str:
+    """What wrote the document — our own ``PRODID``, or Google's.
+
+    Used to decide whether an imported file's own provenance should be trusted
+    (it is one of ours, and already says where each event belongs) or replaced
+    wholesale (it is someone else's, and silence about a calendar is not a claim
+    to be on ours).
+    """
+    for line in parsed.header:
+        name, _, value = line.partition(":")
+        if name.strip().upper() == "PRODID":
+            return value.strip()
+    return ""
 
 
 # -- text escaping (RFC 5545 §3.3.11) --------------------------------------
@@ -255,6 +287,9 @@ def parse_calendar(text: str) -> ParsedCalendar:
     while index < len(lines):
         line = lines[index]
         if not line.upper().startswith("BEGIN:"):
+            # A top-level property: the version, the calendar's own name. Kept
+            # because a caller importing a file needs to know where it came from.
+            result.header.append(line)
             index += 1
             continue
         name = line[6:].strip().upper()

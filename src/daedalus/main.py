@@ -101,6 +101,33 @@ def cmd_wake(args: argparse.Namespace) -> int:
     return asyncio.run(go())
 
 
+def cmd_calendar(args: argparse.Namespace) -> int:
+    """Bring an outside calendar in.
+
+    A command rather than a tool: importing reads a file from an arbitrary path,
+    which is a wider reach than the ``calendar`` tool is allowed (it is scoped to
+    ``state``). The owner runs this; the agent never goes looking for a file to
+    swallow.
+    """
+    from .calendar import CalendarStore
+    from .security.provenance import DataClass
+
+    settings = _settings(args)
+    store = CalendarStore(settings.home / "calendar")
+    for path in args.files:
+        try:
+            report = store.import_ics(
+                path,
+                replace=args.replace,
+                data_class=DataClass.LOCAL_ONLY if args.local_only else None,
+            )
+        except ValueError as exc:
+            print(f"✗ {exc}")
+            return 1
+        print(report.render())
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from .loop.engine import Engine
     from .runtime import build_runtime
@@ -261,6 +288,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("text", nargs=argparse.REMAINDER)
     p_ask.add_argument("-y", "--yes", action="store_true", help="auto-approve actions")
     p_ask.set_defaults(func=cmd_ask)
+
+    p_cal = sub.add_parser("calendar", help="the internal calendar: bring a file in")
+    cal_sub = p_cal.add_subparsers(dest="calendar_action", required=True)
+    p_import = cal_sub.add_parser("import", help="adopt the events in an .ics file")
+    p_import.add_argument("files", nargs="+", help="one or more .ics files (a gcal export works)")
+    p_import.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite an event that is already here instead of skipping it",
+    )
+    p_import.add_argument(
+        "--local-only",
+        action="store_true",
+        help="mark everything imported local_only, so it never reaches a remote model",
+    )
+    p_import.set_defaults(func=cmd_calendar)
 
     p_run = sub.add_parser("run", help="start the daemon")
     p_run.add_argument("--cli", action="store_true", help="run in the terminal instead of Discord")

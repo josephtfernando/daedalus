@@ -6,7 +6,15 @@ gcal is wired). Mirrors :mod:`daedalus.memory`: the file is authoritative, the
 index is rebuildable, and a hand edit is never overwritten silently.
 """
 
-from .event import INTERNAL, Event, normalise_when, parse_iso
-from .store import CalendarStore
+from .event import IMPORTED, INTERNAL, Event, normalise_when, parse_iso
+from .store import CalendarStore, ImportReport
 
-__all__ = ["INTERNAL", "CalendarStore", "Event", "normalise_when", "parse_iso"]
+__all__ = [
+    "IMPORTED",
+    "INTERNAL",
+    "CalendarStore",
+    "Event",
+    "ImportReport",
+    "normalise_when",
+    "parse_iso",
+]

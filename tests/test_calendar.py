@@ -723,7 +723,7 @@ async def test_the_tool_says_so_when_a_search_has_no_words(runtime: Runtime) -> 
 
 
 def test_a_bulk_retime_keeps_each_event_s_own_day(store: CalendarStore) -> None:
-    """\"Move all my standups to 10\" must not pile a week onto one morning."""
+    """Moving all my standups to 10 must not pile a week onto one morning."""
     first = store.add(summary="Standup", start="2026-10-12T09:00", end="2026-10-12T09:15")
     second = store.add(summary="Standup", start="2026-10-13T09:00", end="2026-10-13T09:15")
     store.add(summary="Dentist", start="2026-10-12T09:00")

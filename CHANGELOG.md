@@ -12,9 +12,35 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the internal calendar, the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 192-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 282-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The owner's real calendar can now come in.** A calendar you cannot bring your history into is
+  a calendar you cannot move to, and the owner's calendar already exists — in a Google Takeout
+  `.ics`, in a decade of events. `daedalus calendar import <file.ics>` reads one:
+  - **A whole document, not a toy.** Many `VEVENT`s at once, `X-WR-CALNAME` provenance, one
+    `VTIMEZONE` per zone, `TZID`-qualified times, `RRULE`s, `VALARM`s and `RECURRENCE-ID`
+    overrides. The internal store is already valid iCalendar, so it needed a reader for the
+    parts of the format it had not been handed yet, not a new format.
+  - **Identity is `(uid, recurrence_id)`,** the pair the index already keys on. That is what lets
+    an override arrive *with* its series instead of overwriting it — the standup and the one week
+    it moved are one import, and dropping the recurrence-id from the key would have silently lost
+    every moved instance in the file.
+  - **Re-running it is safe.** A second import of the same file adds nothing and rewrites nothing.
+    `--replace` overwrites an event that is already here, for when a *newer* export should win.
+  - **Provenance that does not lie.** Foreign events keep the name of the calendar they came from
+    and are stamped `authority="imported"`. A file this store wrote round-trips with its own
+    provenance untouched — the distinction is the document's `PRODID`, not a guess per event.
+  - **Zones travel; unmodelled components are counted.** Each `VTIMEZONE` is carried over once, so
+    a `TZID` the file names has its rules in the same file. A `VTODO` or `VJOURNAL` is *not*
+    copied — nothing models it — and the report says how many were passed over rather than
+    swallowing them or pretending they were events.
+  - **`--local-only`** marks the whole import withheld from remote-bound prompts: a history the
+    owner wants to search but not quote (§6).
+  - **A command, not a tool.** The `calendar` primitive is scoped to `state`; an import reads an
+    arbitrary path, so it stays in the owner's hands. The agent never goes looking for a file to
+    swallow.
 
 - **A change can reach a whole set, not one row at a time.** Until now every edit named a single
   event by its id, so "move all my standups to 10" was impossible to *say* — the model had to find

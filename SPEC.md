@@ -287,6 +287,19 @@ free/busy and overlap compare, so an event on a foreign clock lands on the right
 name shown on a line is shown only when it is not this machine's. An unreadable zone falls back
 to floating rather than guessing an offset.
 
+**Import — the calendar arrives before the sync does.** `daedalus calendar import <file.ics>` reads a
+whole calendar document (a Google Takeout export is the case it was written for: many `VEVENT`s,
+one `VTIMEZONE` per zone, `TZID`s, rules, alarms, overrides) and merges it into the internal store.
+Identity is `(uid, recurrence_id)` — the same pair the index keys on — so an override lands with the
+series it belongs to, and **re-importing the same file changes nothing** unless `--replace` says to
+overwrite. `VTIMEZONE` blocks travel with their events, once each; a component the store does not
+model (`VTODO`, `VJOURNAL`) is counted and left alone rather than silently copied. Imported events
+keep the name of the calendar they came from and are marked `authority="imported"`, so nothing here
+claims the agent wrote them; a file *this* store wrote round-trips with its own provenance intact.
+`--local-only` marks the whole import withheld from any remote-bound prompt (§6), for a history the
+owner wants searchable but not quotable. It is a **command, not a tool**: the `calendar` primitive
+is scoped to `state`, and an import reads a path of the owner's choosing.
+
 **`gcal` — a resource, read all / write one.**
 
 - **Read** every calendar the owner has — context for the day.

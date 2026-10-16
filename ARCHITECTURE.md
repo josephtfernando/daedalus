@@ -278,6 +278,25 @@ wake | cadence ─▶ calendar_sync
 
 Writes to gcal are **egress actions** behind a standing grant scoped to the `Daedalus` calendar. The dashboard reads and edits the **internal** store directly.
 
+### 7.6.1 Import — the calendar arrives before the sync does
+
+```
+daedalus calendar import owner.ics [--replace] [--local-only]
+  parse (one document, many VEVENTs) ─▶ stamp provenance ─▶ merge by (uid, recurrence_id)
+     └─ VTIMEZONE blocks carried over once each; a VTODO is counted, not copied
+```
+
+The owner's real calendar exists *today*, in a file, and gcal is not wired — so
+the one-way door is a command, not a sync. Identity is `(uid, recurrence_id)`,
+the same pair the index keys on, so an override lands *with* its series and a
+second run of the same file changes nothing. Foreign events keep the name of the
+calendar they came from (`X-WR-CALNAME`) and are marked `authority="imported"`;
+a file we wrote ourselves round-trips with its own provenance untouched.
+
+It is deliberately **not** a tool. The `calendar` tool is scoped to `state`; an
+import reads an arbitrary path, so the owner runs it and the agent never goes
+looking for a file to swallow.
+
 ### 7.7 First-run setup
 
 ```

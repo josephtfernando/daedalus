@@ -21,6 +21,10 @@ from . import recur, zones
 #: calendar the owner has is gcal-authoritative and, from here, read-only.
 INTERNAL = "Daedalus"
 
+#: The name given to events adopted from a file that did not say where they came
+#: from — better an honest "Imported" than a false claim to be the agent's own.
+IMPORTED = "Imported"
+
 #: A timed event with no end is assumed to last this long. gcal defaults an hour
 #: too, and "lunch at noon" meaning a zero-length blip would make every
 #: free/busy answer wrong.
