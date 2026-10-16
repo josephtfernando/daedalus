@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -39,6 +40,14 @@ class DiscordSurface:
         self.client = discord.Client(intents=intents)
         self._awaiting: asyncio.Future[str] | None = None
         self._ready = asyncio.Event()
+        #: The live work trace (see :meth:`progress`): the lines, the message
+        #: they are edited into, and the throttling state.
+        self._trace: list[str] = []
+        self._trace_channel: discord.abc.Messageable | None = None
+        self._trace_msg: discord.Message | None = None
+        self._edit_task: asyncio.Task | None = None
+        self._last_edit = 0.0
+        self._dirty = False
         self.client.event(self.on_ready)
         self.client.event(self.on_message)
 
@@ -95,6 +104,12 @@ class DiscordSurface:
         tell "thinking" from "broken", which is the failure we just spent an
         evening chasing. A typing hiccup must never kill the turn, hence the
         guarded enter/exit.
+
+        Alongside the typing indicator, :meth:`progress` maintains one live
+        status message — the work trace — so the owner can *see* the tool calls
+        as they happen rather than watching silence. It is deleted when the turn
+        ends: the answer replaces it, and a channel full of finished traces is
+        noise.
         """
         channel = self._channel(channel_id)
         typing = None
@@ -105,12 +120,68 @@ class DiscordSurface:
             except Exception:  # noqa: BLE001 — cosmetic, never fatal
                 log.debug("could not raise a typing indicator", exc_info=True)
                 typing = None
+        self._trace_channel = channel
         try:
             yield
         finally:
+            self._trace_channel = None
+            await self._end_trace()
             if typing is not None:
                 with contextlib.suppress(Exception):
                     await typing.__aexit__(None, None, None)
+
+    # -- the work trace -----------------------------------------------------
+
+    #: How the work is shown while it happens (SPEC §9 — the owner is entitled
+    #: to see what is being done in their name). One message per turn, edited in
+    #: place; the lines are the same safe trace journald keeps: tool, op,
+    #: outcome. Never the owner's words, never tool arguments.
+    _TRACE_LINES = 9
+    _TRACE_EDIT_EVERY = 2.5  # seconds — well under Discord's edit rate limit
+    _TRACE_MAX = 1800  # characters — under the 2000-char message limit
+
+    def progress(self, text: str) -> None:
+        """Add one line to the live work trace. Fire-and-forget; never fatal.
+
+        Edits are throttled, and a line that lands between two edits is **not**
+        dropped: a dirty flag makes the finished edit re-schedule itself, so the
+        trace always catches up with reality.
+        """
+        self._trace.append(str(text))
+        if self._trace_channel is None:
+            return
+        self._dirty = True
+        if self._edit_task is None or self._edit_task.done():
+            delay = max(0.0, self._TRACE_EDIT_EVERY - (time.monotonic() - self._last_edit))
+            self._edit_task = asyncio.create_task(self._push_trace(delay))
+
+    async def _push_trace(self, delay: float = 0.0) -> None:
+        if delay:
+            await asyncio.sleep(delay)
+        if self._trace_channel is None:
+            return  # the turn ended while this edit waited its turn
+        self._dirty = False
+        shown = self._trace[-self._TRACE_LINES :]
+        body = "working…" + "\n".join(f"\n`· {line}`" for line in shown)
+        try:
+            if self._trace_msg is None:
+                self._trace_msg = await self._trace_channel.send(body[: self._TRACE_MAX])
+            else:
+                self._trace_msg = await self._trace_msg.edit(content=body[: self._TRACE_MAX])
+            self._last_edit = time.monotonic()
+        except Exception:  # noqa: BLE001 — a trace is a courtesy, never fatal
+            log.debug("could not update the work trace", exc_info=True)
+        finally:
+            if self._dirty and self._trace_channel is not None:
+                self._edit_task = asyncio.create_task(self._push_trace())
+
+    async def _end_trace(self) -> None:
+        self._trace.clear()
+        self._dirty = False
+        message, self._trace_msg, self._edit_task = self._trace_msg, None, None
+        if message is not None:
+            with contextlib.suppress(Exception):
+                await message.delete()
 
     # -- outbound ---------------------------------------------------------
 

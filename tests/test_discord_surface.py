@@ -11,6 +11,7 @@ Two properties matter more than they look:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -182,3 +183,101 @@ def test_long_replies_are_chunked_under_the_discord_limit() -> None:
     chunks = chunk_text(body)
     assert all(len(c) <= 1900 for c in chunks)
     assert "".join(chunks).replace("\n", "") == body.replace("\n", "")
+
+
+# -- the work trace: what is happening, visible while it happens --------------
+
+
+class TraceMessage:
+    """A Discord message that remembers its edits and deletions."""
+
+    def __init__(self, body: str) -> None:
+        self.content = body
+        self.edits: list[str] = []
+        self.deleted = False
+
+    async def edit(self, *, content: str) -> "TraceMessage":
+        self.content = content
+        self.edits.append(content)
+        return self
+
+    async def delete(self) -> None:
+        self.deleted = True
+
+
+class TraceChannel(TypingChannel):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.sent: list[TraceMessage] = []
+
+    async def send(self, body: str) -> TraceMessage:
+        message = TraceMessage(body)
+        self.sent.append(message)
+        return message
+
+
+async def test_the_turn_shows_its_tool_calls_and_clears_them_afterwards() -> None:
+    """The owner watches the work happen, then gets a clean channel with the answer."""
+    s = surface()
+    s._TRACE_EDIT_EVERY = 0.0
+    channel = TraceChannel()
+    s.client.get_channel = lambda _id: channel  # type: ignore[method-assign]
+
+    async with s.working("12345"):
+        s.progress("▸ calendar op=write")
+        await s._edit_task
+        s.progress("calendar op=write ✓")
+        await s._edit_task
+
+    assert "▸ calendar op=write" in channel.sent[0].content
+    assert "calendar op=write ✓" in channel.sent[0].edits[-1]
+    assert channel.sent[0].deleted, "the trace is a courtesy, not channel clutter"
+
+
+async def test_the_trace_is_throttled_under_discords_edit_limit() -> None:
+    s = surface()
+    channel = TraceChannel()
+    s.client.get_channel = lambda _id: channel  # type: ignore[method-assign]
+
+    async with s.working("12345"):
+        for step in range(12):
+            s.progress(f"tool {step}")
+            await asyncio.sleep(0)
+        if s._edit_task is not None:
+            await s._edit_task
+
+    assert len(channel.sent) == 1, "one message per turn, not one per tool"
+    edits = 1 + len(channel.sent[0].edits)
+    seconds = 12 / 30  # the burst above, at a realistic tool cadence
+    assert edits <= max(1, int(seconds / s._TRACE_EDIT_EVERY) + 2), (
+        "edits stay well inside Discord's rate limit"
+    )
+    assert channel.sent[0].content.count("`·") <= s._TRACE_LINES, "only the recent steps show"
+
+
+async def test_a_trace_failure_never_reaches_the_turn() -> None:
+    s = surface()
+    channel = TraceChannel()
+
+    async def broken_send(body: str) -> TraceMessage:
+        raise RuntimeError("discord is unhappy")
+
+    channel.send = broken_send  # type: ignore[method-assign]
+    s.client.get_channel = lambda _id: channel  # type: ignore[method-assign]
+
+    async with s.working("12345"):
+        s.progress("▸ shell")
+        if s._edit_task is not None:
+            await asyncio.gather(s._edit_task, return_exceptions=True)
+
+    assert s._trace == [], "the failed trace was dropped with the turn, not kept"
+    assert s._trace_msg is None
+
+
+async def test_a_turn_without_a_channel_keeps_no_trace_state() -> None:
+    s = surface()
+    async with s.working(None):
+        s.progress("▸ shell")
+        s.progress("shell ✓")
+
+    assert s._trace == [] and s._trace_msg is None
