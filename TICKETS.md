@@ -69,17 +69,21 @@ is refused naming it *and* listing the vocabulary; a prop containing `<script>` 
 refused at the door (and escaped again at render — that second defence is T6).
 **Done** — 38 tests in `tests/test_genui_spec.py`.
 
-### T4 — `genui/components/`: the first component vocabulary · `open`
+### T4 — `genui/components/`: the first component vocabulary · `done`
 *SPEC §3.6 (component list), ARCHITECTURE §133.*
 
 `stat-card`, `list`, `timeline`, `table`, `prose`, and `calendar` — the set the
 calendar view actually needs, each with a prop schema and an HTML renderer.
 Components are documented as *authored capabilities* in the spec's long run
 (§3.6); for now they are a built-in registry with the same validated shape.
+Components carry no styling — they emit semantic class names and the mood token
+set supplies the CSS.
 
 **Acceptance:** every registered component renders from valid props and refuses
 missing required ones; the registry is enumerable for the prompt so the model
-knows the vocabulary.
+knows the vocabulary. **Done** — 35 tests in `tests/test_genui_components.py`,
+including the escape proved with the validator deliberately bypassed. T4 also
+added `Prop.choices` and `Component.check` to `spec.py`.
 
 ### T5 — `genui/theming.py`: tokens, and mood → token set · `open`
 *SPEC §3.6; §13 (mood→token mapping, open).*

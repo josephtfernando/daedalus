@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 #: Bounded on purpose: a spec is a page the owner opens, not a way to make one.
 MAX_BLOCKS = 24
@@ -62,6 +62,10 @@ class Prop:
     kind: Kind = Kind.TEXT
     required: bool = False
     help: str = ""
+    #: For TEXT and LINK: the only values accepted, in order. A closed set that is
+    #: written down is a closed set a model can hit first time; one that is only
+    #: checked by a renderer is a refusal the model discovers by failing.
+    choices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +75,10 @@ class Component:
     name: str
     summary: str
     props: Mapping[str, Prop] = field(default_factory=dict)
+    #: Cross-prop rule, if the component has one (`table` row width, `calendar`
+    #: row shape). Runs at the door with the props, so it refuses a spec rather
+    #: than a render — the same reason every other rule lives here.
+    check: Callable[[Mapping[str, Any]], None] | None = None
 
     def required(self) -> tuple[str, ...]:
         return tuple(key for key, prop in self.props.items() if prop.required)
@@ -151,11 +159,15 @@ def describe(vocabulary: Mapping[str, Component]) -> str:
     for name in sorted(vocabulary):
         component = vocabulary[name]
         props = ", ".join(
-            f"{key}: {prop.kind.value}{'' if prop.required else '?'}"
+            f"{key}: {prop.kind.value}{_choices(prop)}{'' if prop.required else '?'}"
             for key, prop in component.props.items()
         )
         lines.append(f"- {name}({props}) — {component.summary}")
     return "\n".join(lines)
+
+
+def _choices(prop: Prop) -> str:
+    return f"[{'|'.join(prop.choices)}]" if prop.choices else ""
 
 
 # -- parsing -----------------------------------------------------------------
@@ -200,15 +212,23 @@ def _parse_block(entry: Any, index: int, vocabulary: Mapping[str, Component]) ->
     props: dict[str, Any] = {}
     for key, value in props_raw.items():
         prop = component.props[key]
-        props[key] = _coerce(prop.kind, value, f"{where} ({name}).{key}")
+        props[key] = _coerce(prop, value, f"{where} ({name}).{key}")
+    if component.check is not None:
+        # A cross-prop rule refuses the *spec*, at the door, in the same voice as
+        # every other refusal — not a render that half-succeeds.
+        try:
+            component.check(props)
+        except SpecError as exc:
+            raise SpecError(f"{where} ({name}): {exc}") from exc
     return Block(component=name, props=props)
 
 
-def _coerce(kind: Kind, value: Any, where: str) -> Any:
+def _coerce(prop: Prop, value: Any, where: str) -> Any:
+    kind = prop.kind
     if kind is Kind.TEXT:
-        return _text(value, where)
+        return _choice(_text(value, where), prop, where)
     if kind is Kind.LINK:
-        return _link(value, where)
+        return _choice(_link(value, where), prop, where)
     if kind is Kind.NUMBER:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise SpecError(f"{where} is a number; it is {_typename(value)}")
@@ -222,6 +242,12 @@ def _coerce(kind: Kind, value: Any, where: str) -> Any:
     if kind is Kind.ROWS:
         return _rows(value, where)
     raise SpecError(f"{where}: unknown kind {kind!r}")  # pragma: no cover — closed enum
+
+
+def _choice(text: str, prop: Prop, where: str) -> str:
+    if prop.choices and text not in prop.choices:
+        raise SpecError(f"{where} is one of: {' | '.join(prop.choices)}; it is {text!r}")
+    return text
 
 
 def _items(value: Any, where: str) -> list[Any]:

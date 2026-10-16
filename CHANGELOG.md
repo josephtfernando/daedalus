@@ -12,9 +12,35 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 363-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 398-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **Six shapes the dashboard can be made of.** `genui/components/` is the visual vocabulary the spec
+  is written in — `stat-card`, `list`, `timeline`, `table`, `prose` and `calendar` — each a **prop
+  schema and a renderer**, which is what a component is (SPEC §3.6 calls them *authored
+  capabilities*: the set grows by proposal, not by drift).
+  - **Components carry no styling.** They emit semantic markup with class names; the mood token set
+    supplies the CSS. That split is why one spec renders in any mood without the model knowing
+    anything about colour, and why the only place CSS is written is a place the owner approved.
+  - **The renderer escapes too.** Every value is escaped *again* at render time, and the tests prove
+    it by walking past the validator: they build a `Block` by hand, as a bug or a new component
+    would, and assert a `<script>` tag still cannot reach the page. A test that only goes through
+    `Spec.parse` can never show this — the door refuses first.
+  - **Two new schema powers, both earned here.** `Prop.choices` — a closed set, written down, named
+    in the refusal: *`view` is one of: day | week | month; it is 'year'*. And `Component.check` — a
+    cross-prop rule that runs **at the door**, so the `table` refusing a row wider than its headings
+    and the `calendar` refusing a day that is not `[date, weekday, what is on it]` fail as a refused
+    spec rather than as a half-rendered page.
+  - **A short table row is padded; a wide one is refused.** Blank cells are visible and harmless;
+    inventing a column drops nothing, and truncating drops the owner's value silently — so the
+    second is a refusal.
+  - **Empty states are said, not drawn.** An empty list or an empty day renders *"Nothing on."*
+    rather than an empty `<ul>` — a dashboard that shows a blank rectangle is a dashboard that looks
+    broken.
+  - **The vocabulary and the validator cannot drift:** one test asserts every schema has a renderer
+    and every renderer has a schema, and another builds a minimal valid spec *from the schema* for
+    each — so a component added without its other half fails on the way in.
 
 - **The dashboard has a shape, and the model may only fill it in.** SPEC §3.6 asks for a dashboard
   *generated per render* while also promising *"never arbitrary model-generated CSS/JS"*, and the
