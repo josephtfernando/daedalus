@@ -13,6 +13,7 @@ import os
 import shutil
 import stat
 import tempfile
+from datetime import datetime
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -99,6 +100,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(_check_approvals(rt))
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
+            report.checks.append(await _check_proactive(rt))
             report.checks.append(await _check_loop(scratch, surface))
             report.checks.append(await _check_daemon(scratch))
         finally:
@@ -293,6 +295,59 @@ async def _check_scheduler(rt: Runtime) -> Check:
     if any(r.job == job.name and r.ran for r in again):
         return Check("scheduler tick", False, "idempotency key did not dedup a repeat tick")
     return Check("scheduler tick", True, "ran the artifact with no model, deduped the repeat")
+
+
+async def _check_proactive(rt: Runtime) -> Check:
+    """Quiet hours, the daily cap, and the choice to stay silent (SPEC §9).
+
+    The window is *pinned* for the probe rather than read from the owner's
+    config: a check that starts failing because the owner moved their quiet
+    hours would be reporting their preference, not a defect.
+    """
+    rt.settings = replace(
+        rt.settings,
+        proactive_enabled=True,
+        quiet_start="22:30",
+        quiet_end="07:30",
+        proactive_max_per_day=4,
+    )
+    night = datetime(2026, 10, 16, 3, 0)
+    noon = datetime(2026, 10, 16, 12, 0)
+    before = len(rt.surface.sent)  # type: ignore[union-attr]
+
+    async def speaks(prompt: str) -> str:
+        return "Standup in ten minutes."
+
+    rt.scheduler.add_job(name="probe-wake", cron="* * * * *", kind="wake", target="the check-in")
+    await rt.scheduler.dispatch_tick(rt, wake_handler=speaks, when=night)
+    if len(rt.surface.sent) != before:  # type: ignore[union-attr]
+        return Check("proactive", False, "a wake spoke during quiet hours")
+
+    await rt.scheduler.dispatch_tick(rt, wake_handler=speaks, when=noon)
+    if len(rt.surface.sent) != before + 1:  # type: ignore[union-attr]
+        return Check("proactive", False, "a wake in the open window never reached the owner")
+
+    # The agent may look at the day and decide there is nothing worth saying.
+    rt.scheduler.remove_job("probe-wake")
+    rt.scheduler.add_job(name="probe-silence", cron="* * * * *", kind="wake", target="the check-in")
+
+    async def stays_quiet(prompt: str) -> str:
+        return ""
+
+    await rt.scheduler.dispatch_tick(rt, wake_handler=stays_quiet, when=datetime(2026, 10, 16, 13, 0))
+    if len(rt.surface.sent) != before + 1:  # type: ignore[union-attr]
+        return Check("proactive", False, "a wake that chose silence produced a message")
+
+    # Spend the day's allowance; the next wake must be silent without asking.
+    for index in range(4):
+        rt.scheduler.proactive.note_spoken(noon, f"message {index}")
+    rt.scheduler.remove_job("probe-silence")
+    rt.scheduler.add_job(name="probe-cap", cron="* * * * *", kind="wake", target="the check-in")
+    await rt.scheduler.dispatch_tick(rt, wake_handler=speaks, when=datetime(2026, 10, 16, 14, 0))
+    if len(rt.surface.sent) != before + 1:  # type: ignore[union-attr]
+        return Check("proactive", False, "the daily cap did not stop a wake")
+
+    return Check("proactive", True, "quiet hours held, the cap bit, silence stayed silent")
 
 
 async def _check_loop(settings: Settings, surface: ScriptedSurface) -> Check:

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -66,6 +67,34 @@ def cmd_ask(args: argparse.Namespace) -> int:
             return 1
         if not result.text:
             print("(no reply)", file=sys.stderr)
+        await rt.aclose()
+        return 0
+
+    return asyncio.run(go())
+
+
+def cmd_wake(args: argparse.Namespace) -> int:
+    """Ask the proactive path what it would say, without sending it.
+
+    A probe, not a send: it prints the message — or the reason for silence — and
+    spends none of the day's quota. The owner can see what a 07:00 wake looks
+    like without waiting for cron, and without the act of checking changing the
+    thing being checked.
+    """
+    from .runtime import build_runtime
+    from .surface.cli import CliSurface
+
+    settings = _settings(args)
+    rt = build_runtime(settings, surface=CliSurface())
+
+    async def go() -> int:
+        allowed, why_not = rt.scheduler.proactive.may_speak(settings, datetime.now())
+        if not allowed and not args.force:
+            print(f"(silent — {why_not})")
+            await rt.aclose()
+            return 0
+        text = await rt.wake(" ".join(args.text))
+        print(text or "(nothing worth the interruption)")
         await rt.aclose()
         return 0
 
@@ -237,6 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--cli", action="store_true", help="run in the terminal instead of Discord")
     p_run.add_argument("--tick-seconds", type=int, default=60)
     p_run.set_defaults(func=cmd_run)
+
+    p_wake = sub.add_parser("wake", help="probe a proactive message without sending it")
+    p_wake.add_argument("text", nargs=argparse.REMAINDER, help="what brought it here (optional)")
+    p_wake.add_argument("--force", action="store_true", help="ignore quiet hours and the daily cap")
+    p_wake.set_defaults(func=cmd_wake)
     return parser
 
 

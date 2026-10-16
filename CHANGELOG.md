@@ -12,9 +12,44 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0 and P1 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the internal calendar, the scheduler, the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (9/9 offline; 10/10 with `--live`) and a 160-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the internal calendar, the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard — verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 192-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **P2 — the proactive scheduler.** The agent can speak first now — and, just as
+  importantly, not. Three things had to be true for that to be safe, and each is a
+  separate decision:
+  - **Whether it may speak is decided in code, never by the model** (SPEC §6).
+    `scheduler/proactive.py` gates a wake on *quiet hours* (default 22:30–07:30, with
+    an overnight window handled as an overnight window) and a *daily cap* (default 4).
+    The gate is consulted **before** the model is reached at all — an agent that can
+    argue its way past its own quiet hours does not have any. Both refusals are
+    recorded with their reason, so "why was it quiet" has an answer that is not a guess.
+  - **A wake composes fresh, but it is not amnesiac.** `Runtime.briefing()` hands the
+    model the time, today's agenda, how often it has already spoken, and what it said
+    last — and tells it not to repeat that. "The daily message is not a template"
+    (SPEC §9) means the model writes it; it does not mean the model writes it blind.
+  - **It may look at the day and stay silent.** The model answers `[silent]`, or
+    nothing, and no message is sent and no quota is spent. Silence is a *decision*
+    here, not the no-output fault that a reply to the owner treats it as — which is
+    why the two paths are separate rather than sharing one fallback.
+  A **capability alert is not a wake and is not gated**: the owner defined that
+  capability and asked it to speak up, and silencing an alert at 03:00 would defeat
+  the thing it was built for. The ledger is file-first `state/proactive.json`, so the
+  day's decisions can be read by hand.
+  - **A wake withholds `local_only` values.** The briefing is composed before the wake's
+    model chain is resolved, so it has no honest way to know where it is going — it
+    withholds, and it decides that on its own account rather than by reading the session.
+    Otherwise a DM that happened to route through a local model would hand the next wake
+    permission to carry `local_only` values into a prompt that may well be remote.
+  - **The prompt says so.** Free text is the only interface, so a wake path the agent is
+    never told about is not built. The system prompt now states that the agent may speak
+    first, that quiet hours and a cap are enforced around it, and that saying nothing is
+    usually the right answer — otherwise the gate would be protecting a silence nobody
+    could tell apart from a feature that was never wired up.
+- **`daedalus wake`** — probe what the proactive path would say right now, without
+  sending it and without spending the day's allowance: the message, or the reason it
+  stayed quiet. Checking must not change what is being checked.
 
 - **The internal calendar — a store the owner actually owns.** `$DAEDALUS_HOME/calendar/`
   now holds a real calendar: `events.ics` written as valid iCalendar (RFC 5545), an
@@ -64,7 +99,7 @@ _Design frozen; **P0 and P1 are implemented as code** — the loop, the primitiv
 - **`memory/markdown.py`** — the renderer/parser that makes the file canonical:
   `render_entry`, `parse_facet`, `stable_id`, `normalise_content`. Facts are
   single-line; whitespace is collapsed on write so an entry round-trips exactly.
-- **Tests** — the suite is now **160** (from 112). New coverage: supersession retires
+- **Tests** — the suite is now **192** (from 112). New coverage: supersession retires
   a fact and survives an index rebuild, both timestamps round-trip, the index rebuilds
   from hand-written markdown with stable ids, a facet is a valid Obsidian note, the
   `memory` tool can supersede, `local_only` memory is withheld from a remote chain but
@@ -78,7 +113,14 @@ _Design frozen; **P0 and P1 are implemented as code** — the loop, the primitiv
   deleted, a same-second hand edit is not hidden by the cache, structural characters
   (`;`, `,`, newline) escape and unescape, and a `local_only` event reaches neither the
   prompt nor the tool channel. `browser` is pinned against a stub Playwright, so the
-  no-selector path that used to raise is now a test that needs no Chromium. The
+  no-selector path that used to raise is now a test that needs no Chromium. Proactive
+  speech is tested against a fixed clock rather than the hour the suite happens to run
+  at: an overnight quiet window at both edges, a window inside one day, an unset /
+  unreadable / zero-length window, the cap and its reset at midnight, a corrupt ledger
+  that must not disarm the gate, a wake that speaks and is counted, one that is capped,
+  one that chooses silence and spends nothing, one that proves a wake cannot inherit a
+  previous turn's `local_only` permission, one that proves the prompt actually teaches
+  the wake path, and an alert that quiet hours must not touch. The
   self-test's memory check now proves supersession, the rebuild, and the `local_only`
   gate, and a calendar check proves the same three properties, so the acceptance gate
   exercises P1 rather than just v0.

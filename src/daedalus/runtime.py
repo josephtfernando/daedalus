@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from .approvals.middleware import ApprovalMiddleware
@@ -24,6 +25,7 @@ from .model.client import ModelClient
 from .model.providers import Provider
 from .resources.registry import ResourceRegistry
 from .resources.secrets import SecretStore
+from .scheduler.proactive import SILENT
 from .scheduler.scheduler import Scheduler
 from .security.quarantine import Quarantine
 from .storage import paths
@@ -113,16 +115,75 @@ class Runtime:
     # -- scheduled work ---------------------------------------------------
 
     async def wake(self, prompt: str) -> str:
-        """The agent choosing to speak: compose fresh, don't template (SPEC §9)."""
+        """The agent choosing to speak: compose fresh, don't template (SPEC §9).
+
+        Returns the message, or ``""`` when the agent decided there was nothing
+        worth saying. Silence here is a *decision*, so this never falls back to
+        "I came back with nothing" — that fallback is right for a reply to the
+        owner and wrong for a proactive message.
+
+        The gate on whether a wake may speak at all is deterministic and lives
+        in the scheduler; this is only reached once it has said yes.
+        """
         from .loop.engine import Engine
 
-        event = InboundEvent(text=prompt or "Compose a short, useful message for the owner.", user_id="scheduler")
-        engine = Engine(self)
-        from .surface.base import InboundEvent as _E  # noqa: F401
-
+        # Reset the session before composing the briefing, so the wake turn
+        # starts from nothing rather than inheriting the last turn's ambient
+        # facts. (`briefing()` withholds `local_only` on its own account — see
+        # its docstring — but the session should not survive the handoff.)
         self.session = Session(seat=DEFAULT_SEAT, turn_ref="wake")
-        result = await engine.run_turn(event)
-        return result.text
+        event = InboundEvent(text=self.briefing(prompt), user_id="scheduler")
+        result = await Engine(self).run_turn(event)
+        text = (result.text or "").strip()
+        if not text or text == SILENT:
+            return ""
+        return text
+
+    def briefing(self, prompt: str, *, include_local_only: bool = False) -> str:
+        """What the agent knows when it speaks first.
+
+        "Not a template" still needs facts: the time, the day, what it already
+        said, and how much room is left. Without the last one the model cannot
+        judge whether this moment is worth the owner's attention — which is the
+        whole decision it is being asked to make.
+
+        ``include_local_only`` defaults to **False** rather than consulting the
+        session: a wake is composed before its model chain is resolved, so it has
+        no honest way to know where it is going. Withholding is the safe answer,
+        and it means a DM that happened to route through a local model cannot
+        hand the next wake the right to carry `local_only` values into a prompt
+        that may well be remote.
+        """
+        now = datetime.now()
+        ledger = self.scheduler.proactive
+        last = ledger.last_text()
+        lines = [
+            "You are speaking first — nobody asked for this.",
+            "",
+            f"It is now {now.strftime('%A %d %B, %H:%M')}.",
+            "",
+            "Today and the next few days:",
+            self.calendar.inventory(limit=5, allow_local_only=include_local_only),
+            "",
+            f"You have already spoken {ledger.spoken_today(now)} time(s) today, of "
+            f"{self.settings.proactive_max_per_day} allowed.",
+        ]
+        if last:
+            lines += [
+                "",
+                "Your last message to the owner was:",
+                f"    {last}",
+                "",
+                "Do not repeat it.",
+            ]
+        if prompt:
+            lines += ["", f"What brought you here: {prompt}"]
+        lines += [
+            "",
+            "Say something only if it earns the interruption. If there is nothing worth the",
+            f"owner's attention, reply with exactly {SILENT} and nothing else.",
+        ]
+        return "\n".join(lines)
 
 
 def build_runtime(

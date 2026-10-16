@@ -1,8 +1,11 @@
-"""Scheduler v0 — cron-pumped wake (SPEC §3.5, ARCHITECTURE §7.3).
+"""Scheduler — cron-pumped wake (SPEC §3.5, §9, ARCHITECTURE §7.3).
 
 A scheduled capability runs its artifact directly with **no model in the loop**.
 A ``wake`` job, by contrast, is the agent *choosing to speak*: the model
-composes the message fresh (SPEC §9).
+composes the message fresh (SPEC §9), and may choose not to.
+
+The gate on *whether* a wake may speak lives in :mod:`.proactive` and is
+deterministic — quiet hours and a daily cap, decided in code.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from .cron import validate as validate_cron
 from .jobs import Job, JobStore
+from .proactive import ProactiveState
 from .wakes import Wake, WakeLog
 
 if TYPE_CHECKING:
@@ -39,12 +43,14 @@ class Scheduler:
     jobs_path: Path = field(default=None)  # type: ignore[assignment]
     store: JobStore = field(init=False)
     log: WakeLog = field(init=False)
+    proactive: ProactiveState = field(init=False)
 
     def __post_init__(self) -> None:
         if self.jobs_path is None:
             self.jobs_path = self.state_dir / "jobs.toml"
         self.store = JobStore(self.jobs_path)
         self.log = WakeLog(self.state_dir / "wakes.db")
+        self.proactive = ProactiveState(self.state_dir / "proactive.json")
 
     # -- job management ---------------------------------------------------
 
@@ -84,14 +90,16 @@ class Scheduler:
             if self.log.seen(key):
                 results.append(TickResult(job=job.name, ran=False, detail="already ran this minute"))
                 continue
-            result = await self._run_job(job, ctx, wake_handler)
+            result = await self._run_job(job, ctx, wake_handler, when)
             self.log.record(Wake(key=key, job=job.name, ran_at=time.time(), ok=result.ok, detail=result.detail))
             job.last_run = time.time()
             self.store.put(job)
             results.append(result)
         return results
 
-    async def _run_job(self, job: Job, ctx: "Runtime", wake_handler: WakeHandler | None) -> TickResult:
+    async def _run_job(
+        self, job: Job, ctx: "Runtime", wake_handler: WakeHandler | None, when: datetime
+    ) -> TickResult:
         if job.kind == "capability":
             manifest = ctx.capabilities.get(job.target)
             if manifest is None:
@@ -113,10 +121,21 @@ class Scheduler:
         if job.kind == "wake":
             if wake_handler is None:
                 return TickResult(job=job.name, ran=True, ok=False, detail="no wake handler wired")
+            allowed, why_not = self.proactive.may_speak(ctx.settings, when)
+            if not allowed:
+                # A decision, not a failure: the wake was due and the agent is
+                # not permitted to speak. Recorded, so "why was it quiet" has an
+                # answer that is not a guess.
+                return TickResult(job=job.name, ran=False, ok=True, detail=f"stayed quiet — {why_not}")
             text = await wake_handler(job.target or job.name)
-            if text and ctx.surface is not None:
+            if not text:
+                # The agent looked at the day and found nothing worth the
+                # owner's attention. Silence is the outcome, not an error.
+                return TickResult(job=job.name, ran=True, ok=True, detail="nothing worth saying")
+            if ctx.surface is not None:
                 await ctx.surface.send(text)
-            return TickResult(job=job.name, ran=True, ok=True, detail="woke", output=text)
+            self.proactive.note_spoken(when, text)
+            return TickResult(job=job.name, ran=True, ok=True, detail="spoke", output=text)
         return TickResult(job=job.name, ran=True, ok=False, detail=f"unknown kind {job.kind!r}")
 
 

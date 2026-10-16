@@ -76,13 +76,14 @@ Derived from `SPEC.md` §1 and binding on every component:
 | **Turn engine** | Assemble context, drive model↔tool loop, emit output | `run_turn(event) → TurnResult` |
 | **Model client** | One OpenAI-compatible client, provider chain, local fallback | `chat(msgs, tools) → stream` |
 | **Rate-limit ledger** | Cross-process rolling-window accounting | SQLite `ratelimit.db` |
-| **Tools (primitives)** | The 12 Layer-1 primitives + the `capability` tool | `Tool` protocol (name · schema · risk · `call`) |
+| **Tools (primitives)** | The 13 Layer-1 primitives + the `capability` tool | `Tool` protocol (name · schema · risk · `call`) |
 | **Approval middleware** | Tiering, standing grants, sink checks, action binding | `authorize(tool, args, provenance) → allow/ask/block` |
 | **Secrets** | Scoped credential access, never logged | `get(resource) → value` |
 | **Capability substrate** | Author · verify · register · run authored capabilities | `author()`, `registry`, `runner` |
 | **Resource registry** | Declarative external access (CLIs/APIs/devices) | `registry.toml` + provisioning |
 | **Memory** | File-first facts + SQLite recall index | `write(entry)`, `recall(query)` |
-| **Calendar & integrations** | Internal calendar store + `gcal` (read-all / write-own) + read-only mail | store API, `sync()` |
+| **Calendar** | The internal `Daedalus` calendar — file-first `.ics` + derived index | `CalendarStore`, the `calendar` primitive |
+| **External integrations** | `gcal` (read-all / write-own); read-only mail is **deliberately last** (SPEC §10) | store API, `sync()` |
 | **Setup wizard** | First-run provisioning, hardening, and the self-test | `scripts/setup.sh` ⟷ `daedalus selftest` |
 | **Cabinet** | Seat identities, charters, namespaces, seat↔seat protocol | `Seat`, `Broker.send(msg)` |
 | **Generative UI** | Compose UI spec, bind values locally, render, serve, tune | `render(context)`, control API |
@@ -123,7 +124,7 @@ daedalus/                      # code repo
     calendar/
       store.py index.py event.py ical.py
     scheduler/
-      scheduler.py jobs.py wakes.py
+      scheduler.py jobs.py wakes.py proactive.py
     surface/
       discord/ bot.py approvals.py
       base.py cli.py
@@ -216,6 +217,21 @@ daedalus-tick.timer ─▶ daedalus run (in-process ticker) ─▶ dispatch_tick
 ```
 
 The artifact is deterministic; the model authored it once. Notification composition is the only optional model step.
+
+### 7.3.1 The wake — the agent choosing to speak
+
+```
+cron wake job due ─▶ gate (deterministic) ─▶ briefing ─▶ model composes fresh ─▶ Surface
+  1. proactive.may_speak(settings, now)
+       quiet hours?      ▸ skip; record "stayed quiet — quiet hours (22:30–07:30)"
+       cap spent today?  ▸ skip; record the reason
+  2. runtime.wake() assembles a *briefing* from local signals
+       the time · today's agenda · how often it has spoken · what it said last
+  3. the model composes the message — or answers `[silent]`
+  4. text? ─▸ Surface + proactive.note_spoken() ; empty ─▸ nothing sent, nothing spent
+```
+
+**The gate is in code; the substance is the model's.** Whether a wake may speak is settled *before* the model is reached — an agent that can argue its way past its own quiet hours does not have any. A capability *alert* never passes through here: that is not the agent choosing to speak, and it must fire when it fires.
 
 ### 7.4 Dashboard render, approve, tune
 
@@ -321,6 +337,7 @@ added_at = timestamp
 - `approvals/grants.toml` — standing grants (action-hash, scope, expiry).
 - `approvals/log.db` — every authorize decision.
 - `state/wakes.db` — `agent_wakes` + job state (idempotency keys).
+- `state/proactive.json` — the day's proactive ledger: how often the agent has spoken, and what it last said. Hand-editable, so "why did you ping me at 23:00" has an answer that is not a guess.
 - `state/ratelimit.db` — rolling-window provider accounting.
 - `cabinet/messages.db` — typed seat messages.
 - `calendar/` — `events.ics` (the `Daedalus` calendar, internal-authoritative) + `index.sqlite` + `sync_state.json` (gcal cursor/token); reads from other calendars are cached with their gcal-authoritative origin.
@@ -511,11 +528,13 @@ Adding any of 1–5 must **not** require editing the loop.
 | --- | --- | --- |
 | **P0** | the loop + substrate + proof-of-life | engine, model client, primitives, approvals, Discord surface, capability substrate, memory v0, scheduler v0, Melinoë gate |
 | **P1** | memory depth — file-first source of truth, supersession + bitemporal, `local_only` egress gate, Obsidian-compatible notes, rebuildable index | `memory/*` |
-| P2 | proactive scheduler | `scheduler/*` |
+| **The internal calendar** | file-first `.ics` + derived index + the `calendar` primitive; `gcal` still unbuilt | `calendar/*`, `tools/calendar.py` |
+| **P2** | proactive scheduler — quiet hours and a daily cap in code, a wake briefing from local signals, the choice to stay silent | `scheduler/*`, `config.py` |
 | P3 | seats, one at a time | `cabinet/*` |
 | P4 | remote / Tailscale Serve | `genui/server.py`, `surface/*` |
 | P5 | OpenCode delegation | `resources` (local CLI), `capabilities` |
 | P6 | group chat | `cabinet/broker.py` |
+| **Mail (read-only)** | deliberately **last**, after P6 (SPEC §10) | `integrations/mail.py` |
 
 ---
 

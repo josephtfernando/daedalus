@@ -114,6 +114,12 @@ def default_config_toml() -> str:
         "",
         "[surface]",
         'mode = "discord"           # discord | cli',
+        "",
+        "[proactive]",
+        "enabled = true             # may the agent speak first, unprompted?",
+        'quiet_start = "22:30"      # no wakes inside quiet hours; a capability alert still fires',
+        'quiet_end = "07:30"',
+        "max_per_day = 4            # the agent may also stay silent; this caps how often it speaks",
     ]
     return "\n".join(lines) + "\n"
 
@@ -159,6 +165,12 @@ class Settings:
     egress_tier: str = "ask"
     max_steps: int = 16
     surface_mode: str = "discord"
+    # Proactive speech (SPEC §9). The agent may speak first; these bound it, and
+    # the bounds are enforced in code (scheduler/proactive.py), not by the model.
+    proactive_enabled: bool = True
+    quiet_start: str = "22:30"
+    quiet_end: str = "07:30"
+    proactive_max_per_day: int = 4
 
     # -- lookups ----------------------------------------------------------
 
@@ -206,6 +218,7 @@ def load_settings(home: Path | None = None) -> Settings:
     approvals = raw.get("approvals", {})
     loop = raw.get("loop", {})
     surface = raw.get("surface", {})
+    proactive = raw.get("proactive", {})
 
     users = owner.get("discord_users", []) or []
     # env wins over config for the allowlist
@@ -228,4 +241,8 @@ def load_settings(home: Path | None = None) -> Settings:
         egress_tier=str(approvals.get("egress_tier", "ask")),
         max_steps=int(loop.get("max_steps", 16)),
         surface_mode=str(surface.get("mode", "discord")),
+        proactive_enabled=bool(proactive.get("enabled", True)),
+        quiet_start=str(proactive.get("quiet_start", "22:30")),
+        quiet_end=str(proactive.get("quiet_end", "07:30")),
+        proactive_max_per_day=int(proactive.get("max_per_day", 4)),
     )

@@ -1,7 +1,7 @@
 # Daedalus — Spec
 
 **Scope:** single-user, local-first (only the owner can talk to it)
-**Status:** P0 and P1 implemented as code (loop + primitives + capability substrate + memory depth + internal calendar + scheduler v0 + Melinoë gate + Discord surface + setup wizard), 160 tests green; `0.1.0` pending Discord proof-of-life
+**Status:** P0 and P1 implemented as code (loop + primitives + capability substrate + memory depth + internal calendar + scheduler + proactive gate + Melinoë gate + Discord surface + setup wizard), 190 tests green; `0.1.0` pending Discord proof-of-life
 **Date:** 2026-10-16
 **Supersedes:** the Hermes-based `~/down/daedalus.md` plan (architecture reference retained; runtime decision reversed)
 
@@ -338,6 +338,7 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - **Buttons only for approvals.**
 - Long tasks run in threads.
 - The "daily message" is **not a template** — it is the agent *choosing* to speak, composed fresh each time. The scheduler triggers; the model writes.
+- **Whether it may speak is decided in code, not by the model** (§6). *Quiet hours* silence a wake outright, and a *daily cap* bounds how often it may open its mouth, so a cadence job cannot become a drip. Within those bounds the model still owns *substance*: it may look at the day and reply `[silent]`. A notification from an authored capability is **not** a wake and is **not** gated — the owner defined that capability and asked it to speak up, and silencing an alert at 03:00 would defeat the thing it was built for.
 
 ---
 
@@ -346,7 +347,7 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - **P0 — the loop** *(delivered: loop, primitives, capability substrate, memory v0, scheduler v0, Melinoë gate, Discord surface, setup wizard)*
 - **P1 — memory** *(delivered: file-first source of truth, supersession + bitemporal, `local_only` egress gate, Obsidian-compatible notes, index rebuildable from the notes)*
 - **The internal calendar** *(delivered ahead of P2: file-first `.ics` + a derived index, served by the `calendar` primitive; `gcal` still unbuilt)*
-- P2 — proactive scheduler
+- P2 — proactive scheduler *(delivered: quiet hours and a daily cap enforced in the scheduler, a wake briefing assembled from local signals, and the agent free to choose silence)*
 - P3 — seats wired **one at a time, each as it earns its place**
 - P4 — remote / Tailscale Serve
 - P5 — OpenCode delegation
@@ -403,7 +404,13 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
   over the facet markdown, which is the source of truth and rebuilds the index at
   will. Local embeddings stay a seam behind `MemoryStore.recall()`, to be added only
   if recall quality actually demands it; nothing else in P1 depends on the choice.
-- Scheduler transport (reuse the cron-pumped wake approach from `daedalus.md`).
+- **Scheduler transport — resolved.** The daemon pumps its own ticks in-process
+  (`daedalus run`): there is deliberately no separate `tick` verb, so the systemd
+  timer triggers `daedalus run` rather than a one-shot.
+- Proactive **cadence** — what the default wake schedule should be, if any. The gate
+  (quiet hours, daily cap) and the composition path are built; the cron expression is
+  the owner's to choose. A default that speaks without being asked is a decision, not
+  an implementation detail.
 - Capability `manifest.toml` schema (scope, deps, schedule, io) and how the model invokes a named capability (registry lookup vs. generated tool-call).
 - Resource provisioning flow when a resource is added later (e.g. mail OAuth) — one-time local setup, never on Discord.
 - **Headless-browser choice — resolved.** Playwright, with its bundled headless Chromium;
