@@ -717,3 +717,132 @@ async def test_the_tool_says_so_when_a_search_has_no_words(runtime: Runtime) -> 
 
     assert not result.ok
     assert "query" in result.output
+
+
+# -- changing a whole set at once -------------------------------------------
+
+
+def test_a_bulk_retime_keeps_each_event_s_own_day(store: CalendarStore) -> None:
+    """\"Move all my standups to 10\" must not pile a week onto one morning."""
+    first = store.add(summary="Standup", start="2026-10-12T09:00", end="2026-10-12T09:15")
+    second = store.add(summary="Standup", start="2026-10-13T09:00", end="2026-10-13T09:15")
+    store.add(summary="Dentist", start="2026-10-12T09:00")
+
+    changed = store.bulk_update("standup", at="10:00")
+
+    assert {e.uid for e in changed} == {first.uid, second.uid}
+    assert store.get(first.uid).start == "2026-10-12T10:00"  # type: ignore[union-attr]
+    assert store.get(second.uid).start == "2026-10-13T10:00"  # type: ignore[union-attr]
+    assert store.get(first.uid).end == "2026-10-12T10:15"  # type: ignore[union-attr]
+    assert store.get(first.uid).summary == "Standup"  # type: ignore[union-attr]
+
+
+def test_a_bulk_change_matches_the_name_and_not_the_notes(store: CalendarStore) -> None:
+    store.add(summary="Standup", start="2026-10-12T09:00")
+    store.add(summary="Dentist", start="2026-10-12T11:00", description="before the standup")
+
+    assert [e.summary for e in store.matching("standup")] == ["Standup"]
+
+
+def test_a_bulk_retime_leaves_a_whole_day_event_alone(store: CalendarStore) -> None:
+    holiday = store.add(summary="Standup holiday", start="2026-10-12")
+
+    assert store.bulk_update("holiday", at="10:00") == []
+    assert store.get(holiday.uid).all_day is True  # type: ignore[union-attr]
+
+
+def test_a_bulk_change_can_rename_the_set(store: CalendarStore) -> None:
+    store.add(summary="Standup", start="2026-10-12T09:00")
+    store.add(summary="Standup", start="2026-10-13T09:00")
+
+    changed = store.bulk_update("standup", summary="Daily sync")
+
+    assert [e.summary for e in changed] == ["Daily sync", "Daily sync"]
+    assert store.matching("standup") == []
+
+
+def test_a_bulk_retime_carries_the_rule_with_it(store: CalendarStore) -> None:
+    store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+
+    store.bulk_update("standup", at="10:00")
+
+    rows = store.occurrences(datetime(2026, 10, 12), datetime(2026, 10, 13))
+    assert [e.start for e in rows] == ["2026-10-12T10:00"]
+
+
+def test_a_bulk_change_that_matches_nothing_changes_nothing(store: CalendarStore) -> None:
+    store.add(summary="Dentist", start="2026-10-12T09:00")
+
+    assert store.bulk_update("standup", at="10:00") == []
+    assert store.bulk_delete("standup") == 0
+    assert store.get(store.matching("dentist")[0].uid) is not None
+
+
+def test_a_bulk_change_with_nothing_to_say_is_refused(store: CalendarStore) -> None:
+    store.add(summary="Standup", start="2026-10-12T09:00")
+
+    with pytest.raises(ValueError):
+        store.bulk_update("standup")
+
+
+def test_a_bulk_delete_takes_every_match(store: CalendarStore) -> None:
+    store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY")
+    store.add(summary="Standup", start="2026-10-13T09:00")
+    keeper = store.add(summary="Dentist", start="2026-10-14T09:00")
+
+    assert store.bulk_delete("standup") == 2
+    assert [e.uid for e in store.series()] == [keeper.uid]
+
+
+async def test_the_tool_moves_a_whole_set(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="Standup", start="2026-10-12T09:00", end="2026-10-12T09:15")
+
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "", "start": "", "query": "", "match": "standup", "at": "10:00"},
+        runtime,
+    )
+
+    assert result.ok, result.output
+    assert "10:00" in result.output
+    assert runtime.calendar.matching("standup")[0].start == "2026-10-12T10:00"
+
+
+async def test_the_tool_refuses_a_bulk_edit_with_one_date(runtime: Runtime) -> None:
+    """A shared `start` would move every match onto that day; `at` is the shape."""
+    runtime.calendar.add(summary="Standup", start="2026-10-12T09:00")
+
+    result = await CalendarTool().run(
+        {
+            "op": "update",
+            "summary": "",
+            "start": "2026-10-20T10:00",
+            "query": "",
+            "match": "standup",
+        },
+        runtime,
+    )
+
+    assert not result.ok
+    assert "at" in result.output
+    assert runtime.calendar.matching("standup")[0].start == "2026-10-12T09:00"
+
+
+async def test_the_tool_deletes_a_whole_set(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="Standup", start="2026-10-12T09:00")
+    runtime.calendar.add(summary="Standup", start="2026-10-13T09:00")
+    runtime.calendar.add(summary="Dentist", start="2026-10-14T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "delete", "summary": "", "start": "", "query": "", "match": "standup"}, runtime
+    )
+
+    assert result.ok
+    assert "2" in result.output
+    assert [e.summary for e in runtime.calendar.series()] == ["Dentist"]
+
+
+async def test_the_approval_prompt_names_the_set(runtime: Runtime) -> None:
+    assessment = CalendarTool().assess({"op": "delete", "match": "standup"})
+
+    assert "standup" in assessment.summary
+    assert "every" in assessment.summary

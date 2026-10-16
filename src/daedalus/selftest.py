@@ -269,7 +269,19 @@ def _check_calendar(rt: Runtime) -> Check:
     if not rt.calendar.search("selftest meeting one"):
         return Check("calendar", False, "search did not find an event by its text")
 
-    return Check("calendar", True, f"wrote+repeated+moved+searched {event.uid[:8]}")
+    # And a change must be able to reach a whole *set*, not one row at a time:
+    # "move all my standups to 10" is the edit people actually make, and it has
+    # to move each one onto its own day rather than piling them onto one.
+    rt.calendar.add(summary="selftest bulk probe", start=f"{next_day}T14:00", end=f"{next_day}T14:30")
+    day_after = next_day + timedelta(days=1)
+    rt.calendar.add(summary="selftest bulk probe", start=f"{day_after}T14:00", end=f"{day_after}T14:30")
+    changed = rt.calendar.bulk_update("selftest bulk probe", at="10:00")
+    if sorted(e.start for e in changed) != sorted(
+        [f"{next_day}T10:00", f"{day_after}T10:00"]
+    ):
+        return Check("calendar", False, "a bulk retime did not move each event onto its own day")
+
+    return Check("calendar", True, f"wrote+repeated+moved+searched+retimed {event.uid[:8]}")
 
 
 def _check_approvals(rt: Runtime) -> Check:

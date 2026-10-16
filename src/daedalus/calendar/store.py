@@ -281,6 +281,65 @@ class CalendarStore:
             return True
         raise ValueError(f"unknown scope {scope!r} — use 'all', 'this' or 'future'")
 
+    # -- bulk, by name -----------------------------------------------------
+
+    def matching(
+        self, text: str, *, limit: int = 200, allow_local_only: bool = True
+    ) -> list[Event]:
+        """Series whose summary contains ``text``, case-insensitively.
+
+        Matched on the *summary*, not the description: "move all my standups"
+        means the things *called* standup. A bulk change that also caught every
+        event merely mentioning the word in its notes would be a surprise in the
+        worst place — someone else's meeting, retitled by proxy.
+        """
+        needle = str(text).strip().lower()
+        if not needle:
+            return []
+        rows = self.series(limit=max(limit * 4, limit), allow_local_only=allow_local_only)
+        return [event for event in rows if needle in event.summary.lower()][:limit]
+
+    def bulk_update(self, match: str, *, at: str = "", **changes: Any) -> list[Event]:
+        """Change every series whose summary matches. Returns what changed.
+
+        ``at`` is a clock (``"10:00"``) applied to each event's **own** date. That
+        is what "move all my standups to 10" actually means; handing the same
+        full ``start`` to all of them would collapse a week of standups onto one
+        day. The duration is preserved.
+
+        Events are edited one at a time, so the file is re-read and rewritten per
+        match. On a personal calendar that is the right trade — correctness and a
+        legible file over one clever write.
+        """
+        wanted = _wanted(changes)
+        clock = str(at or "").strip()
+        if not wanted and not clock:
+            raise ValueError("nothing to change — give `at` (a time) or a field to set")
+        changed: list[Event] = []
+        for event in self.matching(match):
+            per_event = dict(wanted)
+            if clock:
+                moved = _retimed(event, clock)
+                if not moved:
+                    # An all-day event has no hour to move, and quietly turning
+                    # one into a timed event is not a small edit.
+                    continue
+                per_event.update(moved)
+            if not per_event:
+                continue
+            updated = self.update(event.uid, **per_event)
+            if updated is not None:
+                changed.append(updated)
+        return changed
+
+    def bulk_delete(self, match: str) -> int:
+        """Remove every series whose summary matches. Returns how many went."""
+        removed = 0
+        for event in self.matching(match):
+            if self.delete(event.uid):
+                removed += 1
+        return removed
+
     # -- reads -------------------------------------------------------------
 
     def get(self, uid: str) -> Event | None:
@@ -651,6 +710,32 @@ def _copy_span(master: Event, into: Event, *, counter: timedelta) -> None:
 def _shift(value: str, delta: timedelta, all_day: bool) -> str:
     moment = parse_iso(value) + delta
     return moment.strftime("%Y-%m-%d" if all_day else "%Y-%m-%dT%H:%M")
+
+
+def _retimed(event: Event, clock: str) -> dict[str, str]:
+    """The event's own date, at ``clock`` — the ``start``/``end`` to set.
+
+    Empty when there is nothing sensible to move: an all-day event has no hour
+    to change, and a clock that cannot be read is not an instruction.
+    """
+    if event.all_day:
+        return {}
+    bits = str(clock).strip().split(":")
+    if len(bits) != 2:
+        return {}
+    try:
+        hours, minutes = int(bits[0]), int(bits[1])
+    except ValueError:
+        return {}
+    if not (0 <= hours < 24 and 0 <= minutes < 60):
+        return {}
+    start = parse_iso(event.start)
+    moved = start.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    changes = {"start": moved.strftime("%Y-%m-%dT%H:%M")}
+    if event.end:
+        # Keep the length the owner chose, not the length the old digits implied.
+        changes["end"] = (moved + (parse_iso(event.end) - start)).strftime("%Y-%m-%dT%H:%M")
+    return changes
 
 
 def _truncate(master: Event, key: str) -> str:

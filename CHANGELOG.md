@@ -16,6 +16,24 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **A change can reach a whole set, not one row at a time.** Until now every edit named a single
+  event by its id, so "move all my standups to 10" was impossible to *say* — the model had to find
+  each one and issue a call per event, which is both slow and a chance to guess an id wrong.
+  `calendar op=update` and `op=delete` now take `match=<words>` in place of `uid`:
+  - **Matched on the name, not the notes.** `match="standup"` means the events *called* standup. An
+    unrelated meeting whose description happens to mention one is not swept along — a bulk change
+    catching the wrong thing is a surprise in the worst place.
+  - **`at="10:00"`, not `start=...`.** A bulk retime applies a *time of day* to each event's own
+    date, keeping its length. Handing every match the same full `start` would collapse a week of
+    standups onto a single morning, so the tool refuses that shape and says which one to use
+    instead rather than doing something plausible and wrong.
+  - **All-day events are left out of a retime.** A whole-day event has no hour to move, and quietly
+    converting one into a timed event is not a small edit.
+  - **The approval prompt names the set.** "Remove every event whose name matches 'standup'" — the
+    owner sees the *shape* of the change, not just `calendar delete`.
+  - Renaming, retiming, relocating, re-ruling and re-reminding all work on the set; a `match` that
+    finds nothing is reported as nothing, not as success.
+
 - **A reminder is a message, and it now arrives.** A `VALARM` was round-tripped but nothing
   ever acted on it, which made it decoration. The scheduler tick now looks back over its own
   window for reminders that have come due and delivers them, so \"remind me 15 minutes before

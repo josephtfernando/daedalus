@@ -272,6 +272,14 @@ instruction rather than the agent's choice to speak, so it does **not** pass thr
 proactive gate (§9): a 03:00 reminder they asked for fires at 03:00, where a *wake* would be
 silenced.
 
+**A change can reach a whole set.** `update` and `delete` take one event by `uid`, or every
+event whose **name** matches `match` — "move all my standups to 10" is one call, not a loop
+the model has to build out of ids it guessed at. The time is given as `at` (`"10:00"`), which
+applies to each event's **own** date: a shared date would pile a week of standups onto one
+morning, which is the failure mode that makes bulk editing worse than doing nothing. Matching
+is on the summary alone, so an event that merely mentions the word in its notes is not swept
+along, and the approval prompt names the set it is about to move.
+
 **Clocks other than this one.** An event may name a `TZID`; the zone travels with the time, and
 `recur.py` stays pure wall-clock arithmetic, so "9:00 every weekday" stays 9:00 in the zone it
 was written in across a daylight-saving change. Real instants — not wall-time strings — are what

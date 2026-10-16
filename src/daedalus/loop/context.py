@@ -66,6 +66,11 @@ shows repeating events on each day they fall; the id it prints carries the insta
 after an `@`, and passing that as `recurrence_id` with `scope=this` moves *only that instance*,
 while `scope=future` moves it and everything after it.
 
+Changing several things at once (every event whose name contains a word — "move all my standups to
+10") is one call: `op=update` with `match` instead of `uid`, and `at` for the new time of day, which
+keeps each event on its own date. `op=delete` with `match` removes the set. Use `match` only when the
+owner means the group; when they name one event, use its `uid`.
+
 ### Recent memory
 {memory}
 
