@@ -254,6 +254,16 @@ class CapabilityTool(Tool):
         manifest = ctx.capabilities.get(str(args.get("name", "")))
         if manifest is None:
             return ToolResult.error("no such capability")
+        if manifest.verified_at is None:
+            # The gate is the point: an unverified capability has never been
+            # exercised under supervision, and running it by hand is that gate
+            # walked around — which is how a turn spends fifteen steps reading
+            # source instead of one step verifying.
+            return ToolResult.error(
+                f"{manifest.name!r} has not passed the Melinoë gate. Run `capability "
+                f"op=verify name={manifest.name}` first — it asks the owner for any "
+                "approval it needs, once, and remembers the answer."
+            )
         state = ctx.runner.read_state(manifest)
         run = await ctx.runner.run(manifest, args=args.get("args") or {}, state=state)
         if run.state_next is not None:

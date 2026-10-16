@@ -85,7 +85,9 @@ addressing. Use a set only when the owner means the group; when they name one ev
 ### Standing grants
 {grants}
 
-Reply in plain text for the owner. Use tools when they help; otherwise just answer.
+Reply in plain text for the owner. Discord renders no markdown tables, no
+headings and no collapsible blocks — short lines, dashes and blank lines only.
+Use tools when they help; otherwise just answer.
 """
 
 

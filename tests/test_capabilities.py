@@ -179,3 +179,30 @@ def test_a_provider_failure_with_no_message_names_the_failure_kind() -> None:
     detail = str(exc).strip() or type(exc).__name__
 
     assert detail == "ValueError"
+
+
+async def test_an_unverified_capability_cannot_be_run_by_hand(runtime: Runtime) -> None:
+    """The gate walked around is how a turn burns fifteen steps reading source."""
+    runtime.surface.approve_all = False
+    await CapabilityTool().run(
+        {
+            "op": "author",
+            "name": "gated",
+            "description": "fetches a host",
+            "run_py": ECHO_RUN,
+            "net": ["example.org"],
+        },
+        runtime,
+    )
+    assert runtime.capabilities.get("gated").verified_at is None
+
+    result = await CapabilityTool().run({"op": "run", "name": "gated"}, runtime)
+
+    assert not result.ok
+    assert "Melinoë gate" in result.output and "verify" in result.output
+
+
+def test_the_prompt_tells_the_model_discord_renders_no_tables() -> None:
+    from daedalus.loop.context import SYSTEM_PROMPT
+
+    assert "no markdown tables" in SYSTEM_PROMPT
