@@ -1,9 +1,34 @@
 """Cabinet: durable seat identities over the one loop (SPEC §7).
 
-P0 wires no seat — the loop runs as the coordinator identity. The charters
-exist so seats can be added later without touching the loop.
+A seat is identity + charter + memory namespace, never a process. The charters
+are files under ``$DAEDALUS_HOME/cabinet/seats/`` (see :mod:`.seat`); the loop
+runs as whichever one is active — Daedalus unless the owner says otherwise.
 """
 
-from .seat import DEFAULT_SEAT, SEATS, Seat
+from .seat import (
+    BUILTIN,
+    DEFAULT_SEAT,
+    builtin_charters,
+    CharterError,
+    Seat,
+    charter_dir,
+    charter_file,
+    load_charters,
+    pick,
+    read_charter,
+    write_charter,
+)
 
-__all__ = ["Seat", "SEATS", "DEFAULT_SEAT"]
+__all__ = [
+    "BUILTIN",
+    "DEFAULT_SEAT",
+    "builtin_charters",
+    "CharterError",
+    "Seat",
+    "charter_dir",
+    "charter_file",
+    "load_charters",
+    "pick",
+    "read_charter",
+    "write_charter",
+]

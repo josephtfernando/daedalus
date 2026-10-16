@@ -129,7 +129,7 @@ daedalus/                      # code repo
       discord/ bot.py approvals.py
       base.py cli.py
     cabinet/
-      seat.py namespace.py protocol.py broker.py seats/
+      seat.py namespace.py protocol.py broker.py
     genui/
       spec.py components/ renderer.py theming.py dashboard.py server.py tuners.py
     security/

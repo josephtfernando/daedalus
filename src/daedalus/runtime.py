@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from .approvals.middleware import ApprovalMiddleware
-from .cabinet.seat import DEFAULT_SEAT
+from .cabinet.seat import DEFAULT_SEAT, Seat, builtin_charters, load_charters
 from .calendar.store import CalendarStore
 from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
@@ -66,6 +66,9 @@ class Runtime:
     secrets: SecretStore
     processes: ProcessManager
     quarantine: Quarantine
+    #: The seats the owner has, charters and all. Loaded from `cabinet/seats/*.toml`
+    #: at startup, so editing a charter changes what the next turn answers from.
+    seats: dict[str, Seat] = field(default_factory=builtin_charters)
     surface: Surface | None = None
     history: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     session: Session | None = None
@@ -213,6 +216,7 @@ def build_runtime(
         secrets=SecretStore(settings.home),
         processes=ProcessManager(),
         quarantine=Quarantine(),
+        seats=load_charters(settings.home),
         surface=surface,
     )
 

@@ -379,6 +379,16 @@ Durable identities over the one loop. Charters and memory namespaces are separat
 
 **Athena vs Icarus:** Athena is for getting *better* at coding; Icarus is for *building* things.
 
+**Charters are files.** The eight charters are the starting point, not the source: each lives at
+`$DAEDALUS_HOME/cabinet/seats/<key>.toml` (`name`, `charter`, and optionally `namespace`, `active`,
+`traits`), written out on first load and read at startup, so editing one changes what that seat
+answers from on the next turn. A file that is deleted falls back to the built-in rather than to
+nothing, so "never mind" is a thing the owner can say by removing a file. A file the loader cannot
+believe — bad TOML, no charter, a field it does not know — **stops the startup with the path and the
+problem**, because the failure it would otherwise produce (the built-in quietly answering in place of
+the charter the owner wrote) is one they would never notice. Exactly one seat is active; two charters
+claiming the owner is refused, and none leaves the default in place.
+
 ---
 
 ## 8. Runtime & Process

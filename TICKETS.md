@@ -202,15 +202,20 @@ set survives a restart.
 
 ## Stream C — seats (P3)
 
-### T11 — Charters become files: `cabinet/seats/*.toml` · `open`
+### T11 — Charters become files: `cabinet/seats/*.toml` · `done`
 *SPEC §7, ARCHITECTURE §132, §149, §554.*
 
-The eight identities exist in `cabinet/seat.py` as literals. Move the charters to
-files the owner can edit, and load them at startup — file-first, like memory and
-the calendar. A malformed file is reported, never swallowed.
+`cabinet/seat.py` now loads `$DAEDALUS_HOME/cabinet/seats/<key>.toml` at startup,
+seeding a file per built-in on first load; the literals are the fallback, so a
+deleted file means "never mind" and a fresh install needs no setup step.
+`Runtime.seats` carries the loaded set and `build_system_prompt` reads the charter
+from it. `daedalus seats` lists them. Exactly one seat is active: two claiming the
+owner is refused, none leaves the default.
 
 **Acceptance:** editing a charter changes the system prompt; a broken file is an
 actionable error; the built-in charters remain the fallback for a fresh install.
+**Done** — 28 tests in `tests/test_cabinet.py`, including the prompt-level claim:
+an edited `athena.toml` reaches the system prompt and the built-in does not.
 
 ### T12 — `cabinet/namespace.py`: seat memory namespaces · `open`
 *ARCHITECTURE §12 ("identity + charter + memory namespace"). `Seat.namespace` exists and is used nowhere.*

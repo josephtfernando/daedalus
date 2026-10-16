@@ -12,9 +12,25 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 542-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 570-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The seat charters are the owner's files now.** The eight charters lived as string literals in
+  `cabinet/seat.py`, which made "not that — more like this" an edit to Python. They are now files at
+  `$DAEDALUS_HOME/cabinet/seats/<key>.toml` — `name`, `charter`, and optionally `namespace`, `active`
+  and `traits` — written out on first load and read at startup, so an edit to a file changes what that
+  seat answers from on the next turn. The literals remain as the **fallback**: a file that is deleted
+  falls back to its built-in rather than to nothing, which makes "never mind" something the owner can
+  say by removing a file, and means a fresh install needs no setup step. A file the loader cannot
+  believe — invalid TOML, no charter, a field it does not know — **stops startup with the path and the
+  problem**. The failure it prevents is the one the owner would never catch: the built-in answering
+  quietly in place of the charter they wrote, with the prompt still building and still saying the old
+  thing. A typo'd `charterr` is refused for exactly that reason. Exactly one seat is active; two
+  charters claiming the owner is refused (which one is answering?), and none leaves the default in
+  place (a turn always has an identity). `daedalus seats` lists them with the charter each is reading.
+  The `Runtime` now carries the loaded seats, and `build_system_prompt` reads the charter from there —
+  which is what makes this a change to behaviour rather than to storage.
 
 - **The calendar is a page now — the day, the week, the month.** SPEC §5.5 asked for *"a full
   dashboard view (`serve`) — day / week / month — used the way gcal is used"*, and `serve` was

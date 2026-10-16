@@ -36,6 +36,7 @@ def ensure_tree(home: Path) -> Path:
         home / "calendar",
         home / "resources/creds",
         home / "cabinet",
+        home / "cabinet/seats",
         home / "genui/components",
         home / "genui/tokens",
         home / "genui/drafts",

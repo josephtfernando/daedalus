@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..cabinet.seat import get_seat
+from ..cabinet.seat import pick
 from ..scheduler.cron import CronError  # noqa: F401  (documented in the prompt)
 from ..surface.base import InboundEvent
 
@@ -95,7 +95,7 @@ def build_system_prompt(
     seat: str | None = None,
     include_local_only: bool | None = None,
 ) -> str:
-    chosen = get_seat(seat)
+    chosen = pick(ctx.seats, seat)
     grants = ctx.approvals.grants.all()
     grant_text = "\n".join(f"- {g.action} on {g.scope}" for g in grants) or "(none)"
     if include_local_only is None:

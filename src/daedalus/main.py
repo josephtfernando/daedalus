@@ -129,6 +129,30 @@ def cmd_calendar(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_seats(args: argparse.Namespace) -> int:
+    """Show the seats and where their charters are (SPEC §7).
+
+    One of the eight is the identity a turn runs as; the rest exist so the owner
+    can say "put on the research hat" and get a different charter over the same
+    memory and the same tools.
+    """
+    from .cabinet import charter_dir, load_charters
+
+    settings = _settings(args)
+    try:
+        charters = load_charters(settings.home)
+    except ValueError as exc:
+        print(f"✗ {exc}")
+        return 1
+    width = max(len(key) for key in charters)
+    for key, seat in charters.items():
+        mark = "*" if seat.active else " "
+        print(f"{mark} {key.ljust(width)}  {seat.name}")
+        print(f"  {' ' * width}  {seat.charter}")
+    print(f"\n* active. Edit them in {charter_dir(settings.home)}")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """Serve the generated artifacts on the loopback (SPEC §3.5, §3.6).
 
@@ -348,6 +372,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="mark everything imported local_only, so it never reaches a remote model",
     )
     p_import.set_defaults(func=cmd_calendar)
+
+    p_seats = sub.add_parser("seats", help="show the cabinet seats and their charters")
+    p_seats.set_defaults(func=cmd_seats)
 
     p_serve = sub.add_parser("serve", help="serve the dashboard on the loopback")
     p_serve.add_argument(
