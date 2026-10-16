@@ -36,13 +36,24 @@ from .components import RENDERERS, VOCABULARY, render
 from .spec import Spec
 from .theming import resolve, sheet
 
-__all__ = ["CSP", "render_fragment", "render_page"]
+__all__ = ["CSP", "FORM_CSP", "render_fragment", "render_page"]
 
 #: Anything not listed is refused by the browser. `style-src` is inline because
 #: the stylesheet *is* the document; there is no script source, deliberately.
 CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
     "base-uri 'none'; form-action 'none'"
+)
+
+#: The policy a page that carries **controls** is served under. The one difference
+#: from :data:`CSP` is `form-action`: a *generative* page — composed by the model
+#: — may not act at all, and `'none'` is what makes a model-authored form a
+#: dead button. The dashboard's strip is built by code, not by the model, and its
+#: forms POST to this same server and then go through the approval split — so
+#: `'self'` is as far as it goes, and there is still no script source.
+FORM_CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+    "base-uri 'none'; form-action 'self'"
 )
 
 _DOCTYPE = "<!doctype html>"
@@ -56,11 +67,17 @@ def render_page(
     mood: str = "",
     override: str = "",
     vocabulary: Mapping[str, Any] | None = None,
+    appendix: str = "",
+    extra_css: str = "",
+    csp: str = CSP,
 ) -> str:
     """Bind, validate, theme and render — into one self-contained document.
 
     `mood` is what the caller *inferred* from local signals; `override` is the
-    owner's one word, and it wins.
+    owner's one word, and it wins. `appendix` is markup the model did not
+    compose — the dashboard's control strip, which is deliberately outside the
+    spec so that a page a model authored carries no actions. `csp` is the policy
+    the document claims for itself; the server sends the same one as a header.
     """
     bound = spec.bind(values or {}, vocabulary=vocabulary or VOCABULARY)
     # The model may propose a mood — it is meant to be generative in *styling
@@ -73,20 +90,23 @@ def render_page(
     heading = (
         f'<h1 class="dashboard__title">{escape(bound.title)}</h1>\n' if bound.title else ""
     )
+    tail = f"\n{appendix}\n" if appendix else "\n"
+    styles = f"{sheet(tokens)}\n{extra_css}" if extra_css else sheet(tokens)
     return (
         f"{_DOCTYPE}\n"
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f'<meta http-equiv="Content-Security-Policy" content="{escape(CSP, quote=True)}">\n'
+        f'<meta http-equiv="Content-Security-Policy" content="{escape(csp, quote=True)}">\n'
         f"<title>{escape(title)}</title>\n"
-        f"<style>\n{sheet(tokens)}\n</style>\n"
+        f"<style>\n{styles}\n</style>\n"
         "</head>\n"
         "<body>\n"
         '<main class="dashboard">\n'
         f"{heading}"
-        f"{body}\n"
+        f"{body}"
+        f"{tail}"
         "</main>\n"
         "</body>\n"
         "</html>\n"

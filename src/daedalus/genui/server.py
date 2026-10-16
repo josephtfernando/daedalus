@@ -32,9 +32,10 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from secrets import token_urlsafe
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from ..resources.secrets import SecretStore
+from .actions import Controls
 from .renderer import CSP
 
 if TYPE_CHECKING:
@@ -70,14 +71,17 @@ _TYPES = {
 #: The control API (ARCHITECTURE §9.5), by route. Listed so that a control that is
 #: designed but is not built yet can say so; each is implemented by the ticket
 #: that owns it. `GET /dashboard` is built (T7) and answered below, together with
-#: its view paths (`/day/`, `/week/`, `/month/`); the four that remain unbuilt are
-#: the writes the approval split owns (T8, T9).
+#: its view paths (`/day/`, `/week/`, `/month/`). `POST /action` is built (T8) and
+#: answered when this server was started **with** the daemon's `Controls` — the
+#: approval split lives with the daemon, which is what owns the surface an
+#: approval needs — and says so otherwise. `/tune` and `/approve` remain the
+#: pending→approved split (T9).
 ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/dashboard"): "the generated dashboard — day, week or month",
     ("GET", "/draft"): "a live preview of a pending theme or component",
     ("POST", "/tune"): "set pending token or knob values",
     ("POST", "/approve"): "commit the pending set into the owner-approved store",
-    ("POST", "/action"): "route an action through the approval split",
+    ("POST", "/action"): "run a control through the approval split — started with the daemon",
 }
 
 _PLAIN = "text/plain; charset=utf-8"
@@ -88,6 +92,11 @@ class Response:
     status: int = 200
     content_type: str = "text/html; charset=utf-8"
     body: bytes = b""
+    #: Extra headers — `Location` for a redirect, `Set-Cookie` for the one
+    #: bootstrap that hands the browser its session.
+    headers: tuple[tuple[str, str], ...] = ()
+    #: This response's own policy. `None` means the document default.
+    csp: str | None = None
 
     @property
     def text(self) -> str:
@@ -109,6 +118,7 @@ class LocalServer:
         port: int = DEFAULT_PORT,
         artifacts: Path | None = None,
         calendar: "CalendarStore | None" = None,
+        controls: Controls | None = None,
     ) -> None:
         self.home = Path(home)
         self.artifacts = Path(artifacts) if artifacts is not None else self.home / "ui"
@@ -119,29 +129,57 @@ class LocalServer:
         #: What `/dashboard` draws. Absent means there is nothing to draw, which
         #: the route says plainly rather than pretending to be unbuilt.
         self.calendar = calendar
+        #: The page's side of the approval split. Absent means this server was
+        #: started without a daemon, and its controls say so rather than acting.
+        self.controls = controls
         self._http: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     # -- routing -----------------------------------------------------------
 
-    def get(self, path: str) -> Response:
-        route = _route(path)
+    def get(self, path: str, *, cookie: str = "") -> Response:
+        route, query = _split_query(path)
+        wanted = _query_token(query)
+        if wanted:
+            # The one bootstrap: the owner opens the printed URL, the token is
+            # verified, and the browser is handed a cookie. The token itself
+            # never enters a document, and the redirect takes it out of the bar.
+            if not self._authorised(wanted):
+                return Response(
+                    403, _PLAIN, b"that control token is not this install's\n"
+                )
+            return Response(
+                303,
+                _PLAIN,
+                b"",
+                headers=(
+                    ("Location", route or "/dashboard"),
+                    ("Set-Cookie", f"{COOKIE}={wanted}; HttpOnly; SameSite=Strict; Path=/; Max-Age={COOKIE_MAX_AGE}"),
+                ),
+            )
         if route == "/healthz":
             return _json({"ok": True, "artifacts": len(self.artifact_names())})
         if route in ("/", "/index.html"):
             return self._entry()
         view = _view_route(route)
         if view is not None:
-            return self._dashboard(*view)
+            return self._dashboard(*view, session=self._authorised(_cookie_token(cookie)))
         if ("GET", route) in ROUTES:
             return _not_built(route, ROUTES[("GET", route)])
         return self._artifact(route.lstrip("/"))
 
-    def post(self, path: str, body: bytes = b"", *, token: str = "") -> Response:
+    def post(
+        self, path: str, body: bytes = b"", *, token: str = "", cookie: str = "", content_type: str = ""
+    ) -> Response:
         route = _route(path)
-        if not self._authorised(token):
+        # A browser cannot set a header, so a control's session may travel as
+        # the cookie the bootstrap handed it. Either credential is the same
+        # secret, checked the same way.
+        if not self._authorised(token or _cookie_token(cookie)):
             return Response(401, _PLAIN, b"a control token is required\n")
         if ("POST", route) in ROUTES:
+            if route == "/action" and self.controls is not None:
+                return self._action(body, content_type)
             return _not_built(route, ROUTES[("POST", route)])
         return Response(404, _PLAIN, b"no such control\n")
 
@@ -153,15 +191,20 @@ class LocalServer:
 
     # -- the dashboard -----------------------------------------------------
 
-    def _dashboard(self, view: str, anchor: str) -> Response:
+    def _dashboard(self, view: str, anchor: str, *, session: bool = False) -> Response:
         """Draw a day, week or month from the internal calendar (SPEC §5.5).
 
         The page is generated *and written*: it lands in `ui/` like every other
         artifact, so the file is there after the request that made it, and the
         front page becomes today's view. Reading the calendar on every request is
         the point — a cached dashboard is a dashboard that lies about today.
+
+        `session` is whether the request carries a valid control credential. An
+        authenticated view carries the controls; a read-only one does not, so a
+        page fetched without the token has nothing on it that can act.
         """
         from .dashboard import calendar_page, write_page
+        from .renderer import FORM_CSP
 
         if self.calendar is None:
             return Response(
@@ -170,7 +213,7 @@ class LocalServer:
                 b"/dashboard has nothing to draw: this server was built without a calendar\n",
             )
         try:
-            page = calendar_page(self.calendar, view=view, anchor=anchor or None)
+            page = calendar_page(self.calendar, view=view, anchor=anchor or None, with_controls=session)
         except ValueError as exc:
             return Response(400, _PLAIN, f"{exc}\n".encode("utf-8"))
         try:
@@ -180,7 +223,38 @@ class LocalServer:
             # to *see* the calendar, and a full disk is not a reason to show them
             # nothing.
             logger.warning("could not write the dashboard artifact: %s", exc)
-        return Response(200, _TYPES[".html"], page.html().encode("utf-8"))
+        return Response(
+            200,
+            _TYPES[".html"],
+            page.html().encode("utf-8"),
+            csp=FORM_CSP if session else None,
+        )
+
+    # -- the control route -------------------------------------------------
+
+    def _action(self, body: bytes, content_type: str) -> Response:
+        """`POST /action` — one control, through the approval split (SPEC §3.6)."""
+        from .actions import Outcome
+
+        try:
+            control, args = _parse_control(body, content_type)
+        except ValueError as exc:
+            return Response(400, "application/json; charset=utf-8", f'{{"error": {json.dumps(str(exc))}}}\n'.encode("utf-8"))
+
+        outcome = self.controls.perform(control, args)
+        logger.info("control %s -> %s", control, outcome.status)
+        if _wants_json(content_type):
+            payload = {"status": outcome.status, "message": outcome.message}
+            if outcome.detail:
+                payload["detail"] = outcome.detail
+            return Response(outcome.code, "application/json; charset=utf-8", (json.dumps(payload) + "\n").encode("utf-8"))
+        # A form came from a browser, so the answer is a page the browser shows.
+        return Response(
+            outcome.code,
+            _TYPES[".html"],
+            _RESULT_PAGE.format(status=outcome.status, message=_escape(outcome.message)).encode("utf-8"),
+        )
+
 
     # -- artifacts ---------------------------------------------------------
 
@@ -294,7 +368,7 @@ def _handler_for(app: LocalServer) -> type[BaseHTTPRequestHandler]:
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:  # noqa: N802 - the BaseHTTPRequestHandler name
-            self._emit(app.get(self.path))
+            self._emit(app.get(self.path, cookie=self.headers.get("Cookie", "")))
 
         def do_HEAD(self) -> None:  # noqa: N802
             self._emit(app.get(self.path), body=False)
@@ -302,18 +376,28 @@ def _handler_for(app: LocalServer) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length > 0 else b""
-            self._emit(app.post(self.path, body, token=self.headers.get(TOKEN_HEADER, "")))
+            self._emit(
+                app.post(
+                    self.path,
+                    body,
+                    token=self.headers.get(TOKEN_HEADER, ""),
+                    cookie=self.headers.get("Cookie", ""),
+                    content_type=self.headers.get("Content-Type", ""),
+                )
+            )
 
         def _emit(self, response: Response, *, body: bool = True) -> None:
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
+            for name, value in response.headers:
+                self.send_header(name, value)
             if response.content_type == _TYPES[".html"]:
                 # The policy is *in* the document, as a <meta> the renderer writes
                 # — but a meta policy only begins to apply where it is parsed, so
                 # the bytes before it are a document with no policy at all. Sent as
                 # a header it covers the whole response, from the first byte.
-                self.send_header("Content-Security-Policy", CSP)
+                self.send_header("Content-Security-Policy", response.csp or CSP)
             # Whatever is served here is the owner's own data, in a document
             # nothing else should hold onto or be able to embed.
             self.send_header("Cache-Control", "no-store")
@@ -328,6 +412,12 @@ def _handler_for(app: LocalServer) -> type[BaseHTTPRequestHandler]:
             # belongs in the debug log, where it can be turned on deliberately.
             logger.debug("serve %s", fmt % args)
 
+        def log_request(self, code: Any = "-", size: Any = "-") -> None:
+            # The query string is where a one-time control token travels; a log
+            # is not a place for a secret, so the request is logged without it.
+            stripped = self.requestline.split("?", 1)[0]
+            self.log_message('"%s" %s %s', stripped, str(code), str(size))
+
     return Handler
 
 
@@ -339,6 +429,89 @@ def _route(path: str) -> str:
     if not route.startswith("/"):
         route = "/" + route
     return route if route == "/" else route.rstrip("/")
+
+
+def _split_query(path: str) -> tuple[str, str]:
+    """The route and the raw query, so a one-time token can be read and dropped."""
+    whole = str(path or "/").split("#", 1)[0]
+    route, _, query = whole.partition("?")
+    if not route.startswith("/"):
+        route = "/" + route
+    return (route if route == "/" else route.rstrip("/")), query
+
+
+def _query_token(query: str) -> str:
+    """The control token a bootstrap URL carried, or nothing.
+
+    Only ``t`` is read; anything else in the query is not this server's business.
+    """
+    from urllib.parse import parse_qs
+
+    for value in parse_qs(query, keep_blank_values=True).get("t", []):
+        if value.strip():
+            return value.strip()
+    return ""
+
+
+def _parse_control(body: bytes, content_type: str) -> tuple[str, dict[str, Any]]:
+    """A control and its arguments, from JSON or from a browser form.
+
+    A form cannot set a header or nest objects, so its fields are flat: the
+    control is the ``control`` field and every other field is an argument. The
+    two spellings reach the same middleware.
+    """
+    text = body.decode("utf-8", "replace")
+    if "json" in (content_type or "").lower():
+        raw = json.loads(text or "{}")
+        if not isinstance(raw, Mapping):
+            raise ValueError("a control is an object with `control` and `args`")
+        control = raw.get("control", "")
+        args = raw.get("args", {})
+        if not isinstance(control, str) or not isinstance(args, Mapping):
+            raise ValueError("`control` is a string like 'calendar.delete' and `args` an object")
+        return control.strip(), dict(args)
+    from urllib.parse import parse_qs
+
+    fields = {key: values[-1] for key, values in parse_qs(text, keep_blank_values=True).items()}
+    control = str(fields.pop("control", "")).strip()
+    if not control:
+        raise ValueError("a control needs a `control` field, e.g. control=calendar.delete")
+    return control, fields
+
+
+def _wants_json(content_type: str) -> bool:
+    """Whether the caller asked for JSON back. A form gets a page it can read."""
+    return "json" in (content_type or "").lower()
+
+
+#: The browser's session: the control token, handed over once by the bootstrap
+#: URL and then carried by the browser itself, so no rendered document and no
+#: logged URL ever has to hold it.
+COOKIE = "daedalus_control"
+COOKIE_MAX_AGE = 7 * 24 * 3600
+
+
+def _cookie_token(header: str) -> str:
+    """The control token inside a ``Cookie`` header, or nothing.
+
+    A header may carry several cookies, and only this one is this server's
+    business — the rest are passed over, unread.
+    """
+    for pair in str(header or "").split(";"):
+        name, _, value = pair.strip().partition("=")
+        if name.strip() == COOKIE:
+            return value.strip()
+    return ""
+
+_RESULT_PAGE = """<!doctype html>
+<meta charset="utf-8">
+<title>Daedalus — {status}</title>
+<style>body{{font:15px/1.5 system-ui,sans-serif;margin:3rem auto;max-width:38rem;color:#e8e8ea;background:#141416}}
+h1{{font-size:1.1rem;text-transform:capitalize}}.message{{white-space:pre-wrap}}a{{color:#8ab4f8}}</style>
+<h1>{status}</h1>
+<p class="message">{message}</p>
+<p><a href="/dashboard">Back to the dashboard</a></p>
+"""
 
 
 def _view_route(route: str) -> tuple[str, str] | None:

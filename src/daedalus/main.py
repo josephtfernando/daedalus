@@ -210,6 +210,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     url = server.start()
     print(f"serving {server.artifacts} at {url}  (loopback only — nothing is published)")
     print(f"the calendar is at {url}/dashboard  ({' · '.join(VIEWS)}: {url}/week, {url}/month)")
+    print("this viewer is read-only: the dashboard's controls run with the daemon (`daedalus run`)")
     print("ctrl-c to stop")
     try:
         while True:
@@ -278,18 +279,23 @@ def _run_cli_repl(settings: Settings) -> int:
 
     async def go() -> int:
         print("daedalus — free text. Ctrl-D to leave.")
-        while True:
-            try:
-                line = await asyncio.to_thread(input, "› ")
-            except EOFError:
-                break
-            if not line.strip():
-                continue
-            result = await engine.run_turn(
-                InboundEvent(text=line, user_id="owner", is_dm=False, source="cli")
-            )
-            await deliver(surface, result)
-        await rt.aclose()
+        dashboard = _start_dashboard(rt)
+        try:
+            while True:
+                try:
+                    line = await asyncio.to_thread(input, "› ")
+                except EOFError:
+                    break
+                if not line.strip():
+                    continue
+                result = await engine.run_turn(
+                    InboundEvent(text=line, user_id="owner", is_dm=False, source="cli")
+                )
+                await deliver(surface, result)
+        finally:
+            if dashboard is not None:
+                dashboard.stop()
+            await rt.aclose()
         return 0
 
     return asyncio.run(go())
@@ -355,12 +361,54 @@ async def serve(surface: Surface, rt: Runtime, tick_seconds: float = 60) -> int:
         ready.cancel()
 
     tick = asyncio.create_task(_ticker(rt, tick_seconds))
+    dashboard = _start_dashboard(rt)
     try:
         await serving
     finally:
         tick.cancel()
+        if dashboard is not None:
+            dashboard.stop()
         await rt.aclose()
     return 0
+
+
+def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
+    """Serve the dashboard with the daemon's controls attached (SPEC §3.6).
+
+    The controls need **both** halves of the approval split: the middleware,
+    which is built from the runtime, and a surface to put an approval button on.
+    Both live with the daemon, so this is the only process that starts the
+    dashboard with controls attached — `daedalus serve` stays a read-only viewer
+    and says so if a control reaches it. A dashboard that cannot start is
+    reported and dropped: it is a convenience, and the daemon must not die for it.
+    """
+    import asyncio as _asyncio
+
+    from .genui.actions import Controls
+    from .genui.server import LocalServer, control_token
+
+    try:
+        token = control_token(rt.secrets)
+        server = LocalServer(
+            rt.settings.home,
+            token=token,
+            port=0,
+            calendar=rt.calendar,
+            controls=Controls(rt, loop=_asyncio.get_running_loop()),
+        )
+        url = server.start()
+    except Exception:  # noqa: BLE001 — the daemon outranks its dashboard
+        logging.getLogger("daedalus.genui").warning(
+            "the dashboard did not start; the daemon runs without it", exc_info=True
+        )
+        return None
+    logging.getLogger("daedalus.genui").info("dashboard at %s/dashboard (loopback only)", url)
+    print(f"the dashboard is at {url}/dashboard (loopback only)")
+    if token:
+        # The one bootstrap: opening it once hands the browser its session, so
+        # the controls work and the token never has to appear in a document.
+        print(f"  with controls: {url}/dashboard?t={token}")
+    return server
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -131,7 +131,7 @@ daedalus/                      # code repo
     cabinet/
       seat.py namespace.py protocol.py broker.py
     genui/
-      spec.py components/ renderer.py theming.py dashboard.py server.py tuners.py
+      spec.py components/ renderer.py theming.py dashboard.py server.py actions.py tuners.py
     security/
       provenance.py sink.py quarantine.py env.py
     integrations/
@@ -306,6 +306,25 @@ The page is written to `$DAEDALUS_HOME/ui/` on generation — today's becomes
 also carries the CSP **as a header**, not only as the `<meta>` the renderer
 writes: a meta policy begins at the point it is parsed, which leaves the bytes
 before it unprotected.
+
+**The control strip.** A view served to a **verified session** — one bootstrap URL
+(`/dashboard?t=<token>`) verifies the token, hands the browser an `HttpOnly`
+cookie, and redirects, so no rendered document and no logged URL ever carries the
+secret — is served with controls; every other view is read-only. The strip is
+built by code in `dashboard.py`, deliberately **outside the spec**, so a page the
+model authored carries no actions at all; and it is served under
+`form-action 'self'` while a model-composed page keeps `form-action 'none'`.
+
+**The controls.** `genui/actions.py` is the page's side of the approval split
+(SPEC §3.6: *visual → dashboard, action → Discord*). A control is resolved to a
+real tool call and put through the same `approvals.authorize` the loop's calls
+get — the tool's own risk tier, scopes and assessment — so the page cannot go
+around a decision the model would have to ask for. `allow` runs the tool on the
+daemon's loop; `ask` schedules the Discord button and answers *"waiting"* at once
+(an HTTP request must not hang open on a person); `blocked` is refused with the
+policy's reason. The vocabulary is closed (`calendar.create|update|delete`), and
+the controls run only where the daemon started the server — `daedalus serve` is a
+read-only viewer and says so.
 
 ### 7.5 Seat-to-seat collaboration
 
@@ -484,11 +503,14 @@ route:  heavy (NIM stepfun-ai/step-5-preview → z-ai/glm-5.3-flash
 ### 9.5 Dashboard control API (loopback only, tailnet-authenticated)
 
 ```
-GET  /dashboard          → HTML (generated)
+GET  /dashboard          → HTML (generated); `?t=<token>` verifies once and
+                           hands the browser its session cookie
+GET  /day|/week|/month/<date>  → that view, generated on request
 GET  /draft/<id>         → live preview of a pending theme/component
 POST /tune               → set pending token/knob values
 POST /approve            → commit pending → owner-approved store
-POST /action             → route an action through the approval split
+POST /action             → one control (calendar.create|update|delete) through
+                           the approval split; started with the daemon only
 ```
 
 ---

@@ -181,7 +181,7 @@ event appears on each day it falls; the page is written to `ui/` and served by T
 verified end-to-end against `daedalus serve` in a scratch home. The one thing it
 was not built with: the *generative* dashboard (T9) and the controls (T8).
 
-### T8 — Dashboard controls → the approval split · `open`
+### T8 — Dashboard controls → the approval split · `done`
 *SPEC §3.6 ("visual → dashboard, action → Discord").*
 
 Create / edit / delete from the page `POST /action`s into the **same** approval
@@ -190,6 +190,19 @@ and the page says it is waiting.
 
 **Acceptance:** a delete from the dashboard is refused without the authorization
 the `calendar` tool requires — a test drives both paths and compares.
+**Done** — `genui/actions.py` is the control surface: a closed vocabulary
+(`calendar.create|update|delete`), resolved to a real tool call and put through
+`approvals.authorize` with the tool's own risk, scopes and assessment. `allow`
+runs it on the daemon's loop; `ask` schedules the Discord button and answers
+*"waiting"* at once; `blocked` is refused with the policy's reason. The strip on
+the page is built by code, outside the spec, so a model-authored page carries no
+actions; it is served only to a verified session (one bootstrap URL → an
+`HttpOnly` cookie) under `form-action 'self'`, while every model-composed page
+keeps `form-action 'none'`. 34 tests in `tests/test_actions.py`, including the
+acceptance: the same call driven through the tool's path and the page's, verdicts
+compared — including a block-tier tool both paths refuse. Writing it exposed a
+calendar bug (fixed below): naming one instance while leaving `scope` unset
+silently acted on the **whole series**.
 
 ### T9 — `genui/tuners.py`: pending → approved · `open`
 *SPEC §3.6 (control surface), ARCHITECTURE §9.5 (`POST /tune`, `POST /approve`).*

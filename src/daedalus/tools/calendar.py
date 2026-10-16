@@ -76,6 +76,29 @@ def _set_phrase(match: str, on: str) -> str:
     return f"whose name matches {match!r}"
 
 
+def _scope(args: dict[str, Any]) -> str:
+    """What a change to a repeating event means (SPEC §5.5).
+
+    Naming one instance — `recurrence_id`, the address `agenda` prints after the
+    ``@`` — while leaving the scope unset means **that instance**: the address
+    already says which one, and defaulting to the series would turn "drop
+    today's standup" into "drop the standup forever". A scope of `all` alongside
+    an instance is a contradiction, so it is refused rather than resolved by
+    quietly ignoring half of what was asked.
+    """
+    explicit = str(args.get("scope", "")).strip()
+    named = str(args.get("recurrence_id", "")).strip()
+    if explicit:
+        if explicit == "all" and named:
+            raise ValueError(
+                "scope=all means the whole series, but `recurrence_id` names one "
+                "instance — drop `recurrence_id` to change the series, or drop "
+                "`scope` to change just that instance"
+            )
+        return explicit
+    return "this" if named else "all"
+
+
 def _sent(args: dict[str, Any]) -> str:
     """The argument names a call actually carried, so an error can echo them.
 
@@ -486,7 +509,7 @@ class CalendarTool(Tool):
         event = ctx.calendar.update(
             uid,
             recurrence_id=str(args.get("recurrence_id", "")).strip(),
-            scope=str(args.get("scope", "")).strip() or "all",
+            scope=_scope(args),
             **changes,
         )
         if event is None:
@@ -579,7 +602,7 @@ class CalendarTool(Tool):
         if not ctx.calendar.delete(
             uid,
             recurrence_id=str(args.get("recurrence_id", "")).strip(),
-            scope=str(args.get("scope", "")).strip() or "all",
+            scope=_scope(args),
         ):
             return ToolResult.error(f"no event {uid!r}; nothing was removed")
         return ToolResult(output=f"removed {uid}", data={"uid": uid})

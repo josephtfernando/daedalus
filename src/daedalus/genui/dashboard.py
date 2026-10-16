@@ -26,6 +26,7 @@ be the rule turned inside out.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -34,7 +35,7 @@ from typing import Any
 from ..calendar.event import Event, parse_iso
 from ..calendar.store import CalendarStore
 from .components import VOCABULARY
-from .renderer import render_page
+from .renderer import CSP, FORM_CSP, render_page
 from .spec import Spec
 
 __all__ = ["VIEWS", "Page", "calendar_page", "write_page"]
@@ -60,13 +61,27 @@ class Page:
     spec: Spec
     values: dict[str, Any]
     mood: str = ""
+    #: The control strip, as markup. Built here, by code, and deliberately
+    #: *outside* the spec: the model composes what a page says, never what it
+    #: can do (SPEC §3.6 — visual → dashboard, action → Discord).
+    controls: str = ""
+    #: The policy this page claims for itself. A page with controls needs
+    #: `form-action 'self'`; a read-only one keeps the strict default.
+    csp: str = CSP
 
     @property
     def name(self) -> str:
         return f"{self.view}-{self.anchor.isoformat()}.html"
 
     def html(self) -> str:
-        return render_page(self.spec, values=self.values, mood=self.mood)
+        return render_page(
+            self.spec,
+            values=self.values,
+            mood=self.mood,
+            appendix=self.controls,
+            extra_css=_CONTROL_CSS if self.controls else "",
+            csp=self.csp,
+        )
 
 
 def calendar_page(
@@ -75,12 +90,14 @@ def calendar_page(
     view: str = "day",
     anchor: str | date | None = None,
     now: datetime | None = None,
+    with_controls: bool = False,
 ) -> Page:
     """One view of the calendar, as a page ready to render.
 
     `anchor` is the day the view is *about* — a week or a month is the one
     containing it. `now` decides which day is marked as today, and is passed in
-    rather than read, so a test can pin the clock.
+    rather than read, so a test can pin the clock. `with_controls` adds the
+    control strip, which only an authenticated view is served with.
     """
     if view not in VIEWS:
         raise ValueError(f"view is one of: {' | '.join(VIEWS)}; it is {view!r}")
@@ -125,7 +142,15 @@ def calendar_page(
     # model-composed page is. `page.spec.to_dict()` is therefore safe to show,
     # log or hand back.
     spec = Spec.parse({"title": _long_date(day), "blocks": blocks}, vocabulary=VOCABULARY)
-    return Page(view=view, anchor=day, spec=spec, values=values)
+    controls = _control_strip(view, day, on_day[days[0]]) if with_controls else ""
+    return Page(
+        view=view,
+        anchor=day,
+        spec=spec,
+        values=values,
+        controls=controls,
+        csp=FORM_CSP if controls else CSP,
+    )
 
 
 def write_page(page: Page, home: Path, *, front: bool = False) -> Path:
@@ -223,3 +248,103 @@ def _as_date(value: str | date | None) -> date | None:
 def _long_date(when: date) -> str:
     """`Friday 16 October` — a heading, without a locale-dependent ordinal."""
     return f"{when.strftime('%A')} {when.day} {when.strftime('%B')}"
+
+
+# -- the control strip (SPEC §3.6 — visual → dashboard, action → Discord) ----
+#
+# Built here, by code, and never by the model. The strip is markup *outside* the
+# spec, so a page the model authored carries no actions at all: its forms do not
+# exist to be composed, only to be proposed — and every POST lands in
+# `genui/actions.py`, which resolves it to a tool call and puts it through the
+# same approval middleware the loop's own calls get.
+
+_CONTROL_CSS = (
+    ".controls{margin-top:2.5rem;border-top:1px solid #2a2a2e;padding-top:1.25rem}"
+    ".controls h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;"
+    "color:#8a8a92;margin:0 0 .75rem}"
+    ".controls form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;"
+    "margin:0 0 .75rem}"
+    ".controls input,.controls select{background:#1d1d21;color:#e8e8ea;"
+    "border:1px solid #34343a;border-radius:6px;padding:.4rem .5rem;font:inherit}"
+    ".controls button{background:#2d4a86;color:#fff;border:0;border-radius:6px;"
+    "padding:.4rem .8rem;font:inherit;cursor:pointer}"
+    ".controls .danger{background:#7a2e2e}"
+    ".controls label{font-size:.8rem;color:#8a8a92}"
+)
+
+
+def _control_strip(view: str, day: date, events: list[Event]) -> str:
+    """The forms a page carries, as one strip under the view.
+
+    Every form POSTs to `/action` with a closed control name and flat fields.
+    The day is pre-filled with the day the view is about, so "add something"
+    needs two fields and nothing else. Only the day view offers a picker for
+    move and remove — its list *is* that day's events; a week or a month is a
+    grid of summaries, and a picker over a month of instances is a trap.
+    """
+    day_value = day.isoformat()
+    add = (
+        '<form method="post" action="/action">'
+        '<input type="hidden" name="control" value="calendar.create">'
+        f'<input type="datetime-local" name="start" value="{day_value}T09:00" '
+        'aria-label="when">'
+        '<input name="summary" placeholder="what it is" required aria-label="what it is">'
+        '<button type="submit">Add</button>'
+        "</form>"
+    )
+    if view != "day":
+        return (
+            '<section class="controls">\n<h2>Add an event</h2>\n'
+            f"{add}\n"
+            "<p>Open a day to move or remove one of its events.</p>\n</section>"
+        )
+    move = (
+        '<form method="post" action="/action">'
+        '<input type="hidden" name="control" value="calendar.update">'
+        f"{_uid_picker(events)}"
+        '<input type="datetime-local" name="start" aria-label="new time" required>'
+        '<button type="submit">Move</button>'
+        "</form>"
+    )
+    remove = (
+        '<form method="post" action="/action">'
+        '<input type="hidden" name="control" value="calendar.delete">'
+        f"{_uid_picker(events)}"
+        '<button type="submit" class="danger">Remove</button>'
+        "</form>"
+    )
+    return (
+        '<section class="controls">\n'
+        "<h2>Add to this day</h2>\n"
+        f"{add}\n"
+        "<h2>Move an event</h2>\n"
+        f"{move}\n"
+        "<h2>Remove an event</h2>\n"
+        f"{remove}\n"
+        "</section>"
+    )
+
+
+def _uid_picker(events: list[Event]) -> str:
+    """A `<select>` of one day's occurrences, named as the owner sees them.
+
+    The value is the *address* the agenda prints — a series by its uid, one
+    instance as ``uid@start`` — which the control surface splits into the two
+    arguments the tool takes.
+    """
+    if not events:
+        return '<input type="hidden" name="uid" value="">'
+    options = "\n".join(
+        f'<option value="{html.escape(event.address)}">'
+        f"{html.escape(_picker_label(event))}</option>"
+        for event in events
+    )
+    return f'<select name="uid" aria-label="event">\n{options}\n</select>'
+
+
+def _picker_label(event: Event) -> str:
+    return f"{_when(event)} — {event.summary}"
+
+
+def _escape(text: str) -> str:
+    return html.escape(str(text), quote=True)

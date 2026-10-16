@@ -175,8 +175,23 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
 ### Approval & tuning surface
 
 - **Approval-by-rendering.** Visual artifacts — themes, components, dashboards, and the dashboard itself — are approved **on the served artifact**, not in chat: the proposal renders **live**, the owner tunes it in place, and approval is a control on that page. *Seeing is the most accurate way to say yes.* Action approvals (egress, purchases, irreversible ops) stay as **Discord buttons** (§6). The split is: **visual → dashboard, action → Discord.**
-- **Control surface / tuners.** The dashboard is interactive; controls call back into the agent. **Tuners** adjust the live theme (palette / density / motion / type) and, by extension, **system knobs** (schedules, thresholds, quiet hours, seat behaviour). Tuned values form a **pending** set; **approve** adopts them into the owner-approved store. Drafts, approvals, and the token store persist locally.
-- **Security.** Served over the tailnet, single-user, tailnet-authenticated. Write actions (tune / approve) are gated like any other action — no anonymous controls.
+- **Control surface / tuners.** The dashboard is interactive; controls call back into the agent.
+  A control is a **proposal, never an act**: every control POSTs to `/action`, which resolves it to
+  a real tool call and puts it through the **same approval middleware the loop's tool calls get** —
+  the tool's own risk tier, scopes, and assessment — so the page cannot go around a decision the
+  model's calls would have to ask for. The control vocabulary is closed (create / update / delete on
+  the calendar) and is built by code, not by the model, so a page a model authored carries no
+  actions at all. A control that needs the owner answers *"waiting"* immediately and surfaces its
+  **Discord buttons**; the request never hangs open on a person. **Tuners** adjust the live theme
+  (palette / density / motion / type) and, by extension, **system knobs** (schedules, thresholds,
+  quiet hours, seat behaviour). Tuned values form a **pending** set; **approve** adopts them into
+  the owner-approved store. Drafts, approvals, and the token store persist locally.
+- **Security.** Served over the tailnet, single-user, tailnet-authenticated. Write actions
+  (tune / approve / a dashboard control) are gated like any other action — **no anonymous
+  controls**: the per-install token is required, the browser gets it once through a verified URL
+  and holds it as an `HttpOnly` cookie, so no rendered document and no logged URL ever carries it.
+  A model-composed page keeps a `form-action 'none'` policy; only the code-built control strip is
+  served under `form-action 'self'`.
 
 ---
 

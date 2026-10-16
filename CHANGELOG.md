@@ -12,9 +12,51 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 633-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 667-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The dashboard's controls go through the approval split — and can't go around it.** SPEC §3.6
+  has always drawn the line as *"visual → dashboard, action → Discord"*, and until now the dashboard
+  was all visual and no action: `POST /action` existed in the routing table and answered *"not built
+  yet"*. Now the page carries a control strip — add, move, remove — and every control POSTs to
+  `/action`, where `genui/actions.py` resolves it to a **real `calendar` tool call** and puts it
+  through the same `approvals.authorize` the loop's own tool calls get: the tool's own risk tier,
+  its own scopes, its own assessment. That is the whole point of the seam — if the dashboard had
+  its own idea of what a delete may do, there would be two approval policies and the weaker one
+  would win by being the one a browser could reach. Five decisions worth their words:
+
+  - **A closed vocabulary, composed by code.** The page may propose exactly
+    `calendar.create`, `calendar.update` and `calendar.delete` — nothing else, and no other tool.
+    The strip is built in `dashboard.py` *outside* the spec, so a page the model authored carries no
+    actions at all: a prompt-injected page cannot render a disguised delete button, because controls
+    are not part of any vocabulary the model sees.
+  - **Waiting is not hanging.** A control that needs the owner answers **202 waiting** immediately
+    and the buttons are surfaced on Discord from the daemon's loop; when they are answered, the tool
+    runs there and the outcome is sent to the owner. An HTTP request must never sit open for the ten
+    minutes a person takes to decide. With no daemon attached (a bare `daedalus serve`), a control
+    that would need approval is refused with why — not silently allowed.
+  - **One bootstrap, then a cookie.** A browser form cannot set a header, so the per-install token
+    has to reach the browser somehow — but a secret in a rendered document is exactly what the
+    GenUI split keeps out. `GET /dashboard?t=<token>` verifies it once, hands the browser an
+    `HttpOnly; SameSite=Strict` cookie, and redirects to the clean URL. Only a verified session is
+    served controls; every other view is read-only, the token appears in **no** document (asserted),
+    and the request log strips the query string so the bootstrap URL is not remembered in it.
+  - **Two CSPs, one difference.** A model-composed page keeps `form-action 'none'` — a model's form
+    is a dead button. The code-built strip is served under `form-action 'self'`: as far as *this
+    server*, and no script source either. The server sends whichever policy the page claims as a
+    header, so the meta and the header never disagree.
+  - **`daedalus serve` stays a viewer.** The controls need both halves of the split — the
+    middleware, and a surface to put a button on — and both live with the daemon, so `daedalus run`
+    starts the dashboard with controls attached and `serve` says plainly that it is read-only.
+
+  Writing the picker exposed a **calendar bug the page would have made dangerous**: the tool
+  defaulted `scope` to `all` whenever it was unset, so `delete` with a `recurrence_id` — the
+  address `agenda` prints for one instance — silently removed the **whole series**, and `update`
+  edited it. Naming an instance now means **that instance**, and `scope=all` beside a
+  `recurrence_id` is refused as the contradiction it is. 34 tests in `tests/test_actions.py`,
+  including the acceptance itself: the same call driven through the tool's path and the page's,
+  verdicts compared — with an auto-tier tool both allow, and a block-tier tool both refuse.
 
 - **The active seat now means something — and one CLI verb switches it.** `active = true` has sat
   in the charter files since T11 and been read by nobody: `load_charters` refused two claimants and
