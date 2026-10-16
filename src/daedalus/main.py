@@ -213,7 +213,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print(f"serving {server.artifacts} at {url}  (loopback only — nothing is published)")
     print(f"the calendar is at {url}/dashboard  ({' · '.join(VIEWS)}: {url}/week, {url}/month)")
     print("this viewer is read-only: the dashboard's controls run with the daemon (`daedalus run`)")
-    print("ctrl-c to stop")
+    published = None
+    if args.publish:
+        from .genui.publish import PublishError, publish
+
+        try:
+            published = publish(server.port)
+        except PublishError as exc:
+            print(f"✗ not published: {exc}")
+            return 1
+        if published.url:
+            print(f"the dashboard is also at {published.url}/dashboard")
+        print("ctrl-c to stop")
     try:
         while True:
             time.sleep(3600)
@@ -221,6 +232,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("")
     finally:
         server.stop()
+        if published is not None:
+            from .genui.publish import unpublish
+
+            print("taking the published route down (the port behind it is gone)")
+            unpublish(server.port)
     return 0
 
 
@@ -460,6 +476,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="serve the dashboard on the loopback")
     p_serve.add_argument(
         "--port", type=int, default=8787, help="loopback port (0 picks a free one)"
+    )
+    p_serve.add_argument(
+        "--publish",
+        action="store_true",
+        help="also put the dashboard behind Tailscale Serve (never Funnel)",
     )
     p_serve.set_defaults(func=cmd_serve)
 

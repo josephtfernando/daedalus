@@ -82,7 +82,7 @@ unbuilt route, not a `401`); an unset token accepts no writes at all; a path
 escaping `ui/` is refused; `daedalus selftest` gains an eleventh check proving all
 of it. **Done** — 32 tests in `tests/test_serve.py`.
 
-### T2 — Publish over Tailscale Serve, never Funnel · `open`
+### T2 — Publish over Tailscale Serve, never Funnel · `done`
 *SPEC §3.5, §8.5 step 11 ("dashboard loopback + Tailscale Serve (no Funnel) with tailnet auth").*
 
 `daedalus serve --publish` runs `tailscale serve --bg http://127.0.0.1:<port>`
@@ -92,6 +92,14 @@ outer one, and a public Funnel would remove the outer gate entirely.
 
 **Acceptance:** a missing `tailscale` is a clear refusal, not a traceback; no
 code path enables `funnel`; the tailnet URL is printed for the owner to open.
+**Done** — `genui/publish.py`: the command is printed before it runs, the URL is
+read back from `tailscale serve status`, and Funnel-on is read from
+`serve status --json` and refused by name with the way out. Subprocesses run
+with stdin cut off, so an unauthenticated CLI that stops to ask hangs nothing.
+On ctrl-c the route is taken back down — a published route pointing at a dead
+port is a broken dashboard on the phone. 14 tests in `tests/test_publish.py`,
+including the acceptance and the "no code path enables Funnel" property (every
+command built is a `serve` or a `status`; the word is only ever read).
 
 ## Stream B — the dashboard
 

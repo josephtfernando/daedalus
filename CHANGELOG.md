@@ -12,9 +12,35 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 702-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 716-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **`daedalus serve --publish` — the dashboard reaches the phone, over the tailnet and never past
+  it.** SPEC §3.5 has always said the dashboard is *"published privately via Tailscale Serve
+  (loopback-bound, no public Funnel)"*, and T1 stopped at the loopback: nothing reached the phone.
+  `--publish` runs `tailscale serve --bg http://127.0.0.1:<port>` — and the reason it is a separate
+  flag rather than a default is that publishing is a second gate being opened, and a gate opened
+  silently is a gate the owner cannot be said to have opened. The tailnet's own authentication
+  becomes the outer gate; the loopback bind and the write token stay exactly as they were. Four
+  properties, each worth its words:
+
+  - **The command is printed before it runs** (`+ tailscale serve --bg …`), because an owner about
+    to publish something is entitled to read the exact line first; a command that appears only in
+    shell history after the fact was never really shown.
+  - **Funnel is refused by name.** `tailscale funnel` is the outer gate removed entirely — the
+    dashboard reachable from the internet behind a TLS certificate and nothing else. The module
+    never constructs that command (a test asserts every command it builds is a `serve` or a
+    `status`), and it refuses to publish onto a node whose `serve status --json` shows Funnel on,
+    with the one-liner to take it down first.
+  - **A subprocess never reads the owner's terminal.** The CLI is run with stdin cut off: an
+    unauthenticated `tailscale` that stops to ask a question would otherwise hang the publish
+    silently — which is exactly what the first real run of this did on this laptop, and why the
+    fix exists.
+  - **ctrl-c takes the route back down.** `--bg` outlives the process, and a published route
+    pointing at a dead port is a broken dashboard on the phone rather than an error anywhere.
+
+  14 tests in `tests/test_publish.py`.
 
 - **A tune is pending, and only approval is a theme.** SPEC §3.6's *"tuned values form a **pending**
   set; **approve** adopts them into the owner-approved store"* was prose until now: the tuners did

@@ -131,7 +131,7 @@ daedalus/                      # code repo
     cabinet/
       seat.py namespace.py protocol.py broker.py
     genui/
-      spec.py components/ renderer.py theming.py dashboard.py server.py actions.py tuners.py
+      spec.py components/ renderer.py theming.py dashboard.py server.py actions.py tuners.py publish.py
       tokens/approved.toml drafts/<id>.toml      # adopted values, pending tunes
     security/
       provenance.py sink.py quarantine.py env.py
