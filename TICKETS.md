@@ -56,17 +56,18 @@ code path enables `funnel`; the tailnet URL is printed for the owner to open.
 
 ## Stream B — the dashboard
 
-### T3 — `genui/spec.py`: the UI spec schema · `open`
+### T3 — `genui/spec.py`: the UI spec schema · `done`
 *SPEC §3.6 ("the model proposes a UI spec; a deterministic renderer disposes"), §13 (spec schema, open).*
 
-A declarative spec — an ordered list of components with typed props and a layout
-— validated against the component registry. The model composes *structure*; it
-never emits markup. Unknown component, unknown prop, or a prop carrying markup →
-refused with an actionable message.
+A declarative spec — an ordered list of blocks with typed props — validated
+against the component vocabulary. The model composes *structure*; it never emits
+markup. Unknown component, unknown prop, missing required prop, wrong type, or a
+value carrying markup → refused with a message that names the way out.
 
 **Acceptance:** a valid spec round-trips through JSON; an unknown component type
-is refused naming it; a prop containing `<script>` is refused or escaped, and a
-test says which.
+is refused naming it *and* listing the vocabulary; a prop containing `<script>` is
+refused at the door (and escaped again at render — that second defence is T6).
+**Done** — 38 tests in `tests/test_genui_spec.py`.
 
 ### T4 — `genui/components/`: the first component vocabulary · `open`
 *SPEC §3.6 (component list), ARCHITECTURE §133.*

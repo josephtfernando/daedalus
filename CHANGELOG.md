@@ -12,9 +12,38 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 325-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 363-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The dashboard has a shape, and the model may only fill it in.** SPEC §3.6 asks for a dashboard
+  *generated per render* while also promising *"never arbitrary model-generated CSS/JS"*, and the
+  only way both can be true is a split: the model composes **structure**, a deterministic renderer
+  **disposes**. `genui/spec.py` is where that split is enforced.
+  - **A closed vocabulary, checked before anything renders.** A spec is an ordered list of blocks —
+    `{"component": "stat-card", "props": {…}}` — validated against the owner's component vocabulary
+    *first*. An unknown component, an unknown prop, a missing required one, a wrong type: each is
+    refused before a single byte of HTML exists, so a bad proposal never reaches a renderer.
+  - **Two defences against markup, not one.** A value carrying a tag is refused at the door **and**
+    escaped at render time. The door is what keeps the vocabulary honest; the last mile is what keeps
+    one buggy component from becoming an injection. Neither alone is a design — the pair is.
+  - **A tag, not a less-than sign.** `dinner <-> party` is a value; `<b>` is markup. The guard is
+    specific so the vocabulary stays usable. A `javascript:`/`data:` value is refused outright, and
+    the only link a spec may carry is a **relative path on this server** — an absolute URL would make
+    a rendered page fetch something the owner never chose.
+  - **`true` is not a number.** `isinstance(True, int)` is true in Python, so a JSON `true` would sail
+    through a naive numeric check. It is refused, and the trap has its own test.
+  - **A page is bounded** — at most 24 blocks, 60 items, 600 characters to a value — so a runaway
+    proposal is a refusal rather than a document the phone struggles to open. Lengths are refused,
+    never silently truncated; truncation would hide the runaway instead of reporting it.
+  - **Refusals name the way out.** Every message says what it *received* and what it would have
+    accepted instead: *`'chart'` is not a component. The vocabulary is: …*. A refusal that says only
+    "invalid" is how a model ends up retrying the same call — the failure the owner hit in the
+    calendar that same morning.
+  - **Two spellings accepted on purpose:** `type` for `component`, `components` for `blocks`. Learning
+    the name is free; refusing the synonym costs a step and teaches nothing.
+  - **`describe()`** renders the vocabulary for the prompt, optional props marked, so the model's
+    instruction and the validator cannot drift apart.
 
 - **The laptop can serve what it generated, and only to itself.** `daedalus serve` stands up an
   HTTP server for the dashboard and every other generated artifact. It is built so that the two
