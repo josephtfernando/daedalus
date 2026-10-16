@@ -26,6 +26,28 @@ updated, and it is committed on its own.
 
 ---
 
+## Found while working
+
+Fixes that belong to no stream, recorded so the plan is the whole story.
+
+### T16 — A pinned tick was judged against the wall clock · `done`
+*`scheduler/scheduler.py`, `scheduler/jobs.py`. Found at 12:01.*
+
+The selftest's proactive probe drives a pinned sequence — a silent 03:00, then a
+noon that must speak — and each run recorded the job's `last_run` from the **wall
+clock** while judging dueness against the pinned time. The probe passed all
+morning and failed from 12:01, making `daedalus selftest` report 10/11 for the
+rest of the day.
+
+**Acceptance:** a tick given a time is governed by that time; the same pinned
+minute still does not run twice. **Done** — `dispatch_tick` records
+`when.timestamp()`, with two tests that pin times in the past so a wall-clock
+implementation fails whenever the suite runs rather than only after noon. The
+proactive probe has never ticked the same job twice at pinned hours before now,
+which is why this was invisible until the clock moved.
+
+---
+
 ## Stream A — serving
 
 ### T1 — `genui/server.py`: the loopback server, and `daedalus serve` · `done`

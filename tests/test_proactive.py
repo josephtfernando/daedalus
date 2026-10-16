@@ -190,6 +190,58 @@ async def test_a_wake_at_a_reasonable_hour_is_sent_and_counted(runtime: Runtime)
     assert next(r for r in results if r.job == "midday").detail == "spoke"
 
 
+async def test_a_second_pinned_tick_is_judged_by_the_pinned_clock_not_the_wall_clock(
+    runtime: Runtime,
+) -> None:
+    """A tick given a time must be governed by *that* time.
+
+    Each run used to record the job's `last_run` from the wall clock, which makes
+    a pinned sequence contradict itself: the selftest probe ticks a silent 03:00
+    and then a noon that has to speak. It passed all morning and went red at
+    12:01, because noon had become "already run". A health gate that turns red at
+    lunchtime is a gate the owner learns to ignore.
+
+    Both times here are deliberately in the *past*: an implementation that reads
+    the wall clock judges the second tick already-run whenever this suite happens
+    to run, so the test fails on the old behaviour rather than only sometimes.
+    """
+    await _add_wake(runtime, "midday")
+
+    async def handler(prompt: str) -> str:
+        return "Standup in ten minutes."
+
+    night = datetime(2020, 1, 6, 3, 0)
+    noon = datetime(2020, 1, 6, 12, 0)
+
+    await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=night)
+    assert runtime.surface.sent == [], "the night tick should have stayed quiet"
+
+    await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=noon)
+
+    assert runtime.surface.sent == ["Standup in ten minutes."], (
+        "a pinned tick was judged already-run against the wall clock"
+    )
+
+
+async def test_a_job_does_not_run_twice_for_the_same_pinned_minute(runtime: Runtime) -> None:
+    """The other half: pinning must not defeat the dedup it was hiding behind."""
+    await _add_wake(runtime, "midday")
+
+    async def handler(prompt: str) -> str:
+        return "Standup in ten minutes."
+
+    when = datetime(2020, 1, 6, 12, 0)
+    await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=when)
+    second = await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=when)
+
+    assert runtime.surface.sent == ["Standup in ten minutes."], "the same minute spoke twice"
+    # Recording the tick's own time makes the job not-due for that minute, which
+    # is the first line of defence; the wake log is the second, for the sleep and
+    # double-tick cases where `last_run` never got written.
+    assert "midday" not in [result.job for result in second]
+    assert runtime.scheduler.log.seen(f"midday:{when.strftime('%Y%m%dT%H%M')}")
+
+
 async def test_the_prompt_reaches_the_wake_handler(runtime: Runtime) -> None:
     """The job's `target` is *what brought it here*, and it must survive the hop."""
     await _add_wake(runtime, "midday", target="watch the disk")

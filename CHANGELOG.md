@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 488-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 490-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -619,6 +619,17 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   was weakened to accommodate the change.
 
 ### Fixed
+
+- **The proactive gate no longer goes red at lunchtime.** The selftest probe drives a **pinned**
+  sequence — a silent 03:00 tick, then a noon tick that must speak — but each run recorded the job's
+  `last_run` from the **wall clock** while judging dueness against the pinned time. So the probe passed
+  all morning and, from 12:01 onward, failed: the pinned noon tick had become *"already run"*, and
+  `daedalus selftest` reported 10/11 for the rest of the day. The gate was wrong, not the thing it
+  gates — and a health check that is only honest before lunch is one the owner learns to ignore. A
+  tick given a time is now governed by that time. Two tests pin times in the **past** on purpose, so
+  an implementation that reads the wall clock fails whenever the suite happens to run rather than only
+  after noon. Found by the clock crossing noon during this work; it had been wrong since the probe was
+  written, because no test had ever ticked the same job twice at pinned hours.
 
 - **The repeat guard no longer collapses two different calls that fail the same way.** It keyed the
   failure signature on the tool name and the *error text*, so three genuinely different attempts —

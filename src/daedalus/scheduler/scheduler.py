@@ -103,7 +103,13 @@ class Scheduler:
                 continue
             result = await self._run_job(job, ctx, wake_handler, when)
             self.log.record(Wake(key=key, job=job.name, ran_at=time.time(), ok=result.ok, detail=result.detail))
-            job.last_run = time.time()
+            # Record when the tick was *driven*, not when the wall clock happened
+            # to be. `due()` compares `when` against this, so writing real time
+            # here makes a pinned sequence self-contradictory: the selftest probe
+            # ticked a silent 03:00 and then a noon that had to speak, passed all
+            # morning, and went red at 12:01 because noon was suddenly "already
+            # run". A tick given a time must be governed by that time.
+            job.last_run = when.timestamp()
             self.store.put(job)
             results.append(result)
         results.extend(await self.fire_reminders(ctx, when))
