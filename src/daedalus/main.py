@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -125,6 +126,36 @@ def cmd_calendar(args: argparse.Namespace) -> int:
             print(f"✗ {exc}")
             return 1
         print(report.render())
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Serve the generated artifacts on the loopback (SPEC §3.5, §3.6).
+
+    Loopback only, and it says so: this makes the dashboard reachable *from this
+    laptop* and nothing else. Publishing it to the phone is a separate act with
+    its own ticket (T2), because "open a port" and "open a port to the internet"
+    should never be the same keystroke.
+    """
+    from .genui.server import LocalServer, control_token
+    from .resources.secrets import SecretStore
+
+    settings = _settings(args)
+    server = LocalServer(
+        settings.home,
+        token=control_token(SecretStore(settings.home)),
+        port=args.port,
+    )
+    url = server.start()
+    print(f"serving {server.artifacts} at {url}  (loopback only — nothing is published)")
+    print("ctrl-c to stop")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        print("")
+    finally:
+        server.stop()
     return 0
 
 
@@ -304,6 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="mark everything imported local_only, so it never reaches a remote model",
     )
     p_import.set_defaults(func=cmd_calendar)
+
+    p_serve = sub.add_parser("serve", help="serve the dashboard on the loopback")
+    p_serve.add_argument(
+        "--port", type=int, default=8787, help="loopback port (0 picks a free one)"
+    )
+    p_serve.set_defaults(func=cmd_serve)
 
     p_run = sub.add_parser("run", help="start the daemon")
     p_run.add_argument("--cli", action="store_true", help="run in the terminal instead of Discord")

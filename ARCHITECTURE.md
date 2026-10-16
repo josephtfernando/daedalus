@@ -261,6 +261,21 @@ POST /approve ─▶ tokens.commit(pending)   ▸ owner-approved store
 POST /action ─▶ approvals route (visual actions vs. Discord split)
 ```
 
+**The server.** `genui/server.py` binds the **loopback only** (`127.0.0.1` — not a
+parameter, not a default) and serves the generated artifacts in
+`$DAEDALUS_HOME/ui/`. `daedalus serve` starts it; publishing it to the tailnet is
+a separate act (Tailscale Serve, **never Funnel**), because *open a port* and
+*open a port to the internet* must never be the same keystroke.
+
+Reads are open to whatever is already on the loopback — that is what loopback
+means. **Writes are not:** every control `POST` carries a per-install token from
+the owner-only secret store (`dashboard-token`), and a server whose token is unset
+accepts **no** writes at all. *"It is only loopback"* is not authentication:
+anything running as this user can reach the loopback, and a dashboard write is a
+real action against the owner's calendar. The routing table (§9.5) is written
+down, so a control that is designed but not yet built answers *"not built yet"*
+rather than a 404.
+
 ### 7.5 Seat-to-seat collaboration
 
 Seats communicate over the **typed durable protocol** (§9.2) via the broker; messages persist in `cabinet/messages.db`. Example: `Icarus → Melinoë (verify) → Icarus (result) → Daedalus (summary)`. Deterministic code owns correlation, dedup, and delivery.

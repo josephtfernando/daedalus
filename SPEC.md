@@ -381,7 +381,7 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 9. **Trust posture** — default tiers (auto / ask / block); standing grants (the `Daedalus` calendar, egress); quiet hours.
 10. **Runtime** — write systemd `--user` units; `enable-linger`; lid-closed `logind`; enable timers.
 11. **Hardening** — assert perms `0700` / `0600`, **no plaintext secrets at rest**, dashboard loopback + **Tailscale Serve (no Funnel)** with tailnet auth, DM allowlist on, egress gates on, quarantine on.
-12. **Verification — the mandatory end** — run `daedalus selftest`: model probe · Discord round-trip · memory write/read · capability author + **Melinoë gate** · scheduler tick · dashboard render · calendar sync (if configured). A **green checklist, or it fails loudly** — the wizard never reports success with a red item.
+12. **Verification — the mandatory end** — run `daedalus selftest`: model probe · Discord round-trip · memory write/read · capability author + **Melinoë gate** · scheduler tick · **loopback serve** (private bind, writes gated) · dashboard render · calendar sync (if configured). A **green checklist, or it fails loudly** — the wizard never reports success with a red item.
 13. **Handoff** — print the first message to send it.
 
 **Properties.** Idempotent and re-runnable (repair mode); secrets only via hidden entry, written to the encrypted store / `.env`; `confirm` before any irreversible action; the resource stages are individually re-runnable so later provisioning reuses them.

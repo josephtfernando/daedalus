@@ -8,11 +8,14 @@ probes the configured providers.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import shutil
 import stat
 import tempfile
+import urllib.error
+import urllib.request
 from datetime import datetime
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -97,6 +100,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(_check_secrets(rt))
             report.checks.append(_check_memory(rt))
             report.checks.append(_check_calendar(rt))
+            report.checks.append(_check_serve(scratch))
             report.checks.append(_check_approvals(rt))
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
@@ -495,6 +499,47 @@ class _DaemonSurface:
 
     def stop(self) -> None:
         self._running.set()
+
+
+def _check_serve(settings: Settings) -> Check:
+    """The server must come up *private*, and must refuse anonymous writes.
+
+    Both failure modes here are silent, which is why they are gated rather than
+    assumed. A bind that is not the loopback is the whole publishing model gone,
+    and a server that reads *unset* as *open* turns the dashboard into an
+    unauthenticated remote control for the owner's calendar. Configuration
+    cannot show either one; only knocking on the door can.
+    """
+    from .genui.server import LocalServer, control_token
+    from .resources.secrets import SecretStore
+
+    server = LocalServer(
+        settings.home,
+        token=control_token(SecretStore(settings.home)),
+        port=0,
+    )
+    url = server.start()
+    try:
+        if not ipaddress.ip_address(server.host).is_loopback:
+            return Check("serve", False, f"bound {server.host}, which is not the loopback")
+        with urllib.request.urlopen(f"{url}/healthz", timeout=5) as response:
+            if response.status != 200:
+                return Check("serve", False, f"/healthz answered {response.status}")
+        write = urllib.request.Request(f"{url}/tune", data=b"{}", method="POST")
+        try:
+            urllib.request.urlopen(write, timeout=5)
+        except urllib.error.HTTPError as refused:
+            if refused.code != 401:
+                return Check(
+                    "serve", False, f"an unauthenticated write answered {refused.code}, not 401"
+                )
+        else:
+            return Check("serve", False, "an unauthenticated write was accepted")
+    except OSError as exc:
+        return Check("serve", False, f"{type(exc).__name__}: {exc}")
+    finally:
+        server.stop()
+    return Check("serve", True, f"loopback only, writes gated ({url})")
 
 
 async def _check_daemon(settings: Settings) -> Check:

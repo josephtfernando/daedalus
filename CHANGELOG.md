@@ -12,9 +12,37 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (10/10 offline; 11/11 with `--live`) and a 293-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 325-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The laptop can serve what it generated, and only to itself.** `daedalus serve` stands up an
+  HTTP server for the dashboard and every other generated artifact. It is built so that the two
+  ways it could go wrong are the two things it *cannot* do:
+  - **Loopback, and not by choice.** The bind address is `127.0.0.1` — not a parameter, not an
+    override, not a `--host`. There is no code path that opens a public Funnel. Publishing it to
+    the phone is a **separate** act, with its own ticket (Tailscale Serve), because *open a port*
+    and *open a port to the internet* should never be the same keystroke. The gate asserts the
+    address the socket **actually** came up on, not the one we intended.
+  - **No anonymous controls.** Reads are open to anything already on the loopback — that is what
+    loopback means. Writes are not: every control `POST` carries a per-install token from the
+    encrypted store, and a server whose token is *unset* accepts **no** writes at all. Failing
+    open there would turn "the dashboard" into an unauthenticated remote control for the owner's
+    calendar, reachable by anything that can curl. The token is minted on first use and encrypted
+    at rest, like every other credential.
+  - **The routing table is written down.** `GET /dashboard` and `/draft`, `POST /tune`,
+    `/approve`, `/action` are named *before* they are built, so a control that is designed but not
+    yet implemented answers **"not built yet"** rather than 404 — the difference between "I have
+    not done that" and "that is not a thing", which the owner is entitled to be told apart.
+  - **A request cannot climb out of the artifact directory.** Names are matched against a pattern
+    before they are joined to a path, and the resolved parent is checked as well, so `..`, an
+    encoded `..%2f`, a `sub/../../` walk, and a symlink pointing outward are all refused rather
+    than served — with a test for each, because traversal guards are the kind that look fine in
+    review and fail in production.
+  - **`daedalus serve`** is the new subcommand (`--port`, `0` to take whatever is free), and the
+    self-test grows an eleventh check that **starts the server, knocks on it over a real socket,
+    and confirms an unauthenticated write is refused** — both properties are silent failures that
+    configuration alone cannot see.
 
 - **The owner's real calendar can now come in.** A calendar you cannot bring your history into is
   a calendar you cannot move to, and the owner's calendar already exists — in a Google Takeout
