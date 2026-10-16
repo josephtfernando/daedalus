@@ -16,6 +16,38 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The internal calendar learned to repeat — and to answer for the day.** A calendar that
+  can only hold one-off events is a list; the thing that makes one *useful* is being able to
+  say "every weekday at 9:10" and then ask "what is on Thursday". So a repeating event is now
+  **one event with an `rrule`**, and reads expand it into the occurrences that actually
+  happen:
+  - **`RRULE`, expanded properly.** `DAILY` / `WEEKLY` / `MONTHLY` / `YEARLY`, with `INTERVAL`,
+    `COUNT`, `UNTIL`, `BYDAY` (including ordinals — `2TU`, `-1FR`), `BYMONTHDAY`, `BYMONTH`,
+    `BYSETPOS` and `WKST`. The expansion is period-based, the way RFC 5545 describes it, so
+    `FREQ=MONTHLY;BYDAY=MO` means *every Monday of the month* and the last weekday of the
+    month is `BYSETPOS=-1`, not a coincidence. `EXDATE` removes instances; a
+    `RECURRENCE-ID` override is a second `VEVENT` sharing the series' `UID` and replaces
+    exactly one instance. Sub-daily frequencies are **refused, not approximated** — a wrong
+    answer delivered confidently is worse than a reported gap.
+  - **Reads answer with occurrences; writes say what they mean.** `agenda` shows a repeating
+    event on each day it falls; `list` shows the definitions; an instance is addressed as
+    `uid@its-own-start`. `scope=all` edits the series, `scope=this` moves one instance,
+    `scope=future` splits the series at that point — the difference between "the standup
+    moved" and "today's standup moved", which a tool that could only do one of them would
+    silently get wrong.
+  - **Reminders and busy-time are modelled.** A `VALARM` is kept as an offset from the start
+    (`TRIGGER:-PT10M` → "10m before"), and `TRANSP` records whether an event makes the owner
+    busy. A `VALARM`'s own `DESCRIPTION` no longer overwrites the event's — a nested-component
+    bug that would have quietly replaced "Bring the referral" with "Reminder!".
+  - **A zone travels with the time.** `DTSTART;TZID=Europe/London:…` round-trips instead of
+    being flattened to a bare floating time, and an all-day span (`2026-10-15` → `2026-10-18`)
+    now shows on every day it covers rather than only its first.
+  - The index became `(uid, recurrence_id)`-keyed — an override shares its series' `uid`, and
+    a table keyed on `uid` alone would let one instance evict the rest. When the shape changed,
+    the cache **rebuilds** rather than migrating: it is derived from the `.ics`, which remains
+    the truth. `daedalus selftest` proves the round-trip (a rule, a moved instance) rather than
+    just a write.
+
 - **P2 — the proactive scheduler.** The agent can speak first now — and, just as
   importantly, not. Three things had to be true for that to be safe, and each is a
   separate decision:

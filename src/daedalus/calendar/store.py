@@ -7,8 +7,10 @@ what makes the store genuinely file-first — an event the owner added by hand, 
 property this module does not model, a ``VTIMEZONE`` block, all survive a tool
 write instead of being flattened by a private copy of the truth.
 
-The SQLite index beside it exists for range reads and can be rebuilt from the
-``.ics`` at any moment (:meth:`rebuild_index`).
+Reads answer with **occurrences**, not definitions: ask for today and a
+recurring standup appears as itself on today's date (see :mod:`.occurrences`).
+Writes can address either the whole series or one instance of it, which is the
+difference between "the standup moved" and "today's standup moved".
 
 Only the ``Daedalus`` calendar is writable here. The owner's other calendars
 are gcal's, and gcal is not wired yet — see :meth:`sync_state`.
@@ -20,12 +22,18 @@ import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from ..security.provenance import DataClass
-from . import ical
-from .event import INTERNAL, Event, normalise_when
+from . import ical, recur
+from .event import INTERNAL, OPAQUE, Event, Reminder, normalise_when, parse_iso
 from .index import CalendarIndex
+from .occurrences import expand as expand_occurrences
+
+#: How an edit is scoped when an event repeats.
+ALL = "all"
+THIS = "this"
+FUTURE = "future"
 
 
 class CalendarStore:
@@ -68,7 +76,9 @@ class CalendarStore:
         return len(parsed.events)
 
     def _write(self, parsed: ical.ParsedCalendar) -> None:
-        ordered = sorted(parsed.events, key=lambda e: (e.start, e.summary.lower()))
+        ordered = sorted(
+            parsed.events, key=lambda e: (e.span()[0], e.recurrence_id, e.summary.lower())
+        )
         self.ics_path.write_text(
             ical.render_calendar(ordered, parsed.passthrough), encoding="utf-8"
         )
@@ -76,11 +86,25 @@ class CalendarStore:
 
     # -- writes ------------------------------------------------------------
 
-    def add(self, *, summary: str, start: str, end: str = "", **fields: Any) -> Event:
+    def add(
+        self,
+        *,
+        summary: str,
+        start: str,
+        end: str = "",
+        rrule: str = "",
+        reminders: Iterable[Any] = (),
+        transparency: str = OPAQUE,
+        tzid: str = "",
+        **fields: Any,
+    ) -> Event:
         """Add an event. The shape of ``start`` decides whether it is all-day."""
         text = str(summary).strip()
         if not text:
             raise ValueError("an event needs a summary")
+        rule = str(rrule).strip()
+        if rule:
+            recur.parse_rule(rule)  # raises RuleError (a ValueError) on nonsense
         start_iso, all_day = normalise_when(start)
         parsed = self._load()
         event = Event(
@@ -88,54 +112,184 @@ class CalendarStore:
             start=start_iso,
             end=normalise_when(end)[0] if end else "",
             all_day=all_day,
+            rrule=rule,
+            reminders=_reminders(reminders),
+            transparency=transparency or OPAQUE,
+            tzid=str(tzid).strip(),
             **fields,
         )
         parsed.events.append(event)
         self._write(parsed)
         return event
 
-    def update(self, uid: str, **changes: Any) -> Event | None:
-        """Change an event's fields. ``None`` means there is no such event.
+    def update(
+        self,
+        uid: str,
+        *,
+        recurrence_id: str = "",
+        scope: str = ALL,
+        **changes: Any,
+    ) -> Event | None:
+        """Change an event. ``None`` means there is no such event.
 
+        ``scope`` decides what a change to a repeating event means:
+        ``all`` edits the series, ``this`` moves or edits a single instance,
+        ``future`` splits the series and leaves everything before it alone.
         Only the keys actually given are touched, so a move does not blank the
         description. Empty values are ignored rather than treated as erasures.
         """
-        wanted = {k: v for k, v in changes.items() if v not in (None, "")}
+        wanted = _wanted(changes)
         if not wanted:
             raise ValueError("nothing to change")
         parsed = self._load()
-        event = next((e for e in parsed.events if e.uid == uid), None)
-        if event is None:
+        master = _find(parsed.events, uid, "")
+        if master is None:
             return None
-        for key, value in wanted.items():
-            if key == "start":
-                event.start, event.all_day = normalise_when(str(value))
-            elif key == "end":
-                event.end = normalise_when(str(value))[0]
-            elif key == "data_class":
-                event.data_class = DataClass(str(value))
-            elif key == "summary":
-                event.summary = str(value).strip()
-            elif key in ("location", "description", "calendar", "authority"):
-                setattr(event, key, str(value))
-        event.updated_at = time.time()
-        self._write(parsed)
-        return event
+        if not master.rrule or scope == ALL:
+            _apply(master, wanted)
+            master.updated_at = time.time()
+            self._write(parsed)
+            return master
+        if scope == THIS:
+            return self._update_instance(parsed, master, recurrence_id, wanted)
+        if scope == FUTURE:
+            return self._update_future(parsed, master, recurrence_id, wanted)
+        raise ValueError(f"unknown scope {scope!r} — use 'all', 'this' or 'future'")
 
-    def delete(self, uid: str) -> bool:
-        parsed = self._load()
-        keep = [e for e in parsed.events if e.uid != uid]
-        if len(keep) == len(parsed.events):
-            return False
-        parsed.events = keep
+    def _update_instance(
+        self, parsed: ical.ParsedCalendar, master: Event, occurrence: str, wanted: dict[str, Any]
+    ) -> Event:
+        if not occurrence:
+            raise ValueError(
+                "editing one occurrence needs `recurrence_id` — the instance's own "
+                "start, as `agenda` prints it"
+            )
+        key = _key_for(master, occurrence)
+        existing = _find(parsed.events, master.uid, key)
+        if existing is None:
+            # A new override: the *same* uid as its series — that is what makes
+            # it an override rather than an unrelated event — with its own
+            # DTSTART and a RECURRENCE-ID pinning the instance it replaces.
+            existing = Event(
+                uid=master.uid,
+                summary=master.summary,
+                start=key,
+                end=master.end,
+                all_day=master.all_day,
+                location=master.location,
+                description=master.description,
+                calendar=master.calendar,
+                authority=master.authority,
+                data_class=master.data_class,
+                tzid=master.tzid,
+                recurrence_id=key,
+            )
+            _copy_span(master, existing, counter=_offset_for(master, key))
+            parsed.events.append(existing)
+        _apply(existing, wanted)
+        existing.updated_at = time.time()
         self._write(parsed)
-        return True
+        return existing
+
+    def _update_future(
+        self, parsed: ical.ParsedCalendar, master: Event, occurrence: str, wanted: dict[str, Any]
+    ) -> Event:
+        """Cut the series at ``occurrence`` and carry on from there.
+
+        Two clean series is easier to reason about than a chain of
+        ``THISANDFUTURE`` overrides, and every calendar app reads it.
+        """
+        if not occurrence:
+            raise ValueError(
+                "editing everything from a date needs `recurrence_id` — the instance "
+                "the change starts at, as `agenda` prints it"
+            )
+        key = _key_for(master, occurrence)
+        tail_rrule = _truncate(master, key)
+        start_iso, all_day = normalise_when(key)
+        tail = Event(
+            summary=master.summary,
+            start=start_iso,
+            end=master.end,
+            all_day=all_day,
+            location=master.location,
+            description=master.description,
+            calendar=master.calendar,
+            authority=master.authority,
+            data_class=master.data_class,
+            rrule=tail_rrule,
+            exdates=[value for value in master.exdates if str(value) >= key],
+            tzid=master.tzid,
+            transparency=master.transparency,
+            reminders=list(master.reminders),
+        )
+        master.exdates = [value for value in master.exdates if str(value) < key]
+        master.updated_at = time.time()
+        parsed.events.append(tail)
+        _apply(tail, wanted)
+        self._write(parsed)
+        return tail
+
+    def delete(self, uid: str, *, recurrence_id: str = "", scope: str = ALL) -> bool:
+        """Remove an event, or leave one instance out of a series."""
+        parsed = self._load()
+        master = _find(parsed.events, uid, "")
+        if master is None:
+            return False
+        if not master.rrule or scope == ALL:
+            keep = [e for e in parsed.events if e.uid != uid]
+            changed = len(keep) != len(parsed.events)
+            if not changed:
+                return False
+            parsed.events = keep
+            self._write(parsed)
+            return True
+        if scope == THIS:
+            key = _key_for(master, recurrence_id) if recurrence_id else ""
+            if not key:
+                raise ValueError(
+                    "dropping one occurrence needs `recurrence_id` — the instance's "
+                    "own start"
+                )
+            master.exdates = sorted({*master.exdates, key})
+            master.updated_at = time.time()
+            # An override of that instance is now moot; the exclusion speaks.
+            parsed.events = [
+                e
+                for e in parsed.events
+                if not (e.uid == uid and e.recurrence_id == key)
+            ]
+            self._write(parsed)
+            return True
+        if scope == FUTURE:
+            key = _key_for(master, recurrence_id) if recurrence_id else ""
+            if not key:
+                raise ValueError(
+                    "dropping the rest of a series needs `recurrence_id` — the "
+                    "instance it should stop before"
+                )
+            moment = parse_iso(key) - timedelta(minutes=1)
+            master.rrule = _with_until(master, moment)
+            master.updated_at = time.time()
+            parsed.events = [
+                e
+                for e in parsed.events
+                if not (e.uid == uid and e.recurrence_id and e.recurrence_id >= key)
+            ]
+            self._write(parsed)
+            return True
+        raise ValueError(f"unknown scope {scope!r} — use 'all', 'this' or 'future'")
 
     # -- reads -------------------------------------------------------------
 
     def get(self, uid: str) -> Event | None:
+        """The series (or one-off) itself. Overrides are :meth:`overrides`."""
         self._sync()
         return self.index.get(uid)
+
+    def overrides(self, uid: str) -> list[Event]:
+        self._sync()
+        return self.index.overrides(uid)
 
     def between(
         self,
@@ -145,9 +299,31 @@ class CalendarStore:
         limit: int = 50,
         allow_local_only: bool = True,
     ) -> list[Event]:
+        return self.occurrences(
+            parse_iso(start),
+            parse_iso(end),
+            limit=limit,
+            allow_local_only=allow_local_only,
+        )
+
+    def occurrences(
+        self,
+        window_start: datetime,
+        window_end: datetime,
+        *,
+        limit: int = 50,
+        allow_local_only: bool = True,
+    ) -> list[Event]:
+        """The dated events in a window — series expanded, overrides applied."""
         self._sync()
-        rows = self.index.between(start, end, limit=max(limit * 4, limit))
-        return _visible(rows, limit, allow_local_only)
+        rows = self.index.candidates(
+            window_start.strftime("%Y-%m-%dT%H:%M"),
+            window_end.strftime("%Y-%m-%dT%H:%M"),
+        )
+        expanded = expand_occurrences(
+            rows, window_start, window_end, limit=max(limit * 4, 200)
+        )
+        return _visible(expanded, limit, allow_local_only)
 
     def agenda(
         self,
@@ -159,17 +335,21 @@ class CalendarStore:
     ) -> list[Event]:
         """What is coming, from today. Bounds are dates, so a day counts in full."""
         moment = now or datetime.now()
-        return self.between(
-            moment.strftime("%Y-%m-%d"),
-            (moment + timedelta(days=days)).strftime("%Y-%m-%d"),
+        return self.occurrences(
+            datetime.combine(moment.date(), datetime.min.time()),
+            datetime.combine(moment.date(), datetime.min.time()) + timedelta(days=days),
             limit=limit,
             allow_local_only=allow_local_only,
         )
 
-    def all(self, *, limit: int = 100, allow_local_only: bool = True) -> list[Event]:
+    def series(self, *, limit: int = 100, allow_local_only: bool = True) -> list[Event]:
+        """The definitions themselves — one row per event or series."""
         self._sync()
-        rows = self.index.all(limit=max(limit * 4, limit))
+        rows = [e for e in self.index.all(limit=max(limit * 4, limit)) if not e.recurrence_id]
         return _visible(rows, limit, allow_local_only)
+
+    def all(self, *, limit: int = 100, allow_local_only: bool = True) -> list[Event]:
+        return self.series(limit=limit, allow_local_only=allow_local_only)
 
     def count(self) -> int:
         self._sync()
@@ -192,7 +372,114 @@ class CalendarStore:
         return json.loads(self.sync_path.read_text(encoding="utf-8"))
 
 
+# -- helpers ----------------------------------------------------------------
+
+
 def _visible(rows: list[Event], limit: int, allow_local_only: bool) -> list[Event]:
     if not allow_local_only:
         rows = [r for r in rows if r.data_class is not DataClass.LOCAL_ONLY]
     return rows[:limit]
+
+
+def _find(events: list[Event], uid: str, recurrence_id: str) -> Event | None:
+    return next(
+        (e for e in events if e.uid == uid and e.recurrence_id == recurrence_id), None
+    )
+
+
+def _reminders(values: Iterable[Any]) -> list[Reminder]:
+    out: list[Reminder] = []
+    for value in values:
+        if isinstance(value, Reminder):
+            out.append(value)
+        elif isinstance(value, int):
+            out.append(Reminder(value))
+        elif isinstance(value, dict):
+            out.append(Reminder.from_dict(value))
+    return out
+
+
+def _wanted(changes: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in changes.items() if value not in (None, "", [])}
+
+
+def _apply(event: Event, wanted: dict[str, Any]) -> None:
+    if "reminders" in wanted:
+        event.reminders = _reminders(wanted["reminders"])
+    for key, value in wanted.items():
+        if key == "reminders":
+            continue
+        if key == "start":
+            event.start, event.all_day = normalise_when(str(value))
+        elif key == "end":
+            event.end = normalise_when(str(value))[0] if value else ""
+        elif key == "data_class":
+            event.data_class = DataClass(str(value))
+        elif key == "rrule":
+            rule = str(value).strip()
+            if rule:
+                recur.parse_rule(rule)
+            event.rrule = rule
+        elif key == "exdates":
+            event.exdates = [_key_from(value, event) for value in value]
+        elif key == "summary":
+            event.summary = str(value).strip()
+        elif key in ("location", "description", "calendar", "authority", "tzid"):
+            setattr(event, key, str(value))
+        elif key == "transparency":
+            event.transparency = str(value)
+
+
+def _key_from(value: Any, event: Event) -> str:
+    iso, _all_day = normalise_when(str(value))
+    return iso
+
+
+def _key_for(master: Event, occurrence: str) -> str:
+    """An occurrence start in the same shape the series stores its own times."""
+    iso, _all_day = normalise_when(occurrence)
+    if master.all_day:
+        return iso[:10]
+    return iso
+
+
+def _offset_for(master: Event, key: str) -> timedelta:
+    start = parse_iso(master.start)
+    moment = parse_iso(key)
+    return moment - start
+
+
+def _copy_span(master: Event, into: Event, *, counter: timedelta) -> None:
+    if master.end:
+        into.end = _shift(master.end, counter, master.all_day)
+
+
+def _shift(value: str, delta: timedelta, all_day: bool) -> str:
+    moment = parse_iso(value) + delta
+    return moment.strftime("%Y-%m-%d" if all_day else "%Y-%m-%dT%H:%M")
+
+
+def _truncate(master: Event, key: str) -> str:
+    """End the master's rule just before ``key``; return the tail's rule."""
+    moment = parse_iso(key) - timedelta(minutes=1)
+    master.rrule = _with_until(master, moment)
+    return _without_until(master.rrule)
+
+
+def _with_until(master: Event, moment: datetime) -> str:
+    stamp = moment.strftime("%Y%m%d" if master.all_day else "%Y%m%dT%H%M%S")
+    parts = [
+        chunk
+        for chunk in master.rrule.split(";")
+        if chunk and not chunk.upper().startswith(("UNTIL=", "COUNT="))
+    ]
+    parts.append(f"UNTIL={stamp}")
+    return ";".join(parts)
+
+
+def _without_until(rule: str) -> str:
+    return ";".join(
+        chunk
+        for chunk in rule.split(";")
+        if chunk and not chunk.upper().startswith(("UNTIL=", "COUNT="))
+    )

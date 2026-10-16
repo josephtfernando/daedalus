@@ -241,10 +241,22 @@ through the `calendar` primitive (Layer 1). It is genuinely file-first: every mu
 re-reads the file before changing it, so an event the owner added by hand — and any property
 line the module does not model — survives a tool write, and `index.sqlite` is a derived cache
 that rebuilds itself whenever `events.ics` changes underneath it. Times are **floating
-local**, and an event's shape decides whether it is all-day (`2026-10-16`) or a moment
+local** unless an event names a `TZID`, in which case the zone travels with the time; an
+event's shape decides whether it is all-day (`2026-10-16`) or a moment
 (`2026-10-16T09:10`). Events carry a data class, so a `local_only` event is withheld from any
 prompt that could reach a remote model, exactly as memory is. `gcal` is **not** built: it
 remains the read-all / write-own resource below, and `sync_state.json` is its empty cursor slot.
+
+**A repeating event is a definition; a read answers with occurrences.** One `VEVENT` may carry
+an `RRULE` (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`, with `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY`
+including ordinals such as `-1FR`, `BYMONTHDAY`, `BYMONTH`, `BYSETPOS`, `WKST`); `EXDATE` leaves
+instances out; a `RECURRENCE-ID` override — a second `VEVENT` sharing the series' `UID` —
+replaces exactly one instance. `agenda` and every other read expand the rule and answer in
+dated occurrences, so "every weekday at 9:10" answers for the day being asked about rather than
+existing as a rule nobody can read. Writes say what they mean: `scope=all` edits the series,
+`scope=this` the one instance, `scope=future` splits the series at that point. A `VALARM` is
+kept as an offset from the start, and `TRANSP` records whether an event makes the owner busy.
+Driving gcal itself is deferred: the owner's calendar is the one on this laptop.
 
 **`gcal` — a resource, read all / write one.**
 

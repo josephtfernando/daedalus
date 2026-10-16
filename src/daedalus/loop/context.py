@@ -60,6 +60,12 @@ owner's laptop. You are reached over Discord by one person. You are their chief 
 ### The calendar
 {calendar}
 
+Repeating things live in the calendar as **one event with an `rrule`**, not as copies — use
+`calendar op=create` with `rrule` for "every weekday", "the second Tuesday", and so on. `agenda`
+shows repeating events on each day they fall; the id it prints carries the instance's own time
+after an `@`, and passing that as `recurrence_id` with `scope=this` moves *only that instance*,
+while `scope=future` moves it and everything after it.
+
 ### Recent memory
 {memory}
 

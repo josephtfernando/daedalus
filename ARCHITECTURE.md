@@ -122,7 +122,7 @@ daedalus/                      # code repo
     memory/
       store.py index.py schema.py facets.py markdown.py
     calendar/
-      store.py index.py event.py ical.py
+      store.py index.py event.py ical.py recur.py occurrences.py
     scheduler/
       scheduler.py jobs.py wakes.py proactive.py
     surface/

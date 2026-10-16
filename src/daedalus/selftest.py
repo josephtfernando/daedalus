@@ -232,7 +232,30 @@ def _check_calendar(rt: Runtime) -> Check:
     if "selftest local-only event" in prompt:
         return Check("calendar", False, "a local_only event was placed in a remote-bound prompt")
 
-    return Check("calendar", True, f"wrote+hand-edited+read {event.uid[:8]}")
+    # A rule has to answer for the *day*, not just exist as a row (SPEC §5.5):
+    # "every Monday" is only real if Monday can be asked about.
+    anchor = datetime.now().date() + timedelta(days=7)
+    weekday = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")[anchor.weekday()]
+    series = rt.calendar.add(
+        summary="selftest repeating probe",
+        start=f"{anchor.isoformat()}T09:00",
+        rrule=f"FREQ=WEEKLY;BYDAY={weekday}",
+    )
+    day_start = datetime.combine(anchor, datetime.min.time())
+    on_day = rt.calendar.occurrences(day_start, day_start + timedelta(days=1))
+    if not any(e.uid == series.uid for e in on_day):
+        return Check("calendar", False, "a repeating event did not appear on the day it repeats")
+
+    # Moving one instance must replace that occurrence and leave the series.
+    slot = f"{anchor.isoformat()}T11:00"
+    rt.calendar.update(
+        series.uid, recurrence_id=f"{anchor.isoformat()}T09:00", scope="this", start=slot
+    )
+    after = rt.calendar.occurrences(day_start, day_start + timedelta(days=1))
+    if [e.start for e in after if e.uid == series.uid] != [slot]:
+        return Check("calendar", False, "moving one instance did not replace just that instance")
+
+    return Check("calendar", True, f"wrote+repeated+moved {event.uid[:8]}")
 
 
 def _check_approvals(rt: Runtime) -> Check:
