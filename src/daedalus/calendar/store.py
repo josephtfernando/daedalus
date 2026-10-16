@@ -364,6 +364,51 @@ class CalendarStore:
         rows = self.index.search(query, limit=max(limit * 4, limit))
         return _visible(rows, limit, allow_local_only)
 
+    # -- reminders ---------------------------------------------------------
+
+    def due_reminders(
+        self,
+        since: datetime,
+        now: datetime,
+        *,
+        allow_local_only: bool = True,
+    ) -> list[tuple[Event, Reminder, datetime]]:
+        """``(event, reminder, when it should have fired)`` for ``(since, now]``.
+
+        A reminder is relative to the *start*, so an alarm that leads a meeting
+        is already due while the meeting itself is still ahead: the window
+        reaches ``max_lead`` into the future to catch those, and a day back to
+        catch an event that began just before the tick.
+
+        ``local_only`` events are **included**: a reminder goes to the owner,
+        over the surface they chose, with no model in the loop — so the gate
+        that keeps those values out of a *prompt* has nothing to do here.
+        """
+        self._sync()
+        lead = self._max_lead()
+        rows = self.occurrences(
+            since - timedelta(days=1),
+            now + lead,
+            limit=1000,
+            allow_local_only=allow_local_only,
+        )
+        found: list[tuple[Event, Reminder, datetime]] = []
+        for event in rows:
+            start = zones.local_wall(event.span()[0])
+            for reminder in event.reminders:
+                fire_at = start - timedelta(minutes=reminder.offset_minutes)
+                if since < fire_at <= now:
+                    found.append((event, reminder, fire_at))
+        return sorted(found, key=lambda item: item[2])
+
+    def _max_lead(self) -> timedelta:
+        """The longest reminder lead in the store, capped at a week."""
+        top = 0
+        for event in self.index.all(limit=5000):
+            for reminder in event.reminders:
+                top = max(top, reminder.offset_minutes)
+        return timedelta(minutes=min(max(top, 0), 7 * 24 * 60))
+
     # -- time the owner has, and time they do not --------------------------
 
     def busy(

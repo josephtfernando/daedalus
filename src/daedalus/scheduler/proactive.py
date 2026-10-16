@@ -13,10 +13,12 @@ modes make a proactive agent worse than a silent one, and each gets a gate:
 - **Speaking every time the timer fires.** A *daily cap* bounds how often the
   agent may open its mouth, so a cadence job cannot become a drip.
 
-What is deliberately **not** gated: a notification from an authored capability.
-An alert is not the agent choosing to speak — the owner defined that capability
-and asked it to speak up. Silencing an alert at 03:00 would defeat the thing it
-was built for.
+What is deliberately **not** gated: a notification from an authored capability,
+and a calendar **reminder**. Neither is the agent choosing to speak — the owner
+defined the capability, and the owner set the alarm. Silencing either at 03:00
+would defeat the thing it was built for. (Reminders are delivered by
+:meth:`~daedalus.scheduler.scheduler.Scheduler.fire_reminders`, which never
+consults this module.)
 
 Within those bounds the model still decides *substance*: it may answer with
 :data:`SILENT` when there is nothing worth the owner's attention.

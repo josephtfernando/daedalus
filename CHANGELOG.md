@@ -16,6 +16,27 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **A reminder is a message, and it now arrives.** A `VALARM` was round-tripped but nothing
+  ever acted on it, which made it decoration. The scheduler tick now looks back over its own
+  window for reminders that have come due and delivers them, so \"remind me 15 minutes before
+  the dentist\" is a thing the owner can ask for and then *receive*:
+  - **Set from either side.** `calendar op=create`/`op=update` take `remind=<minutes before>`,
+    and a hand-written `VALARM` in `events.ics` (including one gcal wrote) is read as the
+    offset it already was. `TRIGGER:-PT1H30M` is \"1h 30m before\"; the sign is stored as a
+    person thinks it — positive means *before* the start.
+  - **Exactly once.** `state/reminders.json` records which nudges have been delivered, so a
+    tick that runs twice in a minute — or a daemon restarted mid-minute — does not nudge the
+    owner twice about the same meeting. Entries are pruned after a week.
+  - **Not behind the proactive gate.** A wake is the agent *choosing* to speak; a reminder is
+    an instruction the owner left behind. So quiet hours and the daily cap — which bound the
+    agent's own cadence — have no say: a 03:00 alarm the owner set fires at 03:00, and the
+    nudge does not spend the day's allowance. Same reasoning that already kept capability
+    alerts ungated, now written down where the gate lives.
+  - **A late tick still delivers.** The look-back is 15 minutes, deliberately longer than the
+    tick period so a reminder falling between two ticks is not lost, and deliberately not
+    longer, so a daemon that was down overnight does not wake the owner with a pile of
+    meetings that have already happened.
+
 - **The calendar answers questions about time, and knows which clock it is on.** A list is not
   a calendar; being able to say *when the owner is not free* is. New read ops, all over
   occurrences rather than definitions:

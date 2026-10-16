@@ -384,7 +384,19 @@ async def _check_proactive(rt: Runtime) -> Check:
     if len(rt.surface.sent) != before + 1:  # type: ignore[union-attr]
         return Check("proactive", False, "the daily cap did not stop a wake")
 
-    return Check("proactive", True, "quiet hours held, the cap bit, silence stayed silent")
+    # A reminder is the owner's instruction, not the agent's choice to speak: it
+    # must reach them inside quiet hours, where a wake may not, and exactly once.
+    rt.calendar.add(summary="selftest reminder probe", start="2026-10-16T03:10", reminders=[15])
+    await rt.scheduler.fire_reminders(rt, datetime(2026, 10, 16, 3, 0))
+    if len(rt.surface.sent) != before + 2:  # type: ignore[union-attr]
+        return Check("proactive", False, "a reminder the owner set was silenced")
+    await rt.scheduler.fire_reminders(rt, datetime(2026, 10, 16, 3, 1))
+    if len(rt.surface.sent) != before + 2:  # type: ignore[union-attr]
+        return Check("proactive", False, "the same reminder was delivered twice")
+
+    return Check(
+        "proactive", True, "quiet hours held, the cap bit, silence stayed silent, the reminder fired"
+    )
 
 
 async def _check_loop(settings: Settings, surface: ScriptedSurface) -> Check:

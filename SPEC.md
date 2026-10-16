@@ -265,6 +265,13 @@ two events is reported as the double-booking it is, and `search` finds events by
 over an FTS5 index. All of it works on **occurrences**, so a weekday standup blocks that slot
 every weekday.
 
+**Reminders fire, and fire once.** A `VALARM` is an offset from the start, and the scheduler
+tick looks back over its own window for reminders that have come due, so one the owner set
+arrives on time and is not repeated (`state/reminders.json`). A reminder is the owner's
+instruction rather than the agent's choice to speak, so it does **not** pass through the
+proactive gate (§9): a 03:00 reminder they asked for fires at 03:00, where a *wake* would be
+silenced.
+
 **Clocks other than this one.** An event may name a `TZID`; the zone travels with the time, and
 `recur.py` stays pure wall-clock arithmetic, so "9:00 every weekday" stays 9:00 in the zone it
 was written in across a daylight-saving change. Real instants — not wall-time strings — are what

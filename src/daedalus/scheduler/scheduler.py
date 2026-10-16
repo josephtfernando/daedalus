@@ -13,10 +13,11 @@ from __future__ import annotations
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..calendar.reminders import ReminderLedger, key_for, render
 from .cron import validate as validate_cron
 from .jobs import Job, JobStore
 from .proactive import ProactiveState
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
     from ..runtime import Runtime
 
 WakeHandler = Callable[[str], Awaitable[str]]
+
+#: How far back a tick looks for reminders that have come due. Must exceed the
+#: tick period, since a reminder falling between two ticks is delivered by the
+#: later one; it is deliberately not longer, so a daemon that was down overnight
+#: does not wake the owner with a pile of meetings that have already happened.
+REMINDER_LOOKBACK = timedelta(minutes=15)
+#: How long a delivered nudge is remembered, so the file cannot grow forever.
+REMINDER_MEMORY = timedelta(days=7)
 
 
 @dataclass(slots=True)
@@ -44,6 +53,7 @@ class Scheduler:
     store: JobStore = field(init=False)
     log: WakeLog = field(init=False)
     proactive: ProactiveState = field(init=False)
+    reminders: ReminderLedger = field(init=False)
 
     def __post_init__(self) -> None:
         if self.jobs_path is None:
@@ -51,6 +61,7 @@ class Scheduler:
         self.store = JobStore(self.jobs_path)
         self.log = WakeLog(self.state_dir / "wakes.db")
         self.proactive = ProactiveState(self.state_dir / "proactive.json")
+        self.reminders = ReminderLedger(self.state_dir / "reminders.json")
 
     # -- job management ---------------------------------------------------
 
@@ -95,6 +106,32 @@ class Scheduler:
             job.last_run = time.time()
             self.store.put(job)
             results.append(result)
+        results.extend(await self.fire_reminders(ctx, when))
+        return results
+
+    async def fire_reminders(self, ctx: "Runtime", when: datetime | None = None) -> list[TickResult]:
+        """Deliver any reminder that has come due since the last tick (SPEC §5.5).
+
+        Deliberately **not** behind the proactive gate: the owner set this alarm
+        and named the time, so quiet hours and the daily cap — which bound the
+        agent's own choice to speak — have no say here.
+        """
+        now = when or datetime.now()
+        since = now - REMINDER_LOOKBACK
+        due = ctx.calendar.due_reminders(since, now)
+        results: list[TickResult] = []
+        for event, reminder, _fire_at in due:
+            key = key_for(event, reminder)
+            if self.reminders.fired(key):
+                continue
+            text = render(event, reminder, now)
+            if ctx.surface is not None:
+                await ctx.surface.send(text)
+            self.reminders.note(key, now)
+            results.append(
+                TickResult(job=f"reminder:{event.summary}", ran=True, ok=True, detail="reminded", output=text)
+            )
+        self.reminders.prune(now - REMINDER_MEMORY)
         return results
 
     async def _run_job(

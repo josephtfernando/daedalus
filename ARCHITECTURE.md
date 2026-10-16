@@ -122,7 +122,7 @@ daedalus/                      # code repo
     memory/
       store.py index.py schema.py facets.py markdown.py
     calendar/
-      store.py index.py event.py ical.py recur.py occurrences.py zones.py
+      store.py index.py event.py ical.py recur.py occurrences.py zones.py reminders.py
     scheduler/
       scheduler.py jobs.py wakes.py proactive.py
     surface/
@@ -149,7 +149,7 @@ $DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
   cabinet/      seats/*.toml  messages.db        # typed protocol log
   genui/        components/  tokens/  drafts/
   approvals/    grants.toml  log.db
-  state/        wakes.db  ratelimit.db
+  state/        wakes.db  ratelimit.db  proactive.json  reminders.json
   ui/                                        # generated dashboards (served)
   logs/                                      # journald mirrors
 ```
@@ -232,6 +232,21 @@ cron wake job due ─▶ gate (deterministic) ─▶ briefing ─▶ model compo
 ```
 
 **The gate is in code; the substance is the model's.** Whether a wake may speak is settled *before* the model is reached — an agent that can argue its way past its own quiet hours does not have any. A capability *alert* never passes through here: that is not the agent choosing to speak, and it must fire when it fires.
+
+### 7.3.2 A reminder — the owner's instruction, not the agent's choice
+
+```
+tick ─▶ calendar.due_reminders(now-15min, now) ─▶ unseen? ─▶ render ─▶ Surface ─▶ ledger
+```
+
+A third kind of outbound speech, alongside the capability alert and the wake: it
+is a `VALARM` the owner set, so it **does not pass through the proactive gate** —
+a 03:00 reminder the owner asked for fires at 03:00, where a *wake* would be
+silenced. Its schedule comes from the calendar rather than a cron job: the tick
+looks back over its own window for reminders that have come due, `state/reminders.json`
+remembers what was delivered so a double tick cannot double-nudge, and a
+`local_only` event's reminder still fires — it goes to the owner, over the
+owner's surface, with no model in the loop.
 
 ### 7.4 Dashboard render, approve, tune
 
@@ -338,6 +353,7 @@ added_at = timestamp
 - `approvals/log.db` — every authorize decision.
 - `state/wakes.db` — `agent_wakes` + job state (idempotency keys).
 - `state/proactive.json` — the day's proactive ledger: how often the agent has spoken, and what it last said. Hand-editable, so "why did you ping me at 23:00" has an answer that is not a guess.
+- `state/reminders.json` — which calendar reminders have already been delivered, so a tick that runs twice in a minute does not nudge the owner twice about the same meeting. Pruned after a week.
 - `state/ratelimit.db` — rolling-window provider accounting.
 - `cabinet/messages.db` — typed seat messages.
 - `calendar/` — `events.ics` (the `Daedalus` calendar, internal-authoritative) + `index.sqlite` + `sync_state.json` (gcal cursor/token); reads from other calendars are cached with their gcal-authoritative origin.
