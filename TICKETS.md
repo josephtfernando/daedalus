@@ -85,16 +85,20 @@ knows the vocabulary. **Done** — 35 tests in `tests/test_genui_components.py`,
 including the escape proved with the validator deliberately bypassed. T4 also
 added `Prop.choices` and `Component.check` to `spec.py`.
 
-### T5 — `genui/theming.py`: tokens, and mood → token set · `open`
+### T5 — `genui/theming.py`: tokens, and mood → token set · `done`
 *SPEC §3.6; §13 (mood→token mapping, open).*
 
 Validated token sets (palette / type / density / motion) for the starting moods
-`calm`, `midnight-focus`, `dense-ops`, `low-energy`, `celebration`. Mood is
-inferred from structured signals, with a one-word owner override; an unknown mood
-falls back to `calm` rather than rendering unstyled.
+`calm`, `midnight-focus`, `dense-ops`, `low-energy`, `celebration`, plus the one
+place CSS is written (the component sheet, reading only declared tokens). Mood is
+inferred from structured local signals, with a one-word owner override that wins;
+an unknown mood falls back to `calm` rather than rendering unstyled.
 
 **Acceptance:** every mood yields a *complete* token set (missing a token is a
 failure, not a default); the override beats inference; unknown mood → `calm`.
+**Done** — 46 tests in `tests/test_genui_theming.py`. A token is validated, not
+free-form: hex colours, units on lengths, and a font stack that cannot contain a
+parenthesis (so `url(…)` cannot ride in).
 
 ### T6 — `genui/renderer.py`: spec + local values + tokens → HTML · `open`
 *SPEC §3.6 ("structure remote, values local"), ARCHITECTURE §7.4, §254.*

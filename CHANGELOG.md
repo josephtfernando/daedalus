@@ -12,9 +12,32 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 398-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 444-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **A mood is a complete, validated token set — never a stylesheet.** SPEC §3.6 asks for a dashboard
+  generated *"in the owner's theme, for the owner's mood"* while also forbidding arbitrary
+  model-generated CSS. So the theme is not written at render time: it is a **token set the owner
+  approved**, and a mood is a *named choice among those sets*. `genui/theming.py` holds five —
+  `calm`, `midnight-focus`, `dense-ops`, `low-energy`, `celebration`.
+  - **A mood is complete or it does not exist.** Every mood supplies every token, and a hole is a
+    refusal rather than a default — because "a default somewhere" is exactly how a theme becomes
+    whatever the fallback happened to be.
+  - **Every value is validated.** Colours are hex; a length needs a unit (`0` excepted, as CSS
+    excepts it); motion is a duration. A font stack is an **allowlist** — no parenthesis is
+    permitted, so `url(…)` cannot ride in on a font and turn a rendered page into a fetch.
+  - **All CSS lives in one module and reads only declared tokens.** A test parses every
+    `var(--d-…)` out of the component sheet and asserts it names a declared token, so a component
+    cannot quietly depend on styling that is not part of the owner's vocabulary. Another asserts
+    that no mood's sheet contains `url(` or `@import` — self-contained is the promise, and a fetch
+    hidden in the theme would break it silently.
+  - **Mood is inferred from structured local signals, never from a model:** a celebration outranks a
+    flat battery, a flat battery outranks a late hour, a crowded day outranks the default. The hour
+    is **passed in** — the caller owns the zone and nothing here reads a clock. A one-word owner
+    override wins, and a typo in it falls through to the inferred mood rather than costing the owner
+    their theme. An unrecognised mood renders `calm`: the failure mode of a bad mood name should be
+    a plain page, not a broken one.
 
 - **Six shapes the dashboard can be made of.** `genui/components/` is the visual vocabulary the spec
   is written in — `stat-card`, `list`, `timeline`, `table`, `prose` and `calendar` — each a **prop
