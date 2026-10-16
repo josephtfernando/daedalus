@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from daedalus.calendar.store import CalendarStore
+from daedalus.calendar import zones
 from daedalus.loop.context import build_system_prompt
 from daedalus.runtime import Runtime
 from daedalus.security.provenance import DataClass
@@ -504,3 +505,215 @@ def test_a_multi_day_event_is_on_every_day_it_covers(store: CalendarStore) -> No
 
     assert [e.summary for e in friday] == ["Conference"]
     assert friday[0].when() == "Thu 15 Oct – Sat 17 Oct (all day)"
+
+
+# -- clocks other than this one ---------------------------------------------
+
+
+def test_a_rule_on_another_clock_keeps_its_hour_across_a_change(store: CalendarStore) -> None:
+    """A 09:00 call in London is 09:00 in London either side of the clocks changing."""
+    store.add(
+        summary="Call", start="2026-03-27T09:00", rrule="FREQ=DAILY", tzid="Europe/London"
+    )
+
+    starts = [e.start for e in store.occurrences(datetime(2026, 3, 27), datetime(2026, 3, 31))]
+
+    assert starts == [
+        "2026-03-27T09:00",
+        "2026-03-28T09:00",
+        "2026-03-29T09:00",  # the day the London clocks moved
+        "2026-03-30T09:00",
+    ]
+
+
+def test_another_clock_is_named_only_when_it_is_not_this_one(store: CalendarStore) -> None:
+    from daedalus.calendar import zones
+
+    if zones.is_local("Asia/Tokyo"):
+        pytest.skip("the host clock is Tokyo; the label would rightly be absent")
+    foreign = store.add(summary="Call", start="2026-10-20T09:00", tzid="Asia/Tokyo")
+    local = store.add(summary="Dentist", start="2026-10-20T09:00")
+
+    assert "Tokyo" in foreign.line(), "a foreign clock must say which clock it is"
+    assert "Tokyo" not in local.line()
+    assert local.when() == "Tue 20 Oct 09:00"
+
+
+def test_a_zone_name_tells_the_truth_about_the_instant() -> None:
+    """Two clocks, one moment: the conversion the whole layer exists for."""
+    from daedalus.calendar import zones
+
+    london = zones.zone_for("Europe/London")
+    tokyo = zones.zone_for("Asia/Tokyo")
+
+    assert london is not None and tokyo is not None
+    nine_in_london = datetime(2026, 10, 16, 9, 0, tzinfo=london)
+    assert nine_in_london.astimezone(tokyo).strftime("%H:%M") == "17:00"
+
+
+def test_an_unreadable_zone_falls_back_to_local_rather_than_guessing(
+    store: CalendarStore, tmp_path: Path
+) -> None:
+    """A wrong hour delivered confidently is worse than one that is merely local."""
+    path = tmp_path / "calendar" / "events.ics"
+    store.add(summary="Anchor", start="2026-10-12T09:00")
+    path.write_text(
+        _raw(path).replace(
+            "END:VCALENDAR",
+            "BEGIN:VEVENT\r\nUID:weird\r\nDTSTAMP:20261016T090000Z\r\n"
+            "DTSTART;TZID=Mars/Olympus:20261020T090000\r\nSUMMARY:Oympiad\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR",
+        ),
+        encoding="utf-8",
+    )
+
+    event = CalendarStore(tmp_path / "calendar").get("weird")
+
+    assert event is not None
+    assert event.start == "2026-10-20T09:00", "the wall time is kept, not shifted by a guess"
+    assert zones.zone_for("Mars/Olympus") is None, "an unknown zone resolves to nothing"
+
+
+# -- free, busy and doubles -------------------------------------------------
+
+
+def test_busy_merges_overlapping_events_into_one_stretch(store: CalendarStore) -> None:
+    store.add(summary="A", start="2026-10-20T09:00", end="2026-10-20T10:00")
+    store.add(summary="B", start="2026-10-20T09:30", end="2026-10-20T10:30")
+
+    blocks = store.busy(datetime(2026, 10, 20), datetime(2026, 10, 21))
+
+    assert [(b[0].strftime("%H:%M"), b[1].strftime("%H:%M")) for b in blocks] == [("09:00", "10:30")]
+
+
+def test_a_double_booking_is_reported_as_one(store: CalendarStore) -> None:
+    store.add(summary="A", start="2026-10-20T09:00", end="2026-10-20T10:00")
+    store.add(summary="B", start="2026-10-20T09:30", end="2026-10-20T10:30")
+
+    pairs = store.conflicts(datetime(2026, 10, 20), datetime(2026, 10, 21))
+
+    assert [(first.summary, second.summary) for first, second in pairs] == [("A", "B")]
+
+
+def test_an_event_marked_free_does_not_block_the_day(store: CalendarStore) -> None:
+    store.add(
+        summary="Focus time",
+        start="2026-10-20T09:00",
+        end="2026-10-20T10:00",
+        transparency="transparent",
+    )
+
+    assert store.busy(datetime(2026, 10, 20), datetime(2026, 10, 21)) == []
+    assert store.free(datetime(2026, 10, 20), datetime(2026, 10, 21), minutes=30)
+
+
+def test_free_finds_the_gaps_between_what_is_booked(store: CalendarStore) -> None:
+    store.add(summary="A", start="2026-10-20T09:00", end="2026-10-20T10:00")
+    store.add(summary="B", start="2026-10-20T11:00", end="2026-10-20T12:00")
+
+    gaps = store.free(datetime(2026, 10, 20), datetime(2026, 10, 21), minutes=30)
+
+    assert [(s.strftime("%H:%M"), e.strftime("%H:%M")) for s, e in gaps] == [
+        ("10:00", "11:00"),
+        ("12:00", "18:00"),
+    ]
+
+
+def test_a_gap_too_short_to_use_is_not_offered(store: CalendarStore) -> None:
+    store.add(summary="A", start="2026-10-20T09:00", end="2026-10-20T10:00")
+    store.add(summary="B", start="2026-10-20T10:15", end="2026-10-20T18:00")
+
+    assert store.free(datetime(2026, 10, 20), datetime(2026, 10, 21), minutes=30) == []
+
+
+def test_a_full_day_leaves_no_room(store: CalendarStore) -> None:
+    store.add(summary="Conference", start="2026-10-21")
+
+    assert store.free(datetime(2026, 10, 21), datetime(2026, 10, 22), minutes=30) == []
+
+
+def test_a_repeating_meeting_blocks_its_slot_every_day(store: CalendarStore) -> None:
+    store.add(
+        summary="Standup", start="2026-10-20T09:00", end="2026-10-20T09:30", rrule="FREQ=DAILY"
+    )
+
+    gaps = store.free(datetime(2026, 10, 20), datetime(2026, 10, 23), minutes=30)
+
+    assert [(s.day, s.strftime("%H:%M")) for s, _ in gaps] == [
+        (20, "09:30"),
+        (21, "09:30"),
+        (22, "09:30"),
+    ]
+
+
+# -- search -----------------------------------------------------------------
+
+
+def test_search_finds_an_event_by_any_of_its_text(store: CalendarStore) -> None:
+    store.add(summary="Dentist", start="2026-11-02T09:00", description="Bridge Street clinic")
+    store.add(summary="Standup", start="2026-11-02T09:10", location="Zoom")
+
+    assert [e.summary for e in store.search("bridge")] == ["Dentist"]
+    assert [e.summary for e in store.search("zoom")] == ["Standup"]
+    assert store.search("nothing like this") == []
+
+
+def test_search_finds_the_series_not_each_instance(store: CalendarStore) -> None:
+    series = store.add(summary="Standup", start="2026-10-12T09:00", rrule="FREQ=WEEKLY;BYDAY=MO")
+    store.update(series.uid, recurrence_id="2026-10-19T09:00", scope="this", start="2026-10-19T11:00")
+
+    rows = store.search("standup")
+
+    assert [e.uid for e in rows] == [series.uid]
+    assert rows[0].rrule == "FREQ=WEEKLY;BYDAY=MO"
+
+
+def test_search_does_not_leak_a_local_only_event(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="Therapy", start="2026-11-02T09:00", data_class=DataClass.LOCAL_ONLY)
+
+    assert runtime.calendar.search("therapy", allow_local_only=False) == []
+    assert len(runtime.calendar.search("therapy", allow_local_only=True)) == 1
+
+
+async def test_the_tool_answers_when_the_owner_is_free(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="A", start="2026-11-03T09:00", end="2026-11-03T10:00")
+
+    result = await CalendarTool().run(
+        {"op": "free", "summary": "", "start": "2026-11-03", "query": "", "days": 1, "minutes": 60},
+        runtime,
+    )
+
+    assert result.ok, result.output
+    assert "10:00" in result.output and "18:00" in result.output
+
+
+async def test_the_tool_reports_a_double_booking(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="A", start="2026-11-04T09:00", end="2026-11-04T10:00")
+    runtime.calendar.add(summary="B", start="2026-11-04T09:30", end="2026-11-04T10:30")
+
+    result = await CalendarTool().run(
+        {"op": "busy", "summary": "", "start": "2026-11-04", "query": "", "days": 1}, runtime
+    )
+
+    assert result.ok
+    assert "double-booked" in result.output
+
+
+async def test_the_tool_searches(runtime: Runtime) -> None:
+    runtime.calendar.add(summary="Dentist", start="2026-11-05T09:00", location="Bridge St")
+
+    result = await CalendarTool().run(
+        {"op": "search", "summary": "", "start": "", "query": "bridge"}, runtime
+    )
+
+    assert result.ok
+    assert "Dentist" in result.output
+
+
+async def test_the_tool_says_so_when_a_search_has_no_words(runtime: Runtime) -> None:
+    result = await CalendarTool().run(
+        {"op": "search", "summary": "", "start": "", "query": ""}, runtime
+    )
+
+    assert not result.ok
+    assert "query" in result.output

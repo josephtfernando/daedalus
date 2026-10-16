@@ -16,6 +16,28 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The calendar answers questions about time, and knows which clock it is on.** A list is not
+  a calendar; being able to say *when the owner is not free* is. New read ops, all over
+  occurrences rather than definitions:
+  - **`busy`** — the merged stretches the owner is occupied, so five overlapping events read
+    as the one blocked stretch they are. Anything marked `TRANSP:TRANSPARENT` is on the
+    calendar without blocking it (a "Focus" event does not make you unavailable), and two
+    events claiming the same minutes are reported as the **double-booking** they are rather
+    than silently merged into a stretch the owner would read as a single meeting.
+  - **`free`** — the gaps of at least N minutes inside each day's waking hours (default
+    09:00–18:00; `hours="any"` opens the day). Bounded on purpose: a schedule that cheerfully
+    offers 03:00 is technically correct and practically useless.
+  - **`search`** — events found by their own text over an FTS5 index (the same shape memory
+    uses), falling back to `LIKE` if FTS5 is unavailable rather than reporting "nothing found"
+    about something that plainly exists. It returns the *series*, not one row per instance.
+  - **Clocks other than this one.** `TZID` now *means* something: the zone travels with the
+    time, `recur.py` stays pure wall-clock arithmetic, and real instants — not wall-time
+    strings — are what free/busy and overlap compare. So a 09:00 call in London is 09:00 in
+    London either side of the clocks changing, lands on the right day here, and says "London"
+    on the line only when it is not this machine's own clock. An unreadable zone falls back to
+    floating rather than guessing an offset, because a wrong hour delivered confidently is
+    worse than one that is merely local.
+
 - **The internal calendar learned to repeat — and to answer for the day.** A calendar that
   can only hold one-off events is a list; the thing that makes one *useful* is being able to
   say "every weekday at 9:10" and then ask "what is on Thursday". So a repeating event is now

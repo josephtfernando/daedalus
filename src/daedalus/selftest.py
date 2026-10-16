@@ -255,7 +255,21 @@ def _check_calendar(rt: Runtime) -> Check:
     if [e.start for e in after if e.uid == series.uid] != [slot]:
         return Check("calendar", False, "moving one instance did not replace just that instance")
 
-    return Check("calendar", True, f"wrote+repeated+moved {event.uid[:8]}")
+    # Free/busy and search answer *questions*, not just lists. Two overlapping
+    # meetings have to become one occupied stretch, and the words have to find
+    # the event — otherwise the calendar is a pretty file, not a usable one.
+    next_day = anchor + timedelta(days=1)
+    rt.calendar.add(summary="selftest meeting one", start=f"{next_day}T09:00", end=f"{next_day}T10:00")
+    rt.calendar.add(summary="selftest meeting two", start=f"{next_day}T09:30", end=f"{next_day}T10:30")
+    day_start = datetime.combine(next_day, datetime.min.time())
+    blocks = rt.calendar.busy(day_start, day_start + timedelta(days=1))
+    shape = [(b[0].strftime("%H:%M"), b[1].strftime("%H:%M")) for b in blocks]
+    if shape != [("09:00", "10:30")]:
+        return Check("calendar", False, f"overlapping events did not merge (got {shape})")
+    if not rt.calendar.search("selftest meeting one"):
+        return Check("calendar", False, "search did not find an event by its text")
+
+    return Check("calendar", True, f"wrote+repeated+moved+searched {event.uid[:8]}")
 
 
 def _check_approvals(rt: Runtime) -> Check:

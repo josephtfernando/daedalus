@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Iterable
 
-from . import recur
+from . import recur, zones
 from .event import Event, overlaps, parse_iso
 
 
@@ -72,7 +72,9 @@ def expand(
             if overlaps(detached, window_start, window_end):
                 found.append(detached)
 
-    found.sort(key=lambda e: (parse_iso(e.start), e.summary.lower()))
+    found.sort(
+        key=lambda e: (zones.local_wall(e.span()[0]), e.summary.lower())
+    )
     return found[:limit]
 
 
@@ -86,13 +88,19 @@ def _occurrences_of(
         return [master] if overlaps(master, window_start, window_end) else []
 
     rule = recur.parse_rule(master.rrule)
+    # The rule is pure wall-clock arithmetic (recur.py never sees a zone), so
+    # expand on the *event's own* clock: a weekday 09:00 is 09:00 in the zone it
+    # was written in and stays 09:00 there across a clock change. Only the window
+    # bound has to be translated into that clock to be comparable.
+    zone = None if master.all_day else zones.zone_for(master.tzid)
     start = parse_iso(master.start)
+    stop = zones.wall_in(window_end, zone) if zone is not None else window_end
     excluded = {str(value) for value in master.exdates}
     end = parse_iso(master.end) if master.end else None
     length = (end - start) if end is not None else None
 
     out: list[Event] = []
-    for moment in recur.occurrences(start, rule, stop=window_end):
+    for moment in recur.occurrences(start, rule, stop=stop):
         key = occurrence_key(moment, master.all_day)
         if key in excluded:
             continue

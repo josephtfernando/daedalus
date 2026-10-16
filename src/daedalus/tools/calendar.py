@@ -12,10 +12,12 @@ arguments, because the model should not have to know which of five tools
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING
 
 from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
+from ..calendar.event import normalise_when, parse_iso
 from ..security.provenance import DataClass
 from .base import Tool, ToolResult, params
 
@@ -34,12 +36,45 @@ _SCOPE_HELP = (
 )
 
 
+def _window(args: dict[str, Any], *, default_days: int) -> tuple[datetime, datetime]:
+    """The span a `busy`/`free` question is about, from ``start`` and ``days``.
+
+    ``start`` is the day (or moment) to look from — today when it is empty, so
+    "when am I free" needs no date.
+    """
+    raw = str(args.get("start", "")).strip()
+    begin = parse_iso(normalise_when(raw)[0]) if raw else datetime.now()
+    begin = datetime.combine(begin.date(), datetime.min.time())
+    days = max(1, int(args.get("days") or default_days))
+    return begin, begin + timedelta(days=days)
+
+
+def _hours(value: Any) -> tuple[str, str]:
+    """``"09:30-17:00"`` as a pair of clocks; ``"any"`` opens the whole day."""
+    text = str(value or "").strip().lower()
+    if text in ("any", "all", "anytime"):
+        return "00:00", "23:59"
+    if "-" in text:
+        opens, _, closes = text.partition("-")
+        return opens.strip(), closes.strip()
+    return "09:00", "18:00"
+
+
+def _slot(start: datetime, end: datetime) -> str:
+    """A block of time, e.g. ``Fri 16 Oct 09:00–10:30``."""
+    if start.date() == end.date():
+        return f"{start:%a %d %b %H:%M}–{end:%H:%M}"
+    return f"{start:%a %d %b %H:%M} – {end:%a %d %b %H:%M}"
+
+
 class CalendarTool(Tool):
     name = "calendar"
     title = "Read or change the calendar"
     description = (
         "The owner's calendar. `agenda` shows what is coming (repeating events "
         "appear on each day they fall); `list` shows the events as defined; "
+        "`busy` shows the stretches they are not free in (and anything that "
+        "overlaps); `free` finds slots they are; `search` finds events by text; "
         "`get`, `create`, `update` and `delete` manage them. Times are local: "
         "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. A repeating "
         "event is one event with an rrule, not many copies."
@@ -50,7 +85,10 @@ class CalendarTool(Tool):
         op=(
             {
                 "type": "string",
-                "enum": ["agenda", "list", "get", "create", "update", "delete"],
+                "enum": [
+                    "agenda", "list", "get", "busy", "free", "search",
+                    "create", "update", "delete",
+                ],
             },
             True,
         ),
@@ -110,8 +148,39 @@ class CalendarTool(Tool):
             False,
         ),
         scope=({"type": "string", "enum": ["all", "this", "future"], "description": _SCOPE_HELP}, False),
+        query=(
+            {
+                "type": "string",
+                "description": (
+                    "the words to look for, for op=search. Pass \"\" for every other op."
+                ),
+            },
+            True,
+        ),
+        minutes=(
+            {
+                "type": "integer",
+                "default": 45,
+                "description": "for op=free: how long a gap the owner needs.",
+            },
+            False,
+        ),
+        hours=(
+            {
+                "type": "string",
+                "description": (
+                    "for op=free: the part of the day to consider, 'HH:MM-HH:MM' "
+                    "(default '09:00-18:00'). Pass 'any' to consider the whole day."
+                ),
+            },
+            False,
+        ),
         days=(
-            {"type": "integer", "default": 7, "description": "for op=agenda: how many days ahead to look."},
+            {
+                "type": "integer",
+                "default": 7,
+                "description": "for op=agenda/busy/free: how many days ahead to look.",
+            },
             False,
         ),
         limit=({"type": "integer", "default": 20}, False),
@@ -130,7 +199,7 @@ class CalendarTool(Tool):
 
     def assess(self, args: dict[str, Any]) -> Assessment:
         op = str(args.get("op", ""))
-        if op in ("agenda", "list", "get"):
+        if op in ("agenda", "list", "get", "busy", "free", "search"):
             return Assessment(level=Level.OK, summary="read the calendar")
         if op == "delete":
             return Assessment(
@@ -146,6 +215,9 @@ class CalendarTool(Tool):
             "agenda": self._agenda,
             "list": self._list,
             "get": self._get,
+            "busy": self._busy,
+            "free": self._free,
+            "search": self._search,
             "create": self._create,
             "update": self._update,
             "delete": self._delete,
@@ -201,6 +273,58 @@ class CalendarTool(Tool):
             lines.append("moved instances:")
             lines.extend(f"- {e.line(show_id=True)}" for e in moved)
         return ToolResult(output="\n".join(lines), data={"uid": uid})
+
+    def _busy(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
+        start, end = _window(args, default_days=1)
+        allow = ctx.allows_local_only()
+        blocks = ctx.calendar.busy(start, end, allow_local_only=allow)
+        clashes = ctx.calendar.conflicts(start, end, allow_local_only=allow)
+        if not blocks:
+            return ToolResult(output="(nothing booked — the owner is free)", data={"blocks": 0})
+        lines = [f"- {_slot(begin, finish)}" for begin, finish in blocks]
+        if clashes:
+            lines.append("double-booked:")
+            lines.extend(f"- {a.line()}  ×  {b.line()}" for a, b in clashes)
+        return ToolResult(
+            output="\n".join(lines),
+            data={"blocks": len(blocks), "conflicts": len(clashes)},
+        )
+
+    def _free(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
+        start, end = _window(args, default_days=1)
+        minutes = int(args.get("minutes") or 45)
+        gaps = ctx.calendar.free(
+            start,
+            end,
+            minutes=minutes,
+            hours=_hours(args.get("hours")),
+            allow_local_only=ctx.allows_local_only(),
+        )
+        if not gaps:
+            return ToolResult(
+                output=f"(no {minutes}-minute gap between {start:%a %d %b} and {end:%a %d %b})",
+                data={"count": 0},
+            )
+        return ToolResult(
+            output="\n".join(f"- {_slot(begin, finish)}" for begin, finish in gaps),
+            data={"count": len(gaps)},
+        )
+
+    def _search(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
+        query = str(args.get("query", "")).strip() or str(args.get("summary", "")).strip()
+        if not query:
+            return ToolResult.error("op=search needs `query` — the words to look for")
+        rows = ctx.calendar.search(
+            query,
+            limit=int(args.get("limit") or 20),
+            allow_local_only=ctx.allows_local_only(),
+        )
+        if not rows:
+            return ToolResult(output=f"(nothing matching {query!r})", data={"count": 0})
+        return ToolResult(
+            output="\n".join(f"- {e.line(show_id=True)}" for e in rows),
+            data={"count": len(rows)},
+        )
 
     # -- writes ------------------------------------------------------------
 

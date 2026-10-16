@@ -23,11 +23,12 @@ import sqlite3
 from pathlib import Path
 
 from ..security.provenance import DataClass
+from . import zones
 from .event import OPAQUE, Event, Reminder
 
 #: Bumped when the table shape changes. The cache is derived, so a mismatch
 #: means "rebuild", never "migrate".
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events(
@@ -59,6 +60,13 @@ CREATE TABLE IF NOT EXISTS events(
 CREATE INDEX IF NOT EXISTS events_span ON events(span_start, span_end);
 CREATE INDEX IF NOT EXISTS events_uid ON events(uid);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
+    uid UNINDEXED,
+    recurrence_id UNINDEXED,
+    summary,
+    description,
+    location
+);
 """
 
 _COLUMNS = (
@@ -86,7 +94,7 @@ class CalendarIndex:
             if self._version(conn) != SCHEMA_VERSION:
                 # The table is a cache over the ``.ics``: rebuilding is always
                 # cheaper and safer than migrating a shape nobody depends on.
-                conn.executescript("DROP TABLE IF EXISTS events;")
+                conn.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS search;")
                 conn.executescript(SCHEMA)
                 conn.execute(
                     "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
@@ -113,6 +121,16 @@ class CalendarIndex:
         with self._conn() as conn:
             conn.execute("DELETE FROM events")
             conn.executemany(_INSERT, [_row(e) for e in events])
+            conn.execute("DELETE FROM search")
+            conn.executemany(
+                "INSERT INTO search (uid, recurrence_id, summary, description, location)"
+                " VALUES (?,?,?,?,?)",
+                [
+                    (e.uid, e.recurrence_id, e.summary, e.description, e.location)
+                    for e in events
+                    if not e.recurrence_id
+                ],
+            )
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('source_revision', ?)",
                 (str(int(source_revision)),),
@@ -176,6 +194,50 @@ class CalendarIndex:
             (total,) = conn.execute("SELECT COUNT(*) FROM events").fetchone()
         return int(total)
 
+    # -- search ------------------------------------------------------------
+
+    def search(self, query: str, *, limit: int = 20) -> list[Event]:
+        """Definitions whose text matches, best first.
+
+        Overrides are indexed under their series only: one hit should be one
+        thing, not one thing and its moved instances.
+        """
+        rows = self._match(query, limit)
+        if rows is None:
+            rows = self._like(query, limit)
+        return [_event(r) for r in rows]
+
+    def _match(self, query: str, limit: int) -> list[sqlite3.Row] | None:
+        text = _fts_query(query)
+        if not text:
+            return []
+        try:
+            with self._conn() as conn:
+                return list(
+                    conn.execute(
+                        "SELECT e.* FROM search s JOIN events e"
+                        " ON e.uid = s.uid AND e.recurrence_id = s.recurrence_id"
+                        " WHERE search MATCH ? ORDER BY rank LIMIT ?",
+                        (text, limit),
+                    )
+                )
+        except sqlite3.OperationalError:
+            # FTS5 unavailable or the query is not a query: fall back to LIKE
+            # rather than reporting "nothing found" about something that exists.
+            return None
+
+    def _like(self, query: str, limit: int) -> list[sqlite3.Row]:
+        needle = f"%{query}%"
+        with self._conn() as conn:
+            return list(
+                conn.execute(
+                    "SELECT * FROM events WHERE recurrence_id = '' AND"
+                    " (summary LIKE ? OR description LIKE ? OR location LIKE ?)"
+                    " ORDER BY span_start DESC LIMIT ?",
+                    (needle, needle, needle, limit),
+                )
+            )
+
 
 def _row(event: Event) -> tuple:
     start, end = event.span()
@@ -185,8 +247,8 @@ def _row(event: Event) -> tuple:
         event.summary,
         event.start,
         event.end,
-        start.strftime("%Y-%m-%dT%H:%M"),
-        end.strftime("%Y-%m-%dT%H:%M"),
+        zones.local_wall(start).strftime("%Y-%m-%dT%H:%M"),
+        zones.local_wall(end).strftime("%Y-%m-%dT%H:%M"),
         1 if event.all_day else 0,
         1 if event.rrule else 0,
         event.location,
@@ -245,3 +307,11 @@ def _load_json(raw: str) -> list:
 
 def _load_list(raw: str) -> list[str]:
     return [str(item) for item in _load_json(raw)]
+
+
+def _fts_query(query: str) -> str:
+    """Free text as a safe FTS5 OR-query over its tokens."""
+    tokens = [t for t in "".join(ch if ch.isalnum() else " " for ch in query).split() if t]
+    if not tokens:
+        return ""
+    return " OR ".join(f'"{t}"' for t in tokens)

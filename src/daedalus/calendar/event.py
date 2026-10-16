@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from ..security.provenance import DataClass
-from . import recur
+from . import recur, zones
 
 #: The one calendar the agent owns and writes (SPEC §5.5). Every other
 #: calendar the owner has is gcal-authoritative and, from here, read-only.
@@ -184,14 +184,16 @@ class Event:
         return bool(self.rrule)
 
     def span(self) -> tuple[datetime, datetime]:
-        """``(start, end)`` with defaults filled in. ``end`` is exclusive.
+        """``(start, end)`` as real instants, with defaults filled in.
 
-        The single place a duration is decided, so free/busy, conflict checks
-        and "what spans now" cannot disagree with each other.
+        Aware where a zone is known, so two events on different clocks compare as
+        moments rather than as strings. ``end`` is exclusive. Adding a duration
+        keeps the *wall* time (a 09:00–10:00 meeting does not become 08:00–09:00
+        across a clock change), because ``ZoneInfo`` recomputes its offset.
         """
-        start = parse_iso(self.start)
+        start = zones.aware(parse_iso(self.start), self.tzid)
         if self.end:
-            end = parse_iso(self.end)
+            end = zones.aware(parse_iso(self.end), self.tzid)
         elif self.all_day:
             end = start + timedelta(days=DEFAULT_ALL_DAY_DAYS)
         else:
@@ -231,19 +233,31 @@ class Event:
 
     # -- rendering --------------------------------------------------------
 
+    def zone_label(self) -> str:
+        """A short zone name, shown only when it is not the owner's own clock."""
+        if not self.tzid or zones.is_local(self.tzid):
+            return ""
+        return f" {self.tzid.split('/')[-1].replace('_', ' ')}"
+
     def when(self) -> str:
-        """A human time, e.g. ``Fri 16 Oct 09:10–09:30`` or a day span."""
+        """A human time, e.g. ``Fri 16 Oct 09:10–09:30``, or a day span.
+
+        Shown on the *event's* clock — "09:00 London" — because that is when the
+        thing happens from the owner's side; the label appears only when it is
+        not the laptop's own zone, so an ordinary local day stays uncluttered.
+        """
         moment = parse_iso(self.start)
+        label = self.zone_label()
         if self.all_day:
             first = moment.strftime("%a %d %b")
             if self.end and parse_iso(self.end) > moment + timedelta(days=1):
                 last = parse_iso(self.end) - timedelta(days=1)
-                return f"{first} – {last.strftime('%a %d %b')} (all day)"
-            return f"{first} (all day)"
+                return f"{first} – {last.strftime('%a %d %b')}{label} (all day)"
+            return f"{first}{label} (all day)"
         text = moment.strftime("%a %d %b %H:%M")
         if self.end:
             text += "–" + parse_iso(self.end).strftime("%H:%M")
-        return text
+        return text + label
 
     def line(self, *, show_id: bool = False, show_rule: bool = True) -> str:
         parts = [self.when(), self.summary]
@@ -262,7 +276,10 @@ def overlaps(event: Event, window_start: datetime, window_end: datetime) -> bool
 
     Overlap, not containment: a meeting that started yesterday and runs into
     today is on today, and a store that filtered on the start alone would drop
-    it and tell the owner their day is clear.
+    it and tell the owner their day is clear. Both sides are compared as wall
+    time on this laptop, so an event from another zone lands on the right day.
     """
     start, end = event.span()
-    return start < window_end and end > window_start
+    return zones.local_wall(start) < zones.local_wall(window_end) and zones.local_wall(
+        end
+    ) > zones.local_wall(window_start)

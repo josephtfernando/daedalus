@@ -258,6 +258,20 @@ existing as a rule nobody can read. Writes say what they mean: `scope=all` edits
 kept as an offset from the start, and `TRANSP` records whether an event makes the owner busy.
 Driving gcal itself is deferred: the owner's calendar is the one on this laptop.
 
+**The calendar answers questions, not just lists.** `busy` returns the merged stretches the
+owner is not free in (anything `TRANSP:TRANSPARENT` is on the calendar without blocking it),
+`free` returns the gaps of a given length inside each day's waking hours, an overlap between
+two events is reported as the double-booking it is, and `search` finds events by their text
+over an FTS5 index. All of it works on **occurrences**, so a weekday standup blocks that slot
+every weekday.
+
+**Clocks other than this one.** An event may name a `TZID`; the zone travels with the time, and
+`recur.py` stays pure wall-clock arithmetic, so "9:00 every weekday" stays 9:00 in the zone it
+was written in across a daylight-saving change. Real instants — not wall-time strings — are what
+free/busy and overlap compare, so an event on a foreign clock lands on the right day here; a zone
+name shown on a line is shown only when it is not this machine's. An unreadable zone falls back
+to floating rather than guessing an offset.
+
 **`gcal` — a resource, read all / write one.**
 
 - **Read** every calendar the owner has — context for the day.

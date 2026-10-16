@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ..security.provenance import DataClass
-from . import ical, recur
+from . import ical, recur, zones
 from .event import INTERNAL, OPAQUE, Event, Reminder, normalise_when, parse_iso
 from .index import CalendarIndex
 from .occurrences import expand as expand_occurrences
@@ -77,7 +77,8 @@ class CalendarStore:
 
     def _write(self, parsed: ical.ParsedCalendar) -> None:
         ordered = sorted(
-            parsed.events, key=lambda e: (e.span()[0], e.recurrence_id, e.summary.lower())
+            parsed.events,
+            key=lambda e: (zones.local_wall(e.span()[0]), e.recurrence_id, e.summary.lower()),
         )
         self.ics_path.write_text(
             ical.render_calendar(ordered, parsed.passthrough), encoding="utf-8"
@@ -355,6 +356,98 @@ class CalendarStore:
         self._sync()
         return self.index.count()
 
+    def search(
+        self, query: str, *, limit: int = 20, allow_local_only: bool = True
+    ) -> list[Event]:
+        """Definitions whose text matches — "when did I last meet Ana"."""
+        self._sync()
+        rows = self.index.search(query, limit=max(limit * 4, limit))
+        return _visible(rows, limit, allow_local_only)
+
+    # -- time the owner has, and time they do not --------------------------
+
+    def busy(
+        self,
+        window_start: datetime,
+        window_end: datetime,
+        *,
+        allow_local_only: bool = True,
+    ) -> list[tuple[datetime, datetime]]:
+        """Merged blocks the owner is *not* free in, as local wall time.
+
+        Merged, not listed: "when am I free" is a question about the shape of a
+        day, and five overlapping events are one occupied stretch. Events marked
+        ``TRANSP:TRANSPARENT`` are left out — on the calendar, not blocking it.
+        """
+        rows = self.occurrences(
+            window_start, window_end, limit=1000, allow_local_only=allow_local_only
+        )
+        return merge_blocks([e.span() for e in rows if e.occupies()])
+
+    def conflicts(
+        self,
+        window_start: datetime,
+        window_end: datetime,
+        *,
+        allow_local_only: bool = True,
+        limit: int = 200,
+    ) -> list[tuple[Event, Event]]:
+        """Pairs of events that claim the same stretch of time."""
+        rows = [
+            e
+            for e in self.occurrences(
+                window_start, window_end, limit=limit, allow_local_only=allow_local_only
+            )
+            if e.occupies()
+        ]
+        found: list[tuple[Event, Event]] = []
+        for position, first in enumerate(rows):
+            first_start, first_end = first.span()
+            for second in rows[position + 1 :]:
+                second_start, second_end = second.span()
+                if second_start < first_end and second_end > first_start:
+                    found.append((first, second))
+        return found
+
+    def free(
+        self,
+        window_start: datetime,
+        window_end: datetime,
+        *,
+        minutes: int = 45,
+        hours: tuple[str, str] = ("09:00", "18:00"),
+        allow_local_only: bool = True,
+        limit: int = 20,
+    ) -> list[tuple[datetime, datetime]]:
+        """Gaps of at least ``minutes`` inside each day's ``hours``.
+
+        Bounded to waking hours on purpose: a schedule that happily books 03:00
+        is technically correct and practically useless. Gaps are reported as
+        naive local wall time, which is the frame the owner reads a day in.
+        """
+        needed = timedelta(minutes=max(1, int(minutes)))
+        opens, closes = _clock(hours[0]), _clock(hours[1])
+        if closes <= opens:
+            opens, closes = _clock("09:00"), _clock("18:00")
+
+        found: list[tuple[datetime, datetime]] = []
+        day = window_start.date()
+        last = window_end.date()
+        while day <= last and len(found) < limit:
+            day_open = datetime.combine(day, opens)
+            day_close = datetime.combine(day, closes)
+            lower = max(day_open, window_start)
+            upper = min(day_close, window_end)
+            if upper > lower:
+                blocked = self.busy(lower, upper, allow_local_only=allow_local_only)
+                found.extend(
+                    (gap_start, gap_end)
+                    for gap_start, gap_end in gaps_within(lower, upper, blocked)
+                    if gap_end - gap_start >= needed
+                )
+            day += timedelta(days=1)
+        return found[:limit]
+
     def inventory(self, limit: int = 6, *, days: int = 7, allow_local_only: bool = True) -> str:
         rows = self.agenda(days=days, limit=limit, allow_local_only=allow_local_only)
         if not rows:
@@ -373,6 +466,62 @@ class CalendarStore:
 
 
 # -- helpers ----------------------------------------------------------------
+
+
+def _clock(value: str) -> datetime.time:  # type: ignore[name-defined]
+    """``"09:30"`` as a clock time; unreadable falls back to nine and six."""
+    bits = str(value or "").strip().split(":")
+    if len(bits) == 2:
+        try:
+            hours, minutes = int(bits[0]), int(bits[1])
+            if 0 <= hours < 24 and 0 <= minutes < 60:
+                return datetime(2000, 1, 1, hours, minutes).time()
+        except ValueError:
+            pass
+    return datetime(2000, 1, 1, 9, 0).time()
+
+
+def merge_blocks(
+    intervals: Iterable[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    """Overlapping intervals collapsed into the stretches they cover.
+
+    Everything is compared as wall time on this laptop, so an event from another
+    zone merges against a local one at the right moment rather than at the same
+    digits on a clock.
+    """
+    normalised: list[tuple[datetime, datetime]] = []
+    for start, end in intervals:
+        local_start, local_end = zones.local_wall(start), zones.local_wall(end)
+        if local_end > local_start:
+            normalised.append((local_start, local_end))
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(normalised, key=lambda pair: pair[0]):
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def gaps_within(
+    start: datetime, end: datetime, blocked: Iterable[tuple[datetime, datetime]]
+) -> list[tuple[datetime, datetime]]:
+    """``[start, end)`` minus what is blocked — the free time inside it."""
+    found: list[tuple[datetime, datetime]] = []
+    cursor = start
+    for block_start, block_end in merge_blocks(blocked):
+        if block_start >= end:
+            break
+        if block_start > cursor:
+            found.append((cursor, min(block_start, end)))
+        cursor = max(cursor, block_end)
+        if cursor >= end:
+            break
+    if cursor < end:
+        found.append((cursor, end))
+    return found
 
 
 def _visible(rows: list[Event], limit: int, allow_local_only: bool) -> list[Event]:
