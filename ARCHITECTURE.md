@@ -192,6 +192,8 @@ Discord DM ─▶ Surface.recv ─▶ Engine.run_turn(event)
   6. write memory candidates; schedule follow-ups; close turn
 ```
 
+**The active seat is resolved once, at step 1.** `pick(seats, seat)` where `seat` is the caller's (a wake names none). No name means the charter carrying `active = true` — the identity the owner chose, and choosing it is `daedalus activate`, a write to the charter files and nothing else. That single resolution sets the session, the charter in the prompt, and the memory namespace, so the three cannot disagree about who is answering.
+
 ### 7.2 Capability authoring (the tool-making flow)
 
 ```

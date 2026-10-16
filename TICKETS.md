@@ -234,7 +234,7 @@ became a property over `memory_root` so no call site can forget the scope. 42 te
 charter file naming a namespace that could escape the tree, and a scripted turn under
 `athena` whose fact is invisible to the coordinator.
 
-### T13 — Activate one seat · `open`
+### T13 — Activate one seat · `done`
 *SPEC §7 (no seat is wired until the proof-of-life holds), AGENTS.md.*
 
 Choose a seat for a turn, put its charter in the prompt, and keep **one** active
@@ -242,6 +242,13 @@ at a time. The default stays Daedalus.
 
 **Acceptance:** activating a seat changes the identity and charter the model
 sees; exactly one seat is active; the default is unchanged when nothing is set.
+**Done** — `active = true` is now read: `pick(seats, None)` resolves to the active
+charter, and `run_turn` resolves the seat **once** so the session, the prompt and the
+memory namespace agree. `daedalus activate <seat>` writes every file whose flag
+changes (one edit, not two), refuses an unknown name, and accepts a display name
+(`Melinoë`). A wake speaks as the active seat. 21 tests in `tests/test_activation.py`,
+including the exact failure this fixes: a turn with the flag set on `athena.toml`
+whose system prompt still said "You are Daedalus".
 
 ### T14 — `cabinet/protocol.py` + `broker.py`: seat↔seat · `open`
 *ARCHITECTURE §9.2, §7.5. Only needed once two seats must actually collaborate.*

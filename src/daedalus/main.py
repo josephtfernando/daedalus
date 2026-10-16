@@ -150,6 +150,31 @@ def cmd_seats(args: argparse.Namespace) -> int:
         print(f"{mark} {key.ljust(width)}  {seat.name}")
         print(f"  {' ' * width}  {seat.charter}")
     print(f"\n* active. Edit them in {charter_dir(settings.home)}")
+    print("Switch the one you talk to with `daedalus activate <seat>`.")
+    return 0
+
+
+def cmd_activate(args: argparse.Namespace) -> int:
+    """Make one seat the active one, and no other (SPEC §7, ticket T13).
+
+    The active flag lives in the charter files, so "which seat" is a state change
+    to the files rather than a second source of truth. This writes *every* file
+    whose flag changes, because activating one seat means deactivating another —
+    and two charters claiming the owner is refused at the next startup.
+    """
+    from .cabinet import UnknownSeat, set_active
+
+    settings = _settings(args)
+    try:
+        seat = set_active(settings.home, args.name)
+    except UnknownSeat:
+        print(f"✗ no seat called {args.name!r} — see `daedalus seats`")
+        return 1
+    except ValueError as exc:
+        print(f"✗ {exc}")
+        return 1
+    print(f"* {seat.key} ({seat.name}) is the active seat now.")
+    print(f"  {seat.charter}")
     return 0
 
 
@@ -375,6 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_seats = sub.add_parser("seats", help="show the cabinet seats and their charters")
     p_seats.set_defaults(func=cmd_seats)
+
+    p_act = sub.add_parser("activate", help="make one seat the active one")
+    p_act.add_argument("name", help="the seat to talk to, by key or name")
+    p_act.set_defaults(func=cmd_activate)
 
     p_serve = sub.add_parser("serve", help="serve the dashboard on the loopback")
     p_serve.add_argument(

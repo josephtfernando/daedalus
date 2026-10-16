@@ -406,6 +406,14 @@ the default identity's memory keeps behaving exactly as it did before seats had
 namespaces. A charter may point its seat at another namespace; Daedalus's own cannot
 be moved, since that is the tree those facts are in.
 
+**One seat is active, and activating is a file edit.** `active = true` on exactly one
+charter is the identity a nameless turn runs as; the default stands until the owner sets
+another. The flag lives in the file — `daedalus activate athena` writes the files, it holds
+no state of its own — and switching writes *every* file whose flag changes, because
+activating one seat means deactivating another and two charters claiming the owner is
+refused at the next startup. A name nobody answers to is not an error worth stopping a turn
+for: the request lands on the active seat.
+
 ---
 
 ## 8. Runtime & Process

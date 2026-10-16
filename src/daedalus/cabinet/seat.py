@@ -36,11 +36,15 @@ __all__ = [
     "DEFAULT_SEAT",
     "CharterError",
     "Seat",
+    "UnknownSeat",
+    "active_seat",
     "builtin_charters",
     "charter_dir",
     "charter_file",
     "load_charters",
     "pick",
+    "resolve",
+    "set_active",
     "write_charter",
 ]
 
@@ -275,20 +279,74 @@ def write_charter(home: Path, seat: Seat) -> Path:
     return path
 
 
+def active_seat(charters: Mapping[str, Seat]) -> Seat:
+    """The identity a turn runs as when the owner does not name one.
+
+    Exactly one charter carries ``active`` (``load_charters`` refuses two, and
+    leaves the default in place when none does), so this is the seat the owner is
+    talking to. It is *not* a hard-coded key: setting ``active = true`` on another
+    charter is how the owner chooses a different identity, and the default stands
+    until they do.
+    """
+    for seat in charters.values():
+        if seat.active:
+            return seat
+    return charters[DEFAULT_SEAT]
+
+
+class UnknownSeat(KeyError):
+    """A seat name that matches no charter — refused where silence would mislead."""
+
+
+def resolve(charters: Mapping[str, Seat], name: str) -> Seat:
+    """The seat ``name`` refers to, or :class:`UnknownSeat`.
+
+    :func:`pick` is for a *turn*, where an unrecognised phrase should not stop the
+    owner's request — it lands on the identity already answering. This is for the
+    places where a name is a command (`daedalus activate athena`), and quietly
+    activating the wrong seat is the failure worth refusing.
+    """
+    wanted = str(name or "").strip().lower()
+    for key, seat in charters.items():
+        if wanted and wanted in (key.lower(), seat.name.lower()):
+            return seat
+    raise UnknownSeat(name)
+
+
 def pick(charters: Mapping[str, Seat], name: str | None) -> Seat:
     """The seat a name refers to. Never nothing — a turn always has an identity.
 
     Matched on the key or on the name the owner sees ("melinoe" and "Melinoë" are
     the same seat), because both spellings reach here from a session, a CLI flag,
-    or a charter edit. An unknown name is not an error worth stopping a turn for:
-    the owner's phrase is honest enough ("Daedalus, ..."), and the default seat is
-    the seat that already carries the whole system in its head.
+    or a charter edit. No name at all means *the active seat* — the one the owner
+    has chosen to talk to. An unknown name is not an error worth stopping a turn
+    for: the owner's phrase is honest enough ("Daedalus, ..."), and the active seat
+    is the one already carrying the system in its head.
     """
-    wanted = str(name or DEFAULT_SEAT).strip().lower()
-    for key, seat in charters.items():
-        if wanted and wanted in (key.lower(), seat.name.lower()):
-            return seat
-    return charters[DEFAULT_SEAT]
+    if not str(name or "").strip():
+        return active_seat(charters)
+    try:
+        return resolve(charters, str(name))
+    except UnknownSeat:
+        return active_seat(charters)
+
+
+def set_active(home: Path, name: str) -> Seat:
+    """Make ``name`` the active seat and no other, by writing the charter files.
+
+    The active flag is the whole mechanism, so switching is a state change to the
+    files — and it has to be *one* edit, not two. Writing only the chosen file
+    would leave two charters claiming the owner, which ``load_charters`` refuses
+    and which would stop the next startup; so every file whose flag actually
+    changes is rewritten, and the rest are left alone.
+    """
+    charters = load_charters(home)
+    chosen = resolve(charters, name)
+    for seat in charters.values():
+        want = seat.key == chosen.key
+        if seat.active != want:
+            write_charter(home, replace(seat, active=want))
+    return replace(chosen, active=True)
 
 
 def _string(value: str) -> str:

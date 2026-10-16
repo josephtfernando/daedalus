@@ -12,12 +12,16 @@ from .seat import (
     DEFAULT_SEAT,
     CharterError,
     Seat,
+    UnknownSeat,
+    active_seat,
     builtin_charters,
     charter_dir,
     charter_file,
     load_charters,
     pick,
     read_charter,
+    resolve,
+    set_active,
     write_charter,
 )
 
@@ -28,6 +32,8 @@ __all__ = [
     "CharterError",
     "NamespaceError",
     "Seat",
+    "UnknownSeat",
+    "active_seat",
     "builtin_charters",
     "charter_dir",
     "charter_file",
@@ -36,5 +42,7 @@ __all__ = [
     "namespace_for",
     "pick",
     "read_charter",
+    "resolve",
+    "set_active",
     "write_charter",
 ]

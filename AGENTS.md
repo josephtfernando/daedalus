@@ -5,7 +5,7 @@ Daedalus is a single-user, local-first chief-of-staff agent that runs on this la
 ## Working here
 
 - **Stack:** Python 3.14 + uv. Runtime and process model: `SPEC.md` §3, §8.
-- **Build order:** P0, P1 and P2 are delivered — the loop + primitives + capability substrate, memory depth, and the proactive scheduler (quiet hours, a daily cap, and a wake that composes fresh). The internal calendar landed alongside them; `gcal` is provisioned but unbuilt. **P3 (seats, one at a time) is next.** No cabinet seat until the free-text proof-of-life holds from Discord (`SPEC.md` §11).
+- **Build order:** P0, P1 and P2 are delivered — the loop + primitives + capability substrate, memory depth, and the proactive scheduler (quiet hours, a daily cap, and a wake that composes fresh). The internal calendar landed alongside them; `gcal` is provisioned but unbuilt. **P3 (seats, one at a time) is in progress** — charters, memory namespaces and activation are built, and no cabinet seat is wired into the delivered default until the free-text proof-of-life holds from Discord (`SPEC.md` §11).
 - **Start from the branch, not the whole tree:** read the `SPEC.md` section for the feature you're touching before writing code.
 - **Tests live beside behaviour.** P0's acceptance test is the unseen free-text request (`SPEC.md` §11).
 - **Maintain `CHANGELOG.md`.** Every user-visible change gets a verbose entry under `Unreleased` — what changed, why, and what it supersedes. On release, move `Unreleased` under a dated version heading.

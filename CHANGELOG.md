@@ -12,9 +12,36 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 612-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (12/12 offline; 13/13 with `--live`) and a 633-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The active seat now means something — and one CLI verb switches it.** `active = true` has sat
+  in the charter files since T11 and been read by nobody: `load_charters` refused two claimants and
+  stood up Daedalus when none claimed the owner, and then every turn ran as the default regardless.
+  So the owner could write `active = true` on `athena.toml`, start talking, and get Daedalus — with
+  the prompt building and the startup clean, which is the failure nobody catches. Now the flag is
+  the identity a turn runs as, resolved **once** at the top of `run_turn`
+  (`pick(seats, seat)`), so the session, the charter in the prompt, and the memory namespace cannot
+  disagree about who is answering. Three decisions:
+
+  - **No name means the active seat, not a hard-coded key.** `pick(charters, None)` returns
+    whichever charter carries `active`, and the default Daedalus stands until the owner sets
+    another — so the common case is unchanged and the new case is reachable.
+  - **Switching is one edit, not two.** `daedalus activate <seat>` writes *every* charter file whose
+    flag changes, because activating one seat means deactivating another, and leaving two claims in
+    place would be refused by `load_charters` on the very next startup. The flag is still the only
+    source of truth — the command writes files and holds no state of its own, so editing
+    `active = true` by hand is the same act and does the same thing. A name that matches no charter
+    is refused there (`UnknownSeat`) and nothing is written, because silently activating the wrong
+    seat is exactly the outcome worth preventing; in a *turn*, by contrast, a name nobody answers to
+    still lands on the active seat, since a request is not worth stopping for a phrase.
+  - **`resolve()` is the strict lookup, `pick()` the forgiving one.** `pick` is for a turn;
+    `resolve` is for the places where a name is a command, and raises. `pick` now matches by key or
+    by the name the owner sees, so `daedalus activate Melinoë` works.
+
+  A wake speaks as the active seat too — the agent reaches out as the identity the owner talks to,
+  not as a second one. `daedalus seats` marks the active one and says how to switch.
 
 - **Each seat remembers its own things — memory is namespaced now.** SPEC §7 has said since
   the start that a seat is *identity + charter + memory namespace*, and T11 shipped the first

@@ -15,7 +15,7 @@ from typing import Any
 
 from .approvals.middleware import ApprovalMiddleware
 from .cabinet.namespace import memory_for
-from .cabinet.seat import DEFAULT_SEAT, Seat, builtin_charters, load_charters, pick
+from .cabinet.seat import DEFAULT_SEAT, Seat, active_seat, builtin_charters, load_charters, pick
 from .calendar.store import CalendarStore
 from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
@@ -153,8 +153,10 @@ class Runtime:
         # Reset the session before composing the briefing, so the wake turn
         # starts from nothing rather than inheriting the last turn's ambient
         # facts. (`briefing()` withholds `local_only` on its own account — see
-        # its docstring — but the session should not survive the handoff.)
-        self.session = Session(seat=DEFAULT_SEAT, turn_ref="wake")
+        # its docstring — but the session should not survive the handoff.) The
+        # wake speaks as the **active** seat: the agent reaches out as the
+        # identity the owner talks to, not as a second one.
+        self.session = Session(seat=active_seat(self.seats).key, turn_ref="wake")
         event = InboundEvent(text=self.briefing(prompt), user_id="scheduler")
         result = await Engine(self).run_turn(event)
         text = (result.text or "").strip()

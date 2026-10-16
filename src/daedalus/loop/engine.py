@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..approvals.classify import Assessment
-from ..cabinet.seat import DEFAULT_SEAT
+from ..cabinet.seat import pick
 from ..model.providers import NoProviderAvailable, ToolCall
 from ..surface.base import ApprovalRequest, InboundEvent
 from . import context as ctx_mod
@@ -60,13 +60,18 @@ class Engine:
         ctx = self.ctx
         from ..runtime import Session
 
+        # Resolve the seat **once**, here, so the session, the prompt, and the
+        # memory namespace cannot disagree: a turn is one identity's. No name
+        # means the active seat — the identity the owner chose to talk to, which
+        # is how `active = true` on another charter takes effect.
+        chosen = pick(ctx.seats, seat)
         ctx.session = Session(
-            seat=seat or DEFAULT_SEAT,
+            seat=chosen.key,
             turn_ref=event.channel_id or event.user_id or "",
             event=event,
             local_only_ok=ctx.model.chain_is_local(event.text),
         )
-        messages = ctx_mod.build_messages(ctx, event, seat=seat)
+        messages = ctx_mod.build_messages(ctx, event, seat=chosen.key)
         schemas = ctx.tools.schemas()
         used: list[str] = []
         failures: dict[str, int] = {}
