@@ -38,12 +38,28 @@ MAX_MOOD = 24
 
 #: A tag, not a less-than sign — "dinner <-> party" is a value, "<b>" is markup.
 _TAG = re.compile(r"<\s*/?\s*[A-Za-z!]")
+#: A dotted, lower-case key: `disk.free`, `calendar.today.events`, `body.sleep`.
+_KEY = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*$")
 _SCHEME = re.compile(r"\b(?:javascript|data|vbscript|file)\s*:", re.IGNORECASE)
 _WORD = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
 class SpecError(ValueError):
     """A proposed spec cannot be rendered as given. Refused, never guessed at."""
+
+
+@dataclass(frozen=True, slots=True)
+class Binding:
+    """A value the model does **not** get to see.
+
+    This is the whole of "structure travels, values stay local" (§3.6, §6). The
+    model composes a page out of *keys* — `{"bind": "disk.free"}` — and a local
+    lookup fills them in at render time. A `local_only` fact can therefore appear
+    on the owner's own dashboard without ever having been in a prompt, not because
+    something remembered to filter it, but because it was never in the spec at all.
+    """
+
+    key: str
 
 
 class Kind(str, Enum):
@@ -92,7 +108,10 @@ class Block:
     props: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"component": self.component, "props": dict(self.props)}
+        return {
+            "component": self.component,
+            "props": {key: _plain(value) for key, value in self.props.items()},
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +130,13 @@ class Spec:
         }
 
     @classmethod
-    def parse(cls, raw: Any, *, vocabulary: Mapping[str, Component]) -> "Spec":
+    def parse(
+        cls,
+        raw: Any,
+        *,
+        vocabulary: Mapping[str, Component],
+        values: Mapping[str, Any] | None = None,
+    ) -> "Spec":
         """Validate a proposal against the vocabulary, or refuse it.
 
         Accepts the two spellings a model reaches for — a block's ``component`` or
@@ -136,11 +161,24 @@ class Spec:
         if len(blocks_raw) > MAX_BLOCKS:
             raise SpecError(f"{len(blocks_raw)} blocks; a page holds at most {MAX_BLOCKS}")
         blocks = tuple(
-            _parse_block(entry, index, vocabulary) for index, entry in enumerate(blocks_raw)
+            _parse_block(entry, index, vocabulary, values)
+            for index, entry in enumerate(blocks_raw)
         )
         title = _text(raw.get("title", ""), "title", MAX_TITLE) if raw.get("title") else ""
         mood = _text(raw.get("mood", ""), "mood", MAX_MOOD) if raw.get("mood") else ""
         return cls(blocks=blocks, title=title, mood=mood)
+
+    def bind(self, values: Mapping[str, Any], *, vocabulary: Mapping[str, Component]) -> "Spec":
+        """Fill every binding from local values, and validate what comes back.
+
+        A resolved value goes through the *same* door as a literal one, so a
+        binding cannot smuggle in a shape the prop would have refused — the
+        guarantee is not "the model was validated", it is "what renders was".
+        """
+        return Spec.parse(self.to_dict(), vocabulary=vocabulary, values=values)
+
+    def has_bindings(self) -> bool:
+        return any(_has_binding(prop) for block in self.blocks for prop in block.props.values())
 
 
 def describe(vocabulary: Mapping[str, Component]) -> str:
@@ -153,6 +191,8 @@ def describe(vocabulary: Mapping[str, Component]) -> str:
         '{"component": "<name>", "props": {…}}.',
         "Values are text, never markup: no tags, no scripts, and the only link is a "
         "relative path.",
+        'A value you do not have is written {"bind": "dotted.key"}: the renderer fills '
+        "it in locally, and you never see the value itself.",
         "",
         "Components (use these names exactly):",
     ]
@@ -173,7 +213,9 @@ def _choices(prop: Prop) -> str:
 # -- parsing -----------------------------------------------------------------
 
 
-def _parse_block(entry: Any, index: int, vocabulary: Mapping[str, Component]) -> Block:
+def _parse_block(
+    entry: Any, index: int, vocabulary: Mapping[str, Component], values: Mapping[str, Any] | None
+) -> Block:
     where = f"block {index + 1}"
     if not isinstance(entry, Mapping):
         raise SpecError(f"{where} is an object with `component` and `props`; it is {_typename(entry)}")
@@ -212,7 +254,7 @@ def _parse_block(entry: Any, index: int, vocabulary: Mapping[str, Component]) ->
     props: dict[str, Any] = {}
     for key, value in props_raw.items():
         prop = component.props[key]
-        props[key] = _coerce(prop, value, f"{where} ({name}).{key}")
+        props[key] = _coerce(prop, value, f"{where} ({name}).{key}", values)
     if component.check is not None:
         # A cross-prop rule refuses the *spec*, at the door, in the same voice as
         # every other refusal — not a render that half-succeeds.
@@ -223,7 +265,19 @@ def _parse_block(entry: Any, index: int, vocabulary: Mapping[str, Component]) ->
     return Block(component=name, props=props)
 
 
-def _coerce(prop: Prop, value: Any, where: str) -> Any:
+def _coerce(prop: Prop, value: Any, where: str, values: Mapping[str, Any] | None) -> Any:
+    key = _binding_key(value, where)
+    if key is not None:
+        if values is None:
+            return Binding(key)
+        if key not in values:
+            known = ", ".join(sorted(values)) or "nothing"
+            raise SpecError(f"{where} is bound to {key!r}, which nothing here supplies. Available: {known}")
+        return _literal(prop, values[key], where, values)
+    return _literal(prop, value, where, values)
+
+
+def _literal(prop: Prop, value: Any, where: str, values: Mapping[str, Any] | None) -> Any:
     kind = prop.kind
     if kind is Kind.TEXT:
         return _choice(_text(value, where), prop, where)
@@ -238,10 +292,40 @@ def _coerce(prop: Prop, value: Any, where: str) -> Any:
             raise SpecError(f"{where} is true or false; it is {_typename(value)}")
         return value
     if kind is Kind.LIST:
-        return _items(value, where)
+        return _items(value, where, values)
     if kind is Kind.ROWS:
-        return _rows(value, where)
+        return _rows(value, where, values)
     raise SpecError(f"{where}: unknown kind {kind!r}")  # pragma: no cover — closed enum
+
+
+def _binding_key(value: Any, where: str) -> str | None:
+    """A binding, in either spelling a model reaches for, or nothing.
+
+    `{"bind": "disk.free"}` is the canonical form; `"{{disk.free}}"` is accepted
+    when it is the *whole* value, so it can never be confused with text that
+    happens to contain braces.
+    """
+    if isinstance(value, Mapping):
+        if "bind" not in value:
+            return None
+        if set(value) != {"bind"}:
+            raise SpecError(
+                f"{where}: a binding is {{\"bind\": \"key\"}} and nothing else; "
+                f"it also carries {', '.join(map(repr, sorted(set(value) - {'bind'})))}"
+            )
+        return _key(value["bind"], where)
+    if isinstance(value, str) and value.startswith("{{") and value.endswith("}}"):
+        return _key(value[2:-2], where)
+    return None
+
+
+def _key(raw: Any, where: str) -> str:
+    key = str(raw).strip()
+    if not _KEY.match(key):
+        raise SpecError(
+            f"{where} is bound to a dotted lower-case key such as `disk.free`; it is {raw!r}"
+        )
+    return key
 
 
 def _choice(text: str, prop: Prop, where: str) -> str:
@@ -250,15 +334,15 @@ def _choice(text: str, prop: Prop, where: str) -> str:
     return text
 
 
-def _items(value: Any, where: str) -> list[Any]:
+def _items(value: Any, where: str, values: Mapping[str, Any] | None) -> list[Any]:
     if not isinstance(value, (list, tuple)):
         raise SpecError(f"{where} is a list; it is {_typename(value)}")
     if len(value) > MAX_ITEMS:
         raise SpecError(f"{where} holds {len(value)} items; the limit is {MAX_ITEMS}")
-    return [_scalar(item, f"{where}[{index}]") for index, item in enumerate(value)]
+    return [_scalar(item, f"{where}[{index}]", values) for index, item in enumerate(value)]
 
 
-def _rows(value: Any, where: str) -> list[list[Any]]:
+def _rows(value: Any, where: str, values: Mapping[str, Any] | None) -> list[list[Any]]:
     if not isinstance(value, (list, tuple)):
         raise SpecError(f"{where} is a list of rows; it is {_typename(value)}")
     if len(value) > MAX_ITEMS:
@@ -269,11 +353,19 @@ def _rows(value: Any, where: str) -> list[list[Any]]:
             raise SpecError(f"{where}[{index}] is a row (a list of cells); it is {_typename(row)}")
         if len(row) > MAX_CELLS:
             raise SpecError(f"{where}[{index}] holds {len(row)} cells; the limit is {MAX_CELLS}")
-        rows.append([_scalar(cell, f"{where}[{index}]") for cell in row])
+        rows.append([_scalar(cell, f"{where}[{index}]", values) for cell in row])
     return rows
 
 
-def _scalar(value: Any, where: str) -> Any:
+def _scalar(value: Any, where: str, values: Mapping[str, Any] | None = None) -> Any:
+    key = _binding_key(value, where)
+    if key is not None:
+        if values is None:
+            return Binding(key)
+        if key not in values:
+            known = ", ".join(sorted(values)) or "nothing"
+            raise SpecError(f"{where} is bound to {key!r}, which nothing here supplies. Available: {known}")
+        return _scalar(values[key], where, values)
     if isinstance(value, bool) or isinstance(value, (int, float)):
         return value
     if isinstance(value, str):
@@ -314,6 +406,23 @@ def _link(value: Any, where: str) -> str:
     if ":" in text.split("?", 1)[0]:
         raise SpecError(f"{where} is a plain path, not a URL with a scheme; it is {value!r}")
     return text
+
+
+def _plain(value: Any) -> Any:
+    """Back to JSON: a binding leaves as the dict it arrived as."""
+    if isinstance(value, Binding):
+        return {"bind": value.key}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _has_binding(value: Any) -> bool:
+    if isinstance(value, Binding):
+        return True
+    if isinstance(value, list):
+        return any(_has_binding(item) for item in value)
+    return False
 
 
 def _typename(value: Any) -> str:

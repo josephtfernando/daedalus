@@ -58,6 +58,7 @@ TOKEN_NAMES: tuple[str, ...] = (
     "gap",
     "radius",
     "motion",
+    "scheme",
 )
 
 _COLOUR = frozenset(
@@ -67,6 +68,9 @@ _LENGTH = frozenset({"size", "gap", "radius"})
 #: `line-height` is a plain number, and motion is a duration.
 _NUMBER = frozenset({"leading"})
 _TIME = frozenset({"motion"})
+#: A closed set, like `Prop.choices`: the browser's light/dark decision is the
+#: theme's, and a dark page with light scrollbars reads as broken.
+_CHOICE = {"scheme": ("light", "dark")}
 
 _HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 #: A length needs a unit — "0" is the only one CSS accepts bare, and it does accept it.
@@ -103,6 +107,7 @@ class Tokens:
     gap: str
     radius: str
     motion: str
+    scheme: str
 
     def css(self) -> str:
         """The token set as custom properties — the only bridge to the sheet."""
@@ -130,6 +135,7 @@ MOODS: dict[str, dict[str, str]] = {
         "gap": "16px",
         "radius": "10px",
         "motion": "120ms",
+        "scheme": "light",
     },
     "midnight-focus": {
         "bg": "#0d0e12",
@@ -146,6 +152,7 @@ MOODS: dict[str, dict[str, str]] = {
         "gap": "18px",
         "radius": "8px",
         "motion": "100ms",
+        "scheme": "dark",
     },
     "dense-ops": {
         "bg": "#12141a",
@@ -162,6 +169,7 @@ MOODS: dict[str, dict[str, str]] = {
         "gap": "8px",
         "radius": "6px",
         "motion": "0ms",
+        "scheme": "dark",
     },
     "low-energy": {
         "bg": "#f6f2ec",
@@ -178,6 +186,7 @@ MOODS: dict[str, dict[str, str]] = {
         "gap": "22px",
         "radius": "14px",
         "motion": "200ms",
+        "scheme": "light",
     },
     "celebration": {
         "bg": "#1b1030",
@@ -194,6 +203,7 @@ MOODS: dict[str, dict[str, str]] = {
         "gap": "18px",
         "radius": "16px",
         "motion": "260ms",
+        "scheme": "dark",
     },
 }
 
@@ -215,6 +225,8 @@ def _check(name: str, value: str, mood: str) -> None:
         raise TokenError(f"{where} is a plain number; it is {value!r}")
     if name in _TIME and not _TIME_VALUE.match(value):
         raise TokenError(f"{where} is a duration (120ms, 0.2s); it is {value!r}")
+    if name in _CHOICE and value not in _CHOICE[name]:
+        raise TokenError(f"{where} is one of: {' | '.join(_CHOICE[name])}; it is {value!r}")
     if name == "font":
         if not _FONT.match(value):
             raise TokenError(f"{where} is a font stack; it is {value!r}")
@@ -277,7 +289,9 @@ def infer(
 # -- the sheet ---------------------------------------------------------------
 
 #: The one place CSS is written. It reads declared tokens and nothing else.
-BASE_CSS = """*, *::before, *::after { box-sizing: border-box; }
+BASE_CSS = """html { color-scheme: var(--d-scheme); }
+
+*, *::before, *::after { box-sizing: border-box; }
 
 body {
   margin: 0;

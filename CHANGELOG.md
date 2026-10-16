@@ -12,9 +12,43 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 444-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (11/11 offline; 12/12 with `--live`) and a 473-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The renderer turns structure into the owner's own page, and fetches nothing.** `genui/renderer.py`
+  is the last step of the pipeline — a spec, local values and a mood in, one self-contained HTML
+  document out — and it is where the shape of the design finally pays off.
+  - **Values are bound locally, and the model never saw them.** The model composes *keys*:
+    `{"bind": "calendar.today.events"}` (or `"{{disk.free}}"`, accepted when it is the whole value,
+    so text that merely contains braces is never mistaken for one). A local lookup fills them in at
+    render time. This is what makes *"structure travels, values stay local"* (§6) **structural**
+    rather than a rule someone has to remember: a `local_only` fact reaches the owner's dashboard
+    because it was never in the spec at all — not because something remembered to filter it out of
+    one. The test asserts both halves at once: the page contains the value, and the spec does not,
+    before *and* after rendering.
+  - **What rendered is what was validated.** A bound value goes through the *same* door as a literal
+    one, so a binding cannot smuggle in a shape the prop would have refused. The guarantee is not
+    "the model's spec was checked" — it is "the thing that actually rendered was checked", which is
+    the one that matters when the value came out of the calendar. A `local_only` value carrying
+    markup is refused for exactly the same reason a model-authored one is.
+  - **The page fetches nothing, and the browser is what holds it to that.** No scripts, no external
+    stylesheet, no fonts, no images: one document with its stylesheet inline, plus a
+    `Content-Security-Policy` of `default-src 'none'`. A promise asserted only by a test is a promise
+    the next edit can break; asserted by the browser as well, it cannot silently become a page that
+    phones home.
+  - **Mood resolution has one order, stated once:** the owner's one word, then the mood inferred from
+    local signals, then the mood the model proposed, then `calm`. The model is meant to be generative
+    in *styling choices*, so its mood is honoured — but never above the owner, and never above what
+    the laptop can tell about the moment.
+  - **A binding that never got bound is refused loudly.** Reaching a renderer still bound is a bug,
+    and printing `Binding(key=…)` on the owner's dashboard would be a strange way to report it.
+  - **`render_fragment()`** returns the blocks with no document around them — which is what a live
+    *draft* preview needs when the page is already open.
+  - Two supporting additions: `Binding`/`Spec.bind()`/`Spec.has_bindings()` in the spec module, with a
+    binding permitted anywhere a value is (a whole prop, one list item, one table cell); and a
+    `scheme` token, so a dark mood gets dark scrollbars and form controls instead of a page that reads
+    as broken.
 
 - **A mood is a complete, validated token set — never a stylesheet.** SPEC §3.6 asks for a dashboard
   generated *"in the owner's theme, for the owner's mood"* while also forbidding arbitrary

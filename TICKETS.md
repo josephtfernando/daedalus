@@ -100,16 +100,20 @@ failure, not a default); the override beats inference; unknown mood → `calm`.
 free-form: hex colours, units on lengths, and a font stack that cannot contain a
 parenthesis (so `url(…)` cannot ride in).
 
-### T6 — `genui/renderer.py`: spec + local values + tokens → HTML · `open`
-*SPEC §3.6 ("structure remote, values local"), ARCHITECTURE §7.4, §254.*
+### T6 — `genui/renderer.py`: spec + local values + tokens → HTML · `done`
+*SPEC §3.6 ("structure remote, values local"), ARCHITECTURE §7.4.*
 
-Bind values **locally**, apply the mood token set, emit one self-contained HTML
-document with no external fetches. A `local_only` value must never have entered
-the spec the model saw — the renderer is where structure becomes the owner's data.
+Bind values **locally** through `Spec.bind()`, apply the mood token set, emit one
+self-contained HTML document with no external fetches and a
+`Content-Security-Policy` of `default-src 'none'`. A `local_only` value reaches
+the page without ever having been in the spec the model saw — *structural*, not
+filtered.
 
-**Acceptance:** the rendered page is self-contained (no `http://`/`https://` asset
-references) and every interpolated value is escaped; a `local_only` event appears
-on the page while being absent from any model-visible spec, proven together.
+**Acceptance:** the rendered page is self-contained (no `http://`/`https://`, no
+`url(`, no script or link) and every interpolated value is escaped; a `local_only`
+event appears on the page while being absent from any model-visible spec, proven
+together, before and after rendering. **Done** — 29 tests in
+`tests/test_genui_render.py`.
 
 ### T10 — Selftest: dashboard render · `open`
 *SPEC §8.5 step 12 ("dashboard render" is part of the mandatory end-to-end verification).*

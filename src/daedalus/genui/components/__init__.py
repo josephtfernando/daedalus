@@ -21,7 +21,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any, Callable, Mapping
 
-from ..spec import Block, Component, Kind, Prop, Spec, SpecError
+from ..spec import Binding, Block, Component, Kind, Prop, Spec, SpecError
 
 __all__ = ["RENDERERS", "VOCABULARY", "render", "render_blocks"]
 
@@ -125,6 +125,11 @@ VOCABULARY: dict[str, Component] = {
 
 def _cell(value: Any) -> str:
     """One value, escaped. Booleans read as words rather than as Python."""
+    if isinstance(value, Binding):
+        # Reaching a renderer means the binding step was skipped. That is a bug,
+        # and printing `Binding(key=...)` on the owner's dashboard would be a
+        # strange way to report it.
+        raise SpecError(f"{value.key!r} was never bound to a value")
     if isinstance(value, bool):
         return "true" if value else "false"
     return escape(str(value))
