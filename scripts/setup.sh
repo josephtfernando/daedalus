@@ -510,6 +510,22 @@ PY
 }
 
 # ── run state ─────────────────────────────────────────────────────────────
+# _funnel_state - "on" | "off" | "unknown", from `tailscale serve status --json`,
+# read the same way genui/publish.py reads it: the Funnel map is non-empty exactly
+# when something is funnelled, and an unreadable answer is *unknown*, never a pass.
+_funnel_state() {
+  tailscale serve status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    raw = json.load(sys.stdin)
+except Exception:
+    print("unknown")
+    raise SystemExit
+funnel = raw.get("Funnel") if isinstance(raw, dict) else None
+print("on" if isinstance(funnel, dict) and funnel else "off"
+)' 2>/dev/null || echo unknown
+}
+
 HARD_MISS=()       # hard preflight misses → stop
 HARDEN_FAIL=()     # failed assertions (stage 11) → no success claim
 SETUP_FAIL=()      # values or checks the run could not capture → no success claim
@@ -811,7 +827,7 @@ pause "Continue?"
 # ══════════════════════════════════════════════════════════════════════════
 # 8 — Resources (optional, skippable)
 # ══════════════════════════════════════════════════════════════════════════
-stage "Resources (optional) — calendar and mail"
+stage "Resources (optional) — calendar, mail and Tailscale"
 say "Skip freely: nothing blocks, and each grant can be added later by"
 say "re-running this wizard (§8.5 says every resource stage is re-runnable)."
 
@@ -854,6 +870,65 @@ else
   SKIPPED+=("Gmail not granted")
 fi
 
+# ── Tailscale ──────────────────────────────────────────────────────────────
+# The phone reaches the dashboard through the tailnet and never past it
+# (§3.5, §10). The daemon publishes its own route on start and takes it down on
+# stop, so this section sets up Tailscale itself and the posture around it —
+# never the route, which is the daemon's to publish and unpublish.
+printf '\n'
+say "Tailscale — remote access for the phone, and never a public route."
+
+if command -v tailscale >/dev/null 2>&1; then
+  ok "tailscale found ($(command -v tailscale))"
+  if tailscale status >/dev/null 2>&1; then
+    ok "tailscale is logged in"
+    case "$(_funnel_state)" in
+      off) ok "Funnel is off — the tailnet is the outermost gate" ;;
+      on)  bad "Funnel is on, which publishes past the tailnet to the internet"
+           step "take it down: tailscale funnel --https=443 off"
+           SETUP_FAIL+=("tailscale Funnel is on") ;;
+      *)   warn "could not read the Funnel state — the dashboard publish will refuse if it is on"
+           SKIPPED+=("tailscale serve status unreadable") ;;
+    esac
+  else
+    warn "tailscale is installed but not logged in"
+    step "run: sudo tailscale up    # it prints a login URL; re-run this wizard after"
+    SKIPPED+=("tailscale not logged in")
+  fi
+  note "the dashboard needs no setup here: the daemon binds [ui] port (default 8787)"
+  note "and publishes it on start, taking the route down on stop. Check it any time:"
+  note "  tailscale serve status"
+else
+  warn "tailscale is not installed — the dashboard stays on the loopback"
+  step "install it: curl -fsSL https://tailscale.com/install.sh | sh"
+  step "then: sudo tailscale up — and re-run this wizard, which is re-runnable."
+  SKIPPED+=("tailscale not installed")
+fi
+
+if confirm "Capture a Tailscale API key? (lets Daedalus *propose* tailnet hygiene — removing a stale duplicate node, say — for your approval, never on its own)"; then
+  step "Admin console → Settings → Keys → Generate API key. It can list and remove"
+  step "devices; removal is destructive, so Daedalus proposes and you approve (§6, T9)."
+  open_url "https://login.tailscale.com/admin/settings/keys"
+  ask_secret _TS_KEY "Paste the Tailscale API key (blank to skip):"
+  if [[ -n "${_TS_KEY:-}" ]]; then
+    _ts_tmp="$(mktemp)"   # the key touches disk only here: 0600, sealed, deleted
+    chmod 600 "$_ts_tmp"
+    printf '%s' "$_TS_KEY" > "$_ts_tmp"
+    unset _TS_KEY         # the variable does not outlive its last use
+    if _adopt_secret tailscale-api-key "$_ts_tmp"; then
+      _record_resource tailscale remote_api apikey "secret:tailscale-api-key" "devices.read,devices.remove"
+    else
+      SKIPPED+=("tailscale API key could not be sealed into the store")
+    fi
+    unset _ts_tmp
+  else
+    _record_resource tailscale remote_api apikey "secret:tailscale-api-key" "devices.read,devices.remove"
+    SKIPPED+=("tailscale API key not captured — re-run this wizard to add it")
+  fi
+else
+  note "skipped — without a key, tailnet hygiene stays a console action for you."
+  SKIPPED+=("tailscale API key not captured")
+fi
 # A local CLI needs no credential, so it is provisioned here rather than commented
 # out: the entry IS the grant, and it is what makes the delegate visible to the
 # model before it plans (T28). Whether the binary is on PATH is checked now and
@@ -1045,7 +1120,18 @@ if [[ -f "$ROOT_DIR/src/daedalus/security/quarantine.py" ]]; then
 else
   note "quarantine: module not present yet (P0) — advisory"
 fi
-note "dashboard loopback + Tailscale Serve (never Funnel): a P4 posture, nothing to assert"
+# Funnel must be off: it publishes past the tailnet to the public internet, and
+# every publish in this system refuses rather than proceed (genui/publish.py).
+if command -v tailscale >/dev/null 2>&1; then
+  case "$(_funnel_state)" in
+    off) ok "Funnel is off — nothing on this node reaches the public internet" ;;
+    on)  bad "Funnel is on"
+         HARDEN_FAIL+=("tailscale Funnel is on") ;;
+    *)   note "Funnel state unreadable (not logged in?) — advisory" ;;
+  esac
+else
+  note "tailscale absent — the dashboard stays on the loopback; remote access (P4) is off"
+fi
 
 if (( ${#HARDEN_FAIL[@]} )); then
   printf '\n'

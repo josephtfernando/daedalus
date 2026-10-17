@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct)**
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct) · T40**
 
 ---
 
@@ -567,7 +567,16 @@ so a restart moved the port and left the route pointing at nothing. The phone pa
 broken and nothing reported it. **The route half is fixed** (T27, 17 Oct): the daemon's
 dashboard binds a fixed port and publishes it on start, so the route now points at the
 live port or is down. What remains of T15 is the `push`/Taildrop leg and confirming the
-dashboard from the phone itself — which needs the owner's phone.*
+dashboard from the phone itself — which needs the owner's phone.
+
+*Owner action (17 Oct): the tailnet has a stale second `delphi` node — offline since
+27 Sep, a duplicate registration of this laptop — and a node cannot remove another node
+from the CLI (`tailscale` has no peer-removal, and no `TAILSCALE_API_KEY` is provisioned
+on this machine, nor should the agent go looking for one in `.env`). It is a 20-second
+console action: <https://login.tailscale.com/admin/machines> → the `delphi` row last seen
+27 Sep → Remove. If the owner would rather Daedalus could do it, that is a `tailscale`
+resource (access + credentials, T9's pending→adopted shape) rather than a code change —
+and removing a device is destructive, so it stays a proposal either way.*
 
 ### T25 — the agent's own `serve` · `open`
 *SPEC §3.5 (output channels: `serve`, `push`). §8.5 step 11.*
@@ -814,7 +823,18 @@ feels from the phone, and the aesthetic half is where the emptiness is:
   binds local values — but the standing dashboard composes the same page every day,
   which is what "static" is actually describing.
 
-**The honest fork, and it needs a decision.** `shadcn/ui` is React + Tailwind + a Node
+**Decided 17 Oct (owner).** shadcn/ui is the direction: *"shadcn is good, it'll be good
+to use a framework like it for the future when I want more complex layouts, also it helps
+defining a fixed set of primitives to use for everything. I want consistency."* That
+resolves the fork below in two moves, not one: the **design language now** — a real
+spacing/radius/shadow/type scale, dark and light first-class, more moods than two, and a
+**fixed set of primitives** every page composes from, so consistency comes from the
+vocabulary rather than from discipline — and the **toolchain later**, sanctioned for the
+day the owner wants complex layouts, recorded then as superseding §3.6's no-script
+property rather than eroding it quietly. The ticket is unblocked; what follows is the
+reasoning that decision was made against.
+
+**The honest fork.** `shadcn/ui` is React + Tailwind + a Node
 build. This page is one self-contained document that fetches nothing and runs no script
 (`CSP default-src 'none'`), and that property is load-bearing — it is how §3.6's "the
 model composes structure, code binds values" stays structural rather than aspirational,
@@ -886,3 +906,34 @@ the progress it reports is computed from stored sessions; **the owner has record
 this may read and what may never leave the laptop, and the capability is wired only to
 that**; no remote model call carries a workout value, checked as a property of the
 capability's egress rather than trusted to its prompt.
+
+### T40 — the wizard provisions the tailnet path · `done`
+*SPEC §8.5 stage 8 ("Resources (optional, skippable) — gcal, mail, tailscale"). The
+owner, 17 Oct: "setup a wizard for tailscale thing".*
+
+The spec's stage 8 has named tailscale since the P0 draft, and the wizard honoured it with
+an advisory `command -v` and a Hardening line that said "nothing to assert". Meanwhile the
+phone path became real — a fixed port, published on start, taken down on stop (`fccf190`)
+— and the stale `delphi` node needed a console action no CLI could take (T15's note). So
+stage 8 now actually provisions it:
+
+- **Install and login are asserted, not narrated** — present/logged-in are checked;
+  otherwise the exact commands are printed and the skip is recorded as a skip.
+- **Funnel is asserted off**, read the same way `genui/publish.py` reads it (the JSON's
+  `Funnel` map, non-empty = on; unreadable = *unknown*, warned about, never a pass). A
+  shared `_funnel_state` helper serves both the resource stage and Hardening, which now
+  asserts instead of its "nothing to assert" note.
+- **A Tailscale API key is capturable as a resource** — pasted through hidden entry,
+  sealed into the credential store through a 0600 temp file that is then deleted, the
+  variable unset the line after its last use, and noted in `resources/registry.toml` as
+  `remote_api` / `apikey` scoped `devices.read,devices.remove`: a commented placeholder,
+  the same proposal shape gcal gets. With it, tailnet hygiene — removing a stale
+  duplicate node — becomes something Daedalus can *propose* under T9's pending→adopted
+  shape instead of a console action. Removing a device is destructive, so it is never
+  autonomous.
+
+**Acceptance:** the posture is tested, not narrated — no line of the wizard can turn
+Funnel on; the key reaches the store and never `.env`, config.toml or the wizard's output;
+the registry note is a commented proposal, not a claim of access; and the wizard's Funnel
+reading agrees with the publisher's on the same inputs.
+
