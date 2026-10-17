@@ -16,6 +16,37 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **A process that dies now says so, and the record of it outlives the daemon that started it.**
+  `process start` left something running and `process list` showed `rc=` — the *same* value for "still
+  running" and "died at 04:00", so the one question worth asking could not be answered from the output.
+  And the registry was a dict on the manager: a restart did not just lose the history, it lost the
+  processes, which kept running as orphans that nothing could list, read, or stop. The registry is now
+  `state/processes.json` — file-first and hand-readable like the rest of the state — holding the
+  command, the pid, **the pid's `/proc` start time**, and when and with what code it ended:
+
+  - **The start time is the load-bearing part.** A pid is not an identity, it is a number that gets
+    recycled, so the pair is what lets a row written by a previous daemon say "that was me" without ever
+    saying it about whatever holds the number now — the difference between stopping an orphan and killing
+    a stranger. A row with no fingerprint is never called alive and never signalled: not killing a
+    stranger outranks reaching a process.
+  - **Three states that used to look alike now read alike no more:** running · `exited at 09:12:01
+    (rc=3)` · *ended with nobody watching*, where the exit code was never ours to collect and an invented
+    number would be worse than the gap. A process from before the restart reports `output not kept`
+    rather than `0 lines`.
+  - **`stop` reports what happened, not consent.** An entry that is already gone is not "stopped" — it
+    says when it went. A process started by an earlier run *is* stoppable, and the reply says its exit
+    code is not ours to collect. Stopping also actually stops now: the process leads its own session, so
+    the signal goes to the whole tree, because a killed shell does not take the command it was running
+    with it.
+  - **A second `start` under a live name is refused.** It used to replace the registry row, which left
+    the first process running with nothing able to list, read or stop it — an orphan made by the very
+    call that was supposed to manage it.
+
+  Deliberately **no restart policy**: a process that exits may be exiting for a reason, and a supervisor
+  that silently restarts it is how one crash becomes a loop. The ending is recorded and reported; the
+  decision is the owner's. 11 tests in `tests/test_process.py`. *Supersedes a deferral recorded in SPEC
+  §13; the survival policy itself is still an open call, now written down as one.*
+
 - **A declared resource cap is now a cap.** Every capability manifest declares `caps = { cpu, mem_mb, time_s }`,
   the values were written down, persisted, shown to the model that authored them and shown to the owner —
   and only `time_s` was ever applied. Nothing stopped an artifact from taking every core or allocating

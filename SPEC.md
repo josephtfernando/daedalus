@@ -568,7 +568,12 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Regeneration trigger (on view vs on schedule vs on context change).
 - Tuner control set — which token and system dimensions are directly adjustable on the dashboard.
 - Dashboard interactions that are *actions* (not tuning) — routed through the Discord approval split.
-- Long-running-process supervision (how `process` children survive restarts / sleep).
+- Long-running-process supervision, *beyond* what ships — a started process is now
+  recorded durably (its pid **and its `/proc` start time**, so a recycled pid is
+  never mistaken for it), stays listed and stoppable across a daemon restart, and
+  its ending is reported with a time and an exit code instead of a bare `rc=None`.
+  What is still a call, not an implementation detail: a clean shutdown still stops
+  what the daemon started, and nothing restarts a process that died on its own.
 - Capability resource caps beyond what ships — `time_s`, `cpu` and `mem_mb` are all
   enforced now (see ARCHITECTURE §11), but enforcement is per-process: a **cgroup**
   would bound a capability's whole *tree* and could express a sub-core share, which

@@ -276,7 +276,7 @@ def build_runtime(
         approvals=ApprovalMiddleware(settings),
         resources=ResourceRegistry(settings.home / "resources" / "registry.toml"),
         secrets=SecretStore(settings.home),
-        processes=ProcessManager(),
+        processes=ProcessManager(settings.home / "state" / "processes.json"),
         quarantine=Quarantine(),
         seats=load_charters(settings.home),
         surface=surface,

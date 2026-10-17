@@ -151,7 +151,7 @@ $DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
   cabinet/      seats/*.toml  messages.db        # typed protocol log
   genui/        components/  tokens/  drafts/
   approvals/    grants.toml  log.db
-  state/        wakes.db  ratelimit.db  proactive.json  reminders.json
+  state/        wakes.db  ratelimit.db  proactive.json  reminders.json  processes.json
   ui/                                        # generated dashboards (served)
   logs/                                      # journald mirrors
 ```
@@ -492,6 +492,7 @@ added_at = timestamp
 - `state/proactive.json` — the day's proactive ledger: how often the agent has spoken, and what it last said. Hand-editable, so "why did you ping me at 23:00" has an answer that is not a guess.
 - `state/reminders.json` — which calendar reminders have already been delivered, so a tick that runs twice in a minute does not nudge the owner twice about the same meeting. Pruned after a week.
 - `state/ratelimit.db` — rolling-window provider accounting.
+- `state/processes.json` — every process the agent has started: name, command, pid **and its `/proc` start time**, when and with what code it ended. Hand-editable like the rest. The start time is the point — a pid is recycled, so the pair is what lets a registry row from a previous daemon say "that was me" without ever saying it about whatever holds the number now. Live processes are never evicted; the last 50 endings are kept.
 - `cabinet/messages.db` — typed seat messages.
 - `calendar/` — `events.ics` (the `Daedalus` calendar, internal-authoritative) + `index.sqlite` + `sync_state.json` (gcal cursor/token); reads from other calendars are cached with their gcal-authoritative origin.
 

@@ -395,7 +395,7 @@ went back to being decorative). Falsified both ways: neutering the sampler redde
 exactly the three breach tests, and dropping the affinity call reddens the `cpu`
 test (`assert 16 == 1`). Docs: ARCHITECTURE §11, SPEC §13.
 
-### T20 — A process that dies is visible, and outlives a restart · `open`
+### T20 — A process that dies is visible, and outlives a restart · `done`
 *`tools/process.py`. SPEC §13 ("long-running-process supervision"). Found 17 Oct.*
 
 `process start` leaves something running and `process list` shows `rc=` — but
@@ -409,3 +409,32 @@ it ended are visible without asking; a process started before a daemon restart i
 still listed, with liveness read from the real pid; `stop` on an entry that is
 already gone says *that*, rather than "no process"; and a stop never signals a pid
 that something else has since been given.
+**Done** — the registry is now a file (`state/processes.json`), and it holds four
+things per process: the command, the pid, **the pid's `/proc` start time**, and when
+and with what code it ended. The start time is the load-bearing one. A pid is not an
+identity — it is a number that gets recycled — so the pair is what lets a row
+written by a previous daemon say "that was me" without ever saying it about whatever
+holds the number now, which is the difference between stopping an orphan and killing
+a stranger. An entry with no fingerprint (a hand-edited row) is therefore never
+called alive and never signalled, because *not* killing a stranger outranks reaching
+a process.
+Three states used to look the same and now read differently: **running**, **exited**
+(`exited at 09:12:01 (rc=3)`), and **ended with nobody watching** — a crash or a hard
+kill, where the exit code was never ours to collect and saying otherwise would be an
+invented number. The buffer of output is honest about the same seam: a process from
+an earlier run reports `output not kept` rather than `0 lines`.
+`stop` answers with what happened, not with consent: an entry that is already gone is
+**not** stopped, and says when it went; a process started by an earlier run *is*
+stoppable (the fingerprint has vouched for the pid), and the reply says the exit code
+is not ours to collect. A second `start` under a live name is **refused** now —
+it used to replace the registry row, leaving the first process running with nothing
+able to list, read or stop it. And stopping actually stops: the process leads its own
+session, so SIGTERM (then SIGKILL after ten seconds) goes to the whole tree, because a
+killed shell does not take the command it was running with it.
+**No restart policy**, deliberately: a process that exits may be exiting for a
+reason, and a supervisor that silently restarts it is how one crash becomes a loop.
+The ending is recorded and reported and the decision stays with the owner. 11 tests in
+`tests/test_process.py`. Falsified three ways: an in-memory registry reddens six of
+them; `_is_alive` trusting the pid alone reddens the recycled-pid test; and dropping
+the ending-record reddens the reporting tests. Docs: ARCHITECTURE §5 and §8.5, SPEC
+§13.
