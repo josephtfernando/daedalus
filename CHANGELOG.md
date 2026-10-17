@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 748-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 749-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -767,7 +767,13 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   does not need to exist, cannot leak, and there is nothing to add to a rotation list. Its manifest declares
   `net = ["codeforces.com"]` alone, with no deps and no secrets; the standing grant
   `capability:codeforces_webhook_direct` is revoked with it, because a permission to a capability that no
-  longer exists is a permission to nothing — and it carried `discord.com` egress that nothing needs.
+  longer exists is a permission to nothing — and it carried `discord.com` egress that nothing needs. The
+  honest manifest then has to earn what the dishonest one dodged: `net = []` is *why* the gate never asked
+  this capability for anything, so the rewrite arrives needing an approval it was never once asked for, and
+  is given one for `codeforces.com` alone. A scheduled delivery now writes one line to the journal
+  (*"capability <name> delivered a notification"*): a run that spoke and a run that silently failed both
+  look like `exit 0` from outside, and the message itself is the one piece of evidence only the owner can
+  see.
 
   **Rotating the token is still the owner's, and it is the part that matters.** Purging history does not make
   a live credential safe: it was valid from the moment it was written until someone revokes it in Discord,

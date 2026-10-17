@@ -112,3 +112,21 @@ async def test_state_carries_between_scheduled_runs(runtime: Runtime) -> None:
 
     manifest = runtime.capabilities.get("notifier")
     assert runtime.runner.read_state(manifest)["runs"] == 2
+
+
+async def test_a_delivery_is_recorded_in_the_log(runtime: Runtime, caplog) -> None:
+    """The delivered message is the one piece of evidence only the owner can see.
+
+    A capability that speaks and a capability that silently fails both look like
+    "exit 0" from the outside, so a scheduled delivery has to say so somewhere
+    the operator can read — otherwise the only way to answer "did it deliver?"
+    is to ask the owner whether their DM arrived.
+    """
+    import logging
+
+    await _author(runtime, "notifier", NOTIFY_RUN)
+
+    with caplog.at_level(logging.INFO, logger="daedalus.scheduler"):
+        await runtime.scheduler.dispatch_tick(runtime, when=FRIDAY_0730)
+
+    assert "capability notifier delivered a notification" in caplog.messages

@@ -10,6 +10,7 @@ deterministic — quiet hours and a daily cap, decided in code.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -25,6 +26,8 @@ from .wakes import Wake, WakeLog
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
+
+log = logging.getLogger("daedalus.scheduler")
 
 WakeHandler = Callable[[str], Awaitable[str]]
 
@@ -154,6 +157,10 @@ class Scheduler:
             for note in run.notifications:
                 if ctx.surface is not None:
                     await ctx.surface.send(_render_notification(job, note))
+                    # The owner's only other evidence that a scheduled capability
+                    # spoke is the message itself, which nobody but the owner can
+                    # see. "Did it deliver?" should be answerable from the journal.
+                    log.info("capability %s delivered a notification", job.target)
             return TickResult(
                 job=job.name,
                 ran=True,
