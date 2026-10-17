@@ -129,7 +129,7 @@ daedalus/                      # code repo
       discord/ bot.py approvals.py
       base.py cli.py
     cabinet/
-      seat.py namespace.py protocol.py broker.py
+      seat.py namespace.py protocol.py broker.py triage.py
     genui/
       spec.py components/ renderer.py theming.py dashboard.py server.py actions.py tuners.py publish.py
       tokens/approved.toml drafts/<id>.toml      # adopted values, pending tunes
@@ -178,8 +178,12 @@ $DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
 ### 7.1 Inbound turn
 
 ```
-Discord DM ─▶ Surface.recv ─▶ Engine.run_turn(event)
-  1. resolve surface + active seat identity → charter
+Discord DM ─▶ Surface.recv ─▶ route(event) ─▶ Engine.run_turn(event, seat=…)
+  0. route: who takes this message?  (§7.1.1)
+       a seat the owner addressed → that seat, no model consulted
+       otherwise → one cheap-route call over the charters,
+                   validated against the cabinet, else fallback
+  1. resolve seat identity → charter
   2. assemble context:
        charter + memory recall + capability inventory
        + resource inventory + thread history + tool schemas
@@ -194,6 +198,38 @@ Discord DM ─▶ Surface.recv ─▶ Engine.run_turn(event)
 ```
 
 **The active seat is resolved once, at step 1.** `pick(seats, seat)` where `seat` is the caller's (a wake names none). No name means the charter carrying `active = true` — the identity the owner chose, and choosing it is `daedalus activate`, a write to the charter files and nothing else. That single resolution sets the session, the charter in the prompt, and the memory namespace, so the three cannot disagree about who is answering.
+
+### 7.1.1 Routing — who takes this message
+
+`cabinet/triage.py`. The owner should not have to name a seat, so the ingress asks
+*before* the turn starts and passes the answer in as `seat=`. The engine is unchanged:
+a caller that already knows the identity (a wake, the self-test) still names it
+directly, and a routed turn is not special thereafter.
+
+Order of decision, and it matters that the order is this one:
+
+1. **The owner addressed a seat** — `athena: …`, `@athena …`, `to athena: …`, resolved
+   against the cabinet. A leading word that is not a seat is an ordinary sentence
+   ("Right, so…"), not a failed address (SPEC §7).
+2. **One routing question**, route `cheap` first with the heavy chain behind it, and the
+   **charters as the menu**. A second list of responsibilities in code would drift the
+   day a charter was edited, and it would be the copy the model believed.
+3. **Validation** — the answer must *lead* with a seat (before a separator, or as the
+   whole line), because prose that merely mentions one is not a choice: "not Athena,
+   this is Odysseus's" contains both names. `resolve()` checks it against the real
+   charters, so the model cannot invent an identity.
+4. **Fallback** — no answer, an unknown name, a provider that is down, a message under
+   four characters: the seat already handling this conversation (`Runtime.last_seat`,
+   keyed by channel), else the active seat. A classifier's bad day must never cost the
+   owner a request, which is why `triage()` catches rather than propagates.
+
+`Runtime.last_seat` is deliberately **in memory only**: a restart loses the thread and
+the next message is routed fresh, rather than inheriting a continuity that is not there.
+
+The reply then carries `**Athena** · <why>` whenever the seat is not the active one —
+`main.attribution()`, applied inside `main.deliver()` so every surface gets it from one
+place. A route nobody can see is a route nobody can correct.
+
 
 ### 7.2 Capability authoring (the tool-making flow)
 

@@ -16,10 +16,13 @@ from . import __version__
 from .config import Settings, load_settings
 from .storage import paths
 
+log = logging.getLogger("daedalus.main")
+
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps imports cheap
+    from .cabinet.triage import Decision
     from .loop.engine import TurnResult
     from .runtime import Runtime
-    from .surface.base import Surface
+    from .surface.base import InboundEvent, Surface
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -63,12 +66,15 @@ def cmd_ask(args: argparse.Namespace) -> int:
     async def go() -> int:
         engine = Engine(rt)
         event = InboundEvent(text=" ".join(args.text), user_id="owner", is_dm=False, source="cli")
-        result = await engine.run_turn(event)
+        # Routed like any other owner message: the seat that takes it answers as
+        # itself, and this used to print nothing at all when it did.
+        decision = await route(rt, event)
+        result = await engine.run_turn(event, seat=decision.seat.key)
+        await deliver(surface, result, header=attribution(rt, decision))
         if result.error and not result.text:
             print(f"[error] {result.error}", file=sys.stderr)
+            await rt.aclose()
             return 1
-        if not result.text:
-            print("(no reply)", file=sys.stderr)
         await rt.aclose()
         return 0
 
@@ -264,9 +270,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     async def handler(event: InboundEvent) -> None:
         # The typing indicator is held for the work, not for the send: sending
-        # the reply clears it, so it never lingers past the answer.
+        # the reply clears it, so it never lingers past the answer. Routing is
+        # part of the work — the question "who takes this" is asked with the
+        # indicator up, not in silence.
         async with surface.working(event.channel_id):
-            result = await engine.run_turn(event)
+            decision = await route(rt, event)
+            result = await engine.run_turn(event, seat=decision.seat.key)
         log.info(
             "turn done: %d step(s), tools=%s, provider=%s, %d char(s)%s",
             result.steps,
@@ -278,7 +287,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not result.text:
             # Never be silent: a turn with no text is reported, not swallowed.
             log.warning("turn produced no text (%s)", result.error or "the model returned empty content")
-        await deliver(rt.surface, result)  # type: ignore[arg-type]
+        await deliver(rt.surface, result, header=attribution(rt, decision))  # type: ignore[arg-type]
 
     surface = DiscordSurface(settings, handler)
     rt.set_surface(surface)
@@ -307,10 +316,10 @@ def _run_cli_repl(settings: Settings) -> int:
                     break
                 if not line.strip():
                     continue
-                result = await engine.run_turn(
-                    InboundEvent(text=line, user_id="owner", is_dm=False, source="cli")
-                )
-                await deliver(surface, result)
+                event = InboundEvent(text=line, user_id="owner", is_dm=False, source="cli")
+                decision = await route(rt, event)
+                result = await engine.run_turn(event, seat=decision.seat.key)
+                await deliver(surface, result, header=attribution(rt, decision))
         finally:
             if dashboard is not None:
                 dashboard.stop()
@@ -326,19 +335,77 @@ NO_OUTPUT = (
 )
 
 
-async def deliver(surface: Surface, result: TurnResult) -> bool:
+async def deliver(surface: Surface, result: TurnResult, *, header: str = "") -> bool:
     """Send the turn's text, or say plainly that there wasn't any.
+
+    ``header`` is who answered, when that is worth saying — see
+    :func:`attribution`. It travels with the fallback too: a turn that produced
+    nothing is still a turn some identity ran, and the owner should not have to
+    guess which one came back empty.
 
     Returns True if the no-output fallback was used. Silence is the one outcome
     that must never happen: an unanswered DM and a dead daemon are then
     indistinguishable from the outside, which is exactly how a real request went
     missing without leaving a trace.
     """
-    if result.text:
-        await surface.send(result.text)
-        return False
-    await surface.send(NO_OUTPUT)
-    return True
+    body = result.text or NO_OUTPUT
+    await surface.send(f"{header}\n\n{body}" if header else body)
+    return not result.text
+
+
+async def route(runtime: Runtime, event: InboundEvent) -> Decision:
+    """Who takes this message (SPEC §7).
+
+    Runs at the ingress, before the turn starts, so the turn runs as one
+    identity from its first token: the seat's charter, the seat's memory
+    namespace, the seat's voice. The decision is written to
+    ``runtime.last_seat`` so a follow-up with no subject of its own stays with
+    the seat already handling this conversation.
+
+    The routing question goes to the **cheap** route first (the heavy chain is
+    still the fallback), and its failure is never the turn's: `triage` falls
+    back, because losing an owner's request to a classifier's bad day is not an
+    acceptable outcome.
+    """
+    from .cabinet.triage import triage
+
+    channel = event.channel_id or event.user_id or ""
+
+    async def ask(question: str) -> str:
+        result = await runtime.model.chat(
+            [{"role": "user", "content": question}], route="cheap"
+        )
+        return result.content or ""
+
+    decision = await triage(
+        event.text,
+        runtime.seats,
+        ask=ask,
+        previous=runtime.last_seat.get(channel, ""),
+    )
+    runtime.last_seat[channel] = decision.seat.key
+    # The seat and how it was chosen, never the reason: the reason is prose about
+    # the owner's message, and the log is not a place for their words.
+    log.info("routing: %s (%s)", decision.seat.key, decision.by)
+    return decision
+
+
+def attribution(runtime: Runtime, decision: Decision) -> str:
+    """The line that says who answered — empty when nobody needs telling.
+
+    Empty means the owner is talking to the identity they chose to talk to
+    (the active seat), which needs no announcement. Anything else gets named,
+    with the router's reason when the router is what chose — that is what makes
+    a wrong route correctable instead of mysterious.
+    """
+    from .cabinet.seat import active_seat
+
+    if decision.seat.key == active_seat(runtime.seats).key:
+        return ""
+    line = f"**{decision.seat.name}**"
+    if decision.by == "model" and decision.reason:
+        line += f" · {decision.reason}"
+    return line
 
 
 def _seconds_to_next_tick(now: float, interval_s: float) -> float:

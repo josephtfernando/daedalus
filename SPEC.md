@@ -429,6 +429,22 @@ activating one seat means deactivating another and two charters claiming the own
 refused at the next startup. A name nobody answers to is not an error worth stopping a turn
 for: the request lands on the active seat.
 
+**The coordinator routes, so the owner does not have to name a seat.** A message is
+routed *before* the turn starts. An address the owner wrote themselves — `athena: …`,
+`@athena …`, `to athena: …` — wins with no model consulted, and a leading word that is
+not a seat is an ordinary sentence rather than a failed address. Otherwise one
+**cheap-route** question asks which seat the message belongs to, with the **charters
+themselves as the menu**: a second list of responsibilities living in code would drift
+the day a charter was edited, and it would be the copy the model believed. The answer is
+validated against the cabinet, so routing cannot invent an identity, and everything
+unreadable — no answer, an unknown name, a provider that is down, a message too short to
+be about anything — **falls back rather than guessing**: the seat already handling this
+conversation, else the active one. Routing is a preference, never a gate. The turn then
+runs as that seat from its first token — that seat's charter, that seat's memory
+namespace, that seat's voice — and the reply **names whoever took it** whenever it is not
+the identity the owner was already talking to. That last part is what makes a wrong route
+correctable rather than mysterious; a route nobody can see is a route nobody can fix.
+
 **Seats do not call each other — they leave messages.** A seat is not a process, so
 there is no socket to lose a message on and no in-memory list to keep one in. What one seat
 says to another is a typed message (`request / ack / partial / result / verify / failure /

@@ -60,6 +60,9 @@ class TurnResult:
     tools_used: list[str] = field(default_factory=list)
     provider: str = ""
     error: str = ""
+    #: The seat that answered — the key, not the display name, because this is
+    #: what a surface compares against to decide whether to say who it was.
+    seat: str = ""
 
 
 class Engine:
@@ -112,9 +115,11 @@ class Engine:
         from ..runtime import Session
 
         # Resolve the seat **once**, here, so the session, the prompt, and the
-        # memory namespace cannot disagree: a turn is one identity's. No name
-        # means the active seat — the identity the owner chose to talk to, which
-        # is how `active = true` on another charter takes effect.
+        # memory namespace cannot disagree: a turn is one identity's. A caller
+        # that routed the message (SPEC §7 — the ingress asks
+        # `cabinet.triage` who a message belongs to) passes the seat it chose;
+        # no name means the active seat, the identity the owner chose to talk to,
+        # which is how `active = true` on another charter takes effect.
         chosen = pick(ctx.seats, seat)
         ctx.session = Session(
             seat=chosen.key,
@@ -139,7 +144,12 @@ class Engine:
             """
             ctx.remember(event, event.text, text)
             return TurnResult(
-                text=text, steps=steps, tools_used=used, provider=provider, error=error
+                text=text,
+                steps=steps,
+                tools_used=used,
+                provider=provider,
+                error=error,
+                seat=chosen.key,
             )
 
         while steps < ctx.settings.max_steps:

@@ -88,6 +88,13 @@ class Runtime:
     #: loop, so there is one turn at a time: a second message waits rather than
     #: races. See `Engine.run_turn`.
     turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: The seat that last handled each conversation — channel id to seat key.
+    #: Routing reads it so a follow-up with no subject of its own ("and the
+    #: second one?") stays with the seat the owner was already talking to,
+    #: instead of being re-judged on every message. In memory only: a restart
+    #: loses the thread, and the next message is routed fresh, which is the
+    #: honest outcome rather than a wrong continuity.
+    last_seat: dict[str, str] = field(default_factory=dict)
 
     # -- turn bookkeeping -------------------------------------------------
 
@@ -198,7 +205,10 @@ class Runtime:
         # identity the owner talks to, not as a second one.
         self.session = Session(seat=active_seat(self.seats).key, turn_ref="wake")
         event = InboundEvent(text=self.briefing(prompt), user_id="scheduler")
-        result = await Engine(self).run_turn(event)
+        # The seat is passed rather than left to resolve on its own: a wake is
+        # not the owner's message and has no subject to route, so it speaks as
+        # the active seat and no routing question is asked about it.
+        result = await Engine(self).run_turn(event, seat=self.session.seat)
         text = (result.text or "").strip()
         if not text or text == SILENT:
             return ""

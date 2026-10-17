@@ -12,9 +12,45 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 834-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 867-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **A message is routed to the seat it belongs to, so the owner never has to name one.** The cabinet
+  existed and was reachable only by naming a seat or editing `active = true`, which is a switchboard
+  rather than a chief of staff. Now the ingress asks *who takes this*, before the turn starts, in
+  `cabinet/triage.py`:
+
+  - **An address the owner wrote wins, and no model is asked.** `athena: …`, `@athena …`, `to athena: …`
+    — resolved against the cabinet, so a leading word that is not a seat stays an ordinary sentence
+    ("Right, so…") instead of becoming a failed address (SPEC §7).
+  - **Otherwise one question, over the charters themselves.** The menu is the cabinet: a second list
+    of responsibilities living in code would drift the day a charter was edited, and it would be the
+    copy the model believed. The question goes to the cheap route first, with the heavy chain behind
+    it. A hand-written ninth charter is routable the moment it exists.
+  - **The answer is validated and read strictly.** It must *lead* with a seat — before a separator, or
+    as the whole line — because prose that merely mentions one is not a choice: "not Athena, this is
+    Odysseus's" contains both names. `resolve()` checks it against the real charters, so routing
+    cannot invent an identity.
+  - **Everything unreadable falls back rather than guessing** — no answer, an unknown name, a provider
+    that is down, a message under four characters. The seat already handling this conversation
+    (`Runtime.last_seat`, keyed by channel, in memory only: a restart loses the thread and the next
+    message is routed fresh) takes it, else the active seat. A classifier's bad day must not cost the
+    owner their request, so `triage()` catches rather than propagates.
+  - **The reply says who answered** — `**Athena** · <why>` — whenever the seat is not the active one.
+    A route nobody can see is a route nobody can correct. Applied in `main.deliver()`, so every
+    surface gets it from one place.
+
+  The turn itself is unchanged: routing is decided at the ingress and passed in as `seat=`, so a caller
+  that already knows the identity (a wake, the self-test) is unaffected, and the engine resolves the
+  seat once exactly as before. *Supersedes:* a seat being reachable only by `daedalus activate` or by
+  naming it. *Cost, stated plainly:* one cheap-route model call per owner message.
+
+- **`daedalus ask` prints its answer.** It ran the turn and dropped the text on the floor — printing
+  only `(no reply)`, and only to stderr when the turn was empty. Silent on success and vaguely worded
+  on failure is the one shape a CLI request must not have. It now routes, runs as the seat that took
+  it, and delivers through the same path as the daemon, attribution line included.
+
 
 - **The proof-of-life holds, and the status lines that said otherwise no longer do.** SPEC §11 defines
   P0's acceptance as the owner sending a free-text request it has never seen and watching it complete

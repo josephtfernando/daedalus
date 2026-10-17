@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct)**
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct)**
 
 ---
 
@@ -509,6 +509,46 @@ opens them, deliberately and in writing.
 is a proposal with a grant, never an autonomous move; for Heracles, **the owner has
 first decided and recorded what it may read, what stays on the laptop, and whether a
 remote model ever sees it** — and the seat is wired only to what that decision allows.
+
+### T39 — the coordinator routes a request to the seat it belongs to · `done`
+*SPEC §7. The owner, 17 Oct: "I want daedalus to be able to figure out who is best suited
+to do things, and then route my message to them."*
+
+Asked for straight after the cabinet was drafted, and it is the clause that makes the
+seats real: without it a seat is reachable only by the owner naming it, which is a
+switchboard rather than a chief of staff. **`cabinet/triage.py`.** An address the owner
+wrote wins with no model consulted (`athena: …`, `@athena …`, `to athena: …` — and a
+leading word that is not a seat is an ordinary sentence, per §7). Otherwise one
+cheap-route call asks which seat the message belongs to, with **the charters themselves
+as the menu**, because a second list of responsibilities living in code would drift the
+day a charter was edited and would be the copy the model believed. The answer is
+validated against the cabinet so routing cannot invent an identity; anything unreadable
+falls back — the seat already handling this conversation, else the active one — because
+a classifier's bad day must not cost the owner their request. A routed turn is run as
+that seat from its first token (its charter, its memory namespace, its voice), and the
+reply names whoever took it whenever that is not the identity the owner was already
+talking to. *The engine is untouched: routing is decided at the ingress and passed in as
+`seat=`, so a caller that already knows the identity (a wake, the self-test) is
+unaffected.*
+
+**Acceptance:** a message about practice is answered by Athena and one about hiring by
+Odysseus, without the owner naming either; a seat addressed by name is never re-judged;
+an answer naming a seat that does not exist routes nowhere; a message that is a follow-up
+stays with the seat already handling it; and a routing failure leaves the request on the
+active seat.
+
+*Done 17 Oct.* `triage()` (with `addressed` / `read` / `menu` / `prompt`) and its wiring
+at both ingresses — the Discord handler and the CLI repl, plus `daedalus ask`, which was
+also **printing nothing at all** when it succeeded and now delivers like every other
+path. 22 tests in `tests/test_triage.py`, and one live run: "give me three DSA topics to
+drill this week" routed to Athena (`by=model`, *"she owns DSA practice and sets what the
+owner drills"*) and she answered with a plan built from the real calendar — contest Sunday,
+graphs Monday and Tuesday, DP Thursday and Friday, Wednesday left free. Falsified twice:
+letting `read()` accept an unresolvable name reddens the invented-seat and
+mentions-a-seat tests; letting a provider failure propagate reddens the two fallback
+tests. Docs: SPEC §7, ARCHITECTURE §7.1 and the new §7.1.1. *Cost, stated plainly:
+routing adds one cheap-route call to every owner message (messages under four characters
+skip it), which is the price of not having to name a seat.*
 
 #### P4 — remote / Tailscale Serve
 
