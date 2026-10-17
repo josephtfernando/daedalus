@@ -703,11 +703,21 @@ structure; a download is a value leaving the laptop, so it is the owner's move, 
 deliberately, and the *guard* decides what is reachable, never the model's confidence
 that a path looked fine.
 
+**Decided 17 Oct.** The first root is **this repo** (`/home/apollo/projects/daedalus`)
+and nothing else. The root list is the owner's own data rather than code — adding a
+folder later is a change to a file the owner owns, not a change to the program — because
+the surface for it arrives with a dashboard the owner will ask for later, and a surface
+cannot edit a constant. Widening what may leave the laptop is an **approval**, in the
+shape T9 already established (a proposal that is pending until the owner adopts it),
+since that is exactly what adding a root is: reach growing.
+
 **Acceptance:** from Discord, a request for a file under a declared root returns either a
 rendered view or a working download link; a request outside the declared roots is refused
 by name, with the root it was refused against; the served URL is tailnet-only, carries a
 one-time token, and stops working when it expires; naming a protected file directly does
-not make it servable; and the agent cannot publish a root it was not given.
+not make it servable; the agent cannot publish a root it was not given; and the root list
+is owner-owned data — a later dashboard can add a folder without a code change, and
+adding one goes through an approval rather than taking effect silently.
 
 ### T35 — the surface stops being one page in one mood · `open`
 *SPEC §3.6 (visual → dashboard; "the mood token set (the owner's)"). The owner, 17 Oct:
@@ -748,6 +758,11 @@ entries through the same validation door, not drift); a page still fetches nothi
 runs no script unless the owner has explicitly opened that door — and if the toolchain
 itself is chosen, that is recorded as a decision that supersedes §3.6's no-script
 property rather than quietly eroding it.
+
+*Carried over from T34 (17 Oct): the surface that edits the **servable root list** lives
+here. T34 made the roots owner-owned data rather than code, so that a folder can be added
+without a code change; this is the ticket that gives the owner the screen to do it, with
+T9's adopt-before-it-counts shape behind it.*
 
 ### T36 — the habit tracker · `open`
 *SPEC §3.5 (capabilities are local scripts first). SPEC §7 (the seats it belongs to).*
