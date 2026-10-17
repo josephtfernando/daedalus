@@ -196,6 +196,38 @@ def _looks_like_day(text: str) -> bool:
     return len(text) == 10 and text[4] == "-" and text[7] == "-" and text.replace("-", "").isdigit()
 
 
+def _true(value: Any) -> bool:
+    """A flag the model may send as ``true`` or as the string ``"true"``."""
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def _in_the_past(start: str) -> str:
+    """``"Sat 10 Oct"`` when a one-off start has already gone, else ``""``.
+
+    A write the owner asked for *tomorrow* that resolves to a day last week is not
+    a write, it is a mistake, and nothing said so: the event sat in the store on a
+    date that will never come round, the reminder attached to it could never fire,
+    and the only person who could see it was the owner. **10 Oct 2026 went in that
+    way** — from "Sunday, which is tomorrow", by a model that had never been told
+    the date.
+
+    Only one-offs are checked. A repeating event is *meant* to begin in the past
+    ("standups every weekday" started weeks ago) and `op=import` exists to bring in
+    the owner's history, so neither is touched. For the genuine past one-off —
+    "add the dentist visit I had last Tuesday" — `allow_past=true` says so on
+    purpose, which is the whole point of asking: the mistake and the intent stop
+    looking alike, and the model holds the one piece of evidence that separates
+    them, which is what the owner actually said.
+    """
+    try:
+        moment = parse_iso(normalise_when(start)[0])
+    except ValueError:
+        return ""
+    if moment >= datetime.now():
+        return ""
+    return moment.strftime("%a %d %b")
+
+
 def _ask_owner(op: str, named: str, rows: list[Any]) -> str:
     """The question only the owner can settle, when the model could not.
 
@@ -251,7 +283,11 @@ class CalendarTool(Tool):
         "wants one. "
         "Times are local: "
         "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. A repeating "
-        "event is one event with an rrule, not many copies."
+        "event is one event with an rrule, not many copies. "
+        "**A one-off `start` that has already gone is refused** unless you pass "
+        "`allow_past=true`: an event in the past never comes round, so a past date is "
+        "usually a day that was worked out wrongly. Check it against today rather than "
+        "the other way round. A repeating event may begin in the past."
     )
     risk = Risk.AUTO
     scopes = {"fs": ["state"]}
@@ -350,6 +386,19 @@ class CalendarTool(Tool):
         location=({"type": "string"}, False),
         description=({"type": "string"}, False),
         rrule=({"type": "string", "description": _RRULE_HELP}, False),
+        allow_past=(
+            {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "for op=create: set true only when the owner really did ask for an "
+                    "event on a date that has already passed. A one-off start in the past "
+                    "is refused without it, because that is what a misread 'tomorrow' looks "
+                    "like. A repeating event may start in the past without it."
+                ),
+            },
+            False,
+        ),
         remind=(
             {
                 "type": "integer",
@@ -576,6 +625,22 @@ class CalendarTool(Tool):
                 'summary="Dentist", start="2026-10-20T09:00".'
             )
         remind = args.get("remind")
+        # A repeating event may legitimately begin in the past; a one-off may not,
+        # and a past one-off is the shape a date misread takes. Refusing it is the
+        # difference between a wrong date the owner sees and a wrong date nobody
+        # ever sees. `allow_past` is the way to say the past was meant.
+        if not str(args.get("rrule", "")).strip() and not _true(args.get("allow_past")):
+            gone = _in_the_past(start)
+            if gone:
+                today = datetime.now().strftime("%a %d %b")
+                return ToolResult.error(
+                    f"op=create got start={json.dumps(start)}, which is {gone} — already "
+                    f"gone. Today is {today}. A one-off in the past never comes round, and a "
+                    f"reminder on it can never fire, so this is almost always a day that was "
+                    f"worked out wrongly rather than one the owner named. Check the date "
+                    f"against today and call again; if the owner really did mean a past date, "
+                    f"pass allow_past=true and say in your reply that it is in the past."
+                )
         event = ctx.calendar.add(
             summary=summary,
             start=start,

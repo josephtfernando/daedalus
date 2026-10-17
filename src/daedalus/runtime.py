@@ -6,6 +6,7 @@ has to reach for a global.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -80,6 +81,13 @@ class Runtime:
     #: which is what a hand-built Runtime in a test gets.
     transcript: Transcript | None = None
     session: Session | None = None
+    #: One turn at a time, for the whole agent. A turn writes `session` (the
+    #: ingress policy every tool reads, `local_only` included) and appends to the
+    #: transcript, so two turns in flight are two turns overwriting each other's
+    #: state and answering the owner out of order. There is one owner and one
+    #: loop, so there is one turn at a time: a second message waits rather than
+    #: races. See `Engine.run_turn`.
+    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # -- turn bookkeeping -------------------------------------------------
 

@@ -2,20 +2,71 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..cabinet.namespace import memory_for
 from ..cabinet.seat import pick
+from ..calendar import zones
 from ..scheduler.cron import CronError  # noqa: F401  (documented in the prompt)
 from ..surface.base import InboundEvent
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
 
+
+def _short(day: date) -> str:
+    return day.strftime("%a %d %b")
+
+
+def _long(day: date) -> str:
+    return day.strftime("%A %d %B %Y")
+
+
+def now_block(moment: datetime | None = None) -> str:
+    """What "now" is, spelled out — the one fact an agent cannot infer.
+
+    Until 17 Oct nothing told the agent the date. Asked to add something "on
+    Sunday, which is tomorrow", it answered with **10 Oct 2026**: a *Saturday*,
+    seven days gone — and `calendar` took it, because a start in the past is a
+    perfectly legal write. The owner then spent a morning correcting a date the
+    agent should never have had to guess, and two events sat in the store on a
+    day nobody said.
+
+    A moment, a weekday and the span of the current week are enough to resolve
+    every relative thing an owner says without guessing, and they cost four lines
+    once per turn. The instruction at the end is not decoration: the failure was
+    not ignorance of today's date so much as *writing a date it had not been
+    given*, so the prompt says which of the two it is allowed to do.
+    """
+    now = moment or datetime.now(zones.local_zone())
+    today = now.date()
+    monday = today - timedelta(days=today.weekday())
+    zone = zones.local_name()
+    return "\n".join(
+        [
+            f"It is {now.strftime('%H:%M')} on {_long(today)}"
+            + (f" ({zone})" if zone else "")
+            + ".",
+            f"Today is {_short(today)}. Tomorrow is {_short(today + timedelta(days=1))}; "
+            f"yesterday was {_short(today - timedelta(days=1))}. "
+            f"This week runs {_short(monday)} to {_short(monday + timedelta(days=6))}.",
+            'Resolve "tomorrow", "Sunday", "next week" and every bare day against those '
+            "dates — and before you write a date anywhere, check it against today. A date "
+            "you were given is a date; a date you worked out in your head is a guess, and "
+            "nobody downstream can tell the two apart.",
+        ]
+    )
+
+
 SYSTEM_PROMPT = """You are {seat_name}, an identity over a single local agent loop that runs on the
 owner's laptop. You are reached over Discord by one person. You are their chief of staff.
 
 {charter}
+
+## Right now
+
+{now}
 
 ## How you work
 
@@ -110,6 +161,7 @@ def build_system_prompt(
     return SYSTEM_PROMPT.format(
         seat_name=chosen.name,
         charter=chosen.charter,
+        now=now_block(),
         capabilities=ctx.capabilities.inventory(),
         resources=ctx.resources.inventory(),
         calendar=ctx.calendar.inventory(allow_local_only=include_local_only),

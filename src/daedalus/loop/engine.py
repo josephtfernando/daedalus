@@ -73,6 +73,41 @@ class Engine:
         seat: str | None = None,
         on_delta=None,
     ) -> TurnResult:
+        """Run one turn — and never let two of them run at once.
+
+        There is one owner, one agent, and one `Runtime`, and a turn *writes* that
+        Runtime: it sets `ctx.session`, which is the ingress policy every tool
+        reads (`local_only` included, so a race here is a security race as much as
+        a confusing one), it appends to the transcript, and it advances history by
+        key. Two turns in flight are two turns overwriting each other's state.
+
+        That is not theoretical. On 17 Oct the owner asked about the calendar, got
+        no answer for ninety seconds, and sent the same message again; the second
+        turn started while the first was still going, both turns called `calendar`,
+        and the owner was answered **out of order** — the calendar reply landing
+        after, and reading from before, the unrelated AI briefing that had finished
+        in between. A message that arrives mid-turn now waits its turn. The queue
+        is the owner's own conversation, so waiting is the correct behaviour; the
+        approval prompt and the `ask` primitive are unaffected, because they are
+        answered *inside* the turn that asked.
+
+        A second `Engine` instance is standing in the way of an ordering bug, not
+        in the way of this lock: the lock belongs to the Runtime, so a wake from
+        the scheduler queues behind a conversation turn exactly as it should.
+        """
+        lock = self.ctx.turn_lock
+        if lock.locked():
+            log.info("a turn is already running — this one waits for it")
+        async with lock:
+            return await self._run_turn(event, seat=seat, on_delta=on_delta)
+
+    async def _run_turn(
+        self,
+        event: InboundEvent,
+        *,
+        seat: str | None = None,
+        on_delta=None,
+    ) -> TurnResult:
         ctx = self.ctx
         from ..runtime import Session
 

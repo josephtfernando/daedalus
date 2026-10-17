@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 770-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 778-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -82,6 +82,46 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   14 tests in `tests/test_publish.py`.
 
 ### Fixed
+
+- **The agent is told what day it is.** It was not — not in the prompt, not in a tool result, nowhere — so
+  *every* relative date it was given was a guess it could not check. On 17 Oct the owner asked for a
+  reminder "on Sunday, which is tomorrow" (Sat 17 Oct) and the reply read **"10 Oct 2026"**: a Saturday,
+  seven days gone. A minute earlier the same blindness had produced the search query *"AI model release
+  announcement October **2025**"* — a year out — and the owner had already spent a turn telling the agent
+  that events it had filed on 25 Oct did not exist. A chief of staff that cannot say what today is will get
+  "tomorrow" wrong at exactly the moments the owner cares about, and nothing downstream can catch it,
+  because a wrong date is a perfectly well-formed date. The prompt now opens with a `## Right now` block —
+  the clock, the weekday, today, tomorrow, yesterday, the span of the current week, resolved against the
+  laptop's zone (`Asia/Kolkata` here) — with the instruction that a date it was *given* is a date and a date
+  it worked out in its head is a guess, and that it must check the second against the first before writing
+  either anywhere. The block is rebuilt every turn from `datetime.now()`, so it cannot go stale across a
+  long-running daemon or a turn that starts before midnight and ends after it. 3 tests in
+  `tests/test_context.py` (new).
+
+- **A one-off event in the past is refused instead of filed.** `calendar op=create` accepted a start that had
+  already gone, without a word: the event sat in the store on a day that will never come round, any reminder
+  attached to it could never fire, and the only person who could ever see it was the owner. That is how
+  `10 Oct 2026` above would have landed had the owner not caught it by hand. A past `start` on a one-off is
+  now an error naming both dates — the one it read and the one today is — so the next attempt is informed
+  rather than lucky. It is deliberately **not** a ban on the past: a repeating event may begin in the past
+  ("standups every weekday" started weeks ago) and `op=import` exists to bring in the owner's history, so
+  neither is touched; and for the genuine past one-off — *"add the dentist visit I had last Tuesday"* —
+  `allow_past=true` says so on purpose. That flag is the point rather than a loophole: it separates the
+  mistake from the intent using the one piece of evidence only the model holds, which is what the owner
+  actually said. 4 tests in `tests/test_calendar.py`.
+
+- **One turn at a time.** Two owner messages could run as two turns at once, and a turn *writes* the Runtime
+  it runs on: it sets `ctx.session` — the ingress policy every tool reads, `local_only` included, so this was
+  a security race as much as a confusing one — and it appends to the transcript. Both happened on 17 Oct.
+  The owner waited ninety seconds for an answer, re-sent the same message, and the second turn started while
+  the first was still going; the two interleaved their model calls, and the owner was answered **out of
+  order** — the calendar reply arrived last, *reading from before* an unrelated AI briefing that had
+  finished in between. Turns are now serialized by a lock on the `Runtime`, so a second message waits its
+  turn instead of racing it, and so does a scheduler wake arriving mid-conversation. The approval prompt and
+  the `ask` primitive are untouched: they are answered *inside* the turn that asked. *Cost, honestly:* a slow
+  turn now delays the next message rather than letting it answer first — the right trade, since the
+  alternative was two half-turns sharing one state, and the trace keeps showing progress while it waits.
+  1 test in `tests/test_engine.py`, which fails without the lock.
 
 - **A turn the agent cannot get through now ends on a question the owner can answer, not on the agent's
   failure.** The correction added last turn told the model *what* to send; the model re-sent the same call

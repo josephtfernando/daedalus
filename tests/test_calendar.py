@@ -9,7 +9,7 @@ claim about the *format*, not about who owns the data.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -1657,3 +1657,91 @@ async def test_one_match_is_a_confirmation_not_a_choice(runtime: Runtime) -> Non
     assert "which one" not in question.lower(), "a false choice was offered"
     assert dentist.uid in question
     assert "Say the word" in question
+
+
+# -- a date that has already gone --------------------------------------------
+
+
+async def test_a_one_off_in_the_past_is_refused_rather_than_written(
+    runtime: Runtime,
+) -> None:
+    """A date that has gone is a misread date, not an event.
+
+    "Sunday, which is tomorrow" came back as **10 Oct 2026** — a Saturday, a week
+    gone — and the store took it without a word: nothing about the write was
+    unusual, the reminder simply could never fire, and the only person who could
+    tell it was wrong was the owner. Refusing it is the difference between a wrong
+    date the owner sees and a wrong date nobody ever sees.
+    """
+    gone = (date.today() - timedelta(days=7)).isoformat()
+
+    result = await CalendarTool().run(
+        {"op": "create", "summary": "Partner's house", "start": f"{gone}T08:00"}, runtime
+    )
+
+    assert not result.ok
+    assert gone in result.output, "the refusal did not name the date it read"
+    assert "past" in result.output
+    assert runtime.calendar.series() == [], "a past event was written anyway"
+
+
+async def test_the_refusal_says_what_today_is_so_the_retry_can_be_informed(
+    runtime: Runtime,
+) -> None:
+    """A refusal that only says "past" leaves the model guessing again."""
+    gone = (date.today() - timedelta(days=1)).isoformat()
+
+    result = await CalendarTool().run(
+        {"op": "create", "summary": "Friends", "start": f"{gone}T18:00"}, runtime
+    )
+
+    assert not result.ok
+    assert date.today().strftime("%a %d %b") in result.output, (
+        "the model was told a date had passed but not which day it is now"
+    )
+
+
+async def test_a_past_one_off_can_still_be_asked_for_on_purpose(
+    runtime: Runtime,
+) -> None:
+    """"Add the dentist visit I had last Tuesday" is a real request, so it has a way in.
+
+    The guard is not a ban on the past: it asks which of the two the caller means,
+    and `allow_past` is how a caller that knows the owner's words answers.
+    """
+    gone = (date.today() - timedelta(days=3)).isoformat()
+
+    result = await CalendarTool().run(
+        {
+            "op": "create",
+            "summary": "Dentist",
+            "start": f"{gone}T09:00",
+            "allow_past": True,
+        },
+        runtime,
+    )
+
+    assert result.ok, result.output
+    assert [e.summary for e in runtime.calendar.series()] == ["Dentist"]
+
+
+async def test_a_repeating_event_may_begin_in_the_past(runtime: Runtime) -> None:
+    """"Standups every weekday" began weeks ago; that is not a misread date.
+
+    A series is the one shape where a past start is the *normal* case, so the
+    guard must not touch it — a rule that catches the mistake by banning the
+    legitimate case is worse than no rule.
+    """
+    gone = (date.today() - timedelta(days=60)).isoformat()
+
+    result = await CalendarTool().run(
+        {
+            "op": "create",
+            "summary": "Standup",
+            "start": f"{gone}T09:00",
+            "rrule": "FREQ=WEEKLY;BYDAY=FR",
+        },
+        runtime,
+    )
+
+    assert result.ok, result.output

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 from daedalus.config import Settings
 from daedalus.loop.engine import Engine
 from daedalus.model.client import ModelClient
@@ -7,6 +10,7 @@ from daedalus.model.providers import ChatResult, ScriptedProvider, ToolCall
 from daedalus.runtime import Runtime, build_runtime
 from daedalus.surface.base import InboundEvent
 from daedalus.surface.cli import ScriptedSurface
+from daedalus.tools.base import Tool, ToolResult, params
 from tests.conftest import tool_call
 
 
@@ -612,3 +616,71 @@ async def test_a_tool_with_no_question_to_ask_still_reports_being_stuck(runtime:
 
     assert result.error == "repeated failure"
     assert "I got stuck" in result.text
+
+
+# -- one turn at a time ------------------------------------------------------
+
+
+class _TurnRef(Tool):
+    """Reports which session this call ran under — after a wait, on purpose.
+
+    The gap is the whole instrument. A turn running alongside another has its
+    `ctx.session` replaced while it waits for the model, and this reads the
+    session *after* the wait, which is exactly when the wrong one is there.
+    """
+
+    name = "turn_ref"
+    title = "Say which turn this is"
+    description = "Reports which session this call ran under."
+    parameters = params()
+
+    live = 0
+    peak = 0
+
+    async def run(self, args: dict[str, Any], ctx: Runtime) -> ToolResult:
+        type(self).live += 1
+        type(self).peak = max(type(self).peak, type(self).live)
+        await asyncio.sleep(0.05)
+        type(self).live -= 1
+        return ToolResult(output=ctx.session.turn_ref if ctx.session else "no session")
+
+
+def _call_then_echo(messages: list[dict[str, Any]], tools: Any = None) -> ChatResult:
+    """Call the recorder once, then hand the model its answer as the reply."""
+    if messages and messages[-1].get("role") == "tool":
+        return ChatResult(content=str(messages[-1].get("content", "")), provider="scripted")
+    return ChatResult(
+        tool_calls=[ToolCall(id="call_turn_ref", name="turn_ref", arguments={})],
+        provider="scripted",
+    )
+
+
+def _event(channel: str) -> InboundEvent:
+    return InboundEvent(text="what's up", user_id="owner", channel_id=channel)
+
+
+async def test_two_messages_never_run_as_two_turns_at_once(runtime: Runtime) -> None:
+    """One owner, one loop: a second message waits instead of racing the first.
+
+    On 17 Oct the owner waited ninety seconds for an answer, re-sent the same
+    message, and the second turn began while the first was still going. Both turns
+    set `ctx.session` — the ingress policy every tool reads, `local_only` included,
+    so this is a security race as much as a confusing one — and the owner was
+    answered *out of order*: the calendar reply landed after, and read from before,
+    an unrelated AI briefing that had finished in between.
+
+    Two `Engine` instances on purpose: the lock belongs to the Runtime, which is
+    also what serializes a scheduler wake against a conversation.
+    """
+    _TurnRef.live = _TurnRef.peak = 0
+    runtime.tools.register(_TurnRef())
+    runtime.model = ModelClient(runtime.settings, providers=[ScriptedProvider([_call_then_echo] * 8)])
+
+    first, second = await asyncio.gather(
+        Engine(runtime).run_turn(_event("chan-a")),
+        Engine(runtime).run_turn(_event("chan-b")),
+    )
+
+    assert _TurnRef.peak == 1, "two turns ran at the same time"
+    assert "chan-a" in first.text, "the first turn was answered under the second's session"
+    assert "chan-b" in second.text, "the second turn was answered under the first's session"

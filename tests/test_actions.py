@@ -20,6 +20,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,16 @@ from daedalus.runtime import Runtime
 from daedalus.tools.base import Tool, ToolResult
 
 TOKEN = "a-token-the-owner-never-sees"
-FRIDAY = "2026-10-16"
+#: The Friday these tests are set on — the **next** one, so that a `calendar.create`
+#: from the page is a write into the future and the suite does not mean something
+#: different on 17 Oct than it did on 10 Oct. Hard-coding `2026-10-16` is how a
+#: create into the past sat here unremarked until a guard with every right to
+#: refuse it arrived.
+_TODAY = date.today()
+FRIDAY_DATE = _TODAY + timedelta(days=(4 - _TODAY.weekday()) % 7 or 7)
+FRIDAY = FRIDAY_DATE.isoformat()
+MONDAY = (FRIDAY_DATE - timedelta(days=4)).isoformat()
+NEXT_FRIDAY = (FRIDAY_DATE + timedelta(days=7)).isoformat()
 
 
 # -- fixtures ----------------------------------------------------------------
@@ -317,9 +327,9 @@ def test_an_instance_is_removed_by_its_address(runtime: Runtime) -> None:
 
     assert outcome.status == "done"
     assert runtime.calendar.occurrences_on(FRIDAY) == [], "that instance went"
-    next_week = runtime.calendar.occurrences_on("2026-10-23")
+    next_week = runtime.calendar.occurrences_on(NEXT_FRIDAY)
     assert [e.address for e in next_week] == [
-        f"{uid}@2026-10-23T09:00"
+        f"{uid}@{NEXT_FRIDAY}T09:00"
     ], "and only that instance — the series is untouched"
 
 
@@ -500,7 +510,7 @@ def test_the_control_strip_is_outside_the_spec(server: LocalServer, runtime: Run
 
 
 def test_a_week_view_offers_adding_but_not_a_picker(runtime: Runtime) -> None:
-    _add(runtime, "Standup", start="2026-10-12T09:00")
+    _add(runtime, "Standup", start=f"{MONDAY}T09:00")
     page = calendar_page(runtime.calendar, view="week", anchor=FRIDAY, with_controls=True)
 
     assert "calendar.create" in page.controls
