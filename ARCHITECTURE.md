@@ -523,6 +523,15 @@ cred_ref = "creds/gmail"           # encrypted at rest
 added_at = timestamp
 ```
 
+A **`local_cli`** resource has no `cred_ref` — access *is* a binary already on the
+machine. Provisioning one records its scopes and nothing else (`added_at` may be a
+number or an ISO string; an unreadable value is read as "now", never fatal). Whether
+it is installed is checked against `PATH` every time the inventory is built, so the
+model is told a CLI is absent at startup rather than discovering it halfway through
+a delegation (T28). `opencode` is provisioned by the wizard's optional resources
+stage as `local_cli`, `access = "local"`, `scopes = ["workspace", "net"]`.
+
+
 ### 8.4 UI spec (declarative, model-authored)
 
 ```

@@ -474,6 +474,41 @@ _record_resource() {
   ok "noted $name in registry.toml (commented until the credential exists)"
 }
 
+# _provision_local_cli NAME SCOPES NOTE — write an *active* [[resource]] entry for
+# a local CLI. A local CLI has no credential, so there is nothing to comment out:
+# the entry is the grant. Written by the product itself (like the default config)
+# so the file the wizard writes is the file the runtime reads, and a re-run is
+# idempotent. SCOPES is comma-separated.
+_provision_local_cli() {
+  local name="$1" scopes="$2" note="$3"
+  # The product's own interpreter, not the system `python3`: the registry reads
+  # and writes TOML and belongs to the project's environment. `uv run` is the one
+  # way to get there that does not depend on the owner having activated a venv.
+  if "${UV_BIN:-uv}" run --project "$ROOT_DIR" python - "$ROOT_DIR/src" "$DAEDALUS_HOME" "$name" "$scopes" "$note" <<'PY' >/dev/null 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+from daedalus.resources.registry import ResourceRegistry, provision_local_cli
+
+home, name, scopes, note = (
+    Path(sys.argv[2]),
+    sys.argv[3],
+    [s.strip() for s in sys.argv[4].split(",") if s.strip()],
+    sys.argv[5],
+)
+registry = ResourceRegistry(home / "resources" / "registry.toml")
+provision_local_cli(registry, name, scopes=scopes, note=note)
+PY
+  then
+    ok "provisioned $name as a local_cli resource in registry.toml"
+    return 0
+  fi
+  bad "could not provision $name in registry.toml"
+  SETUP_FAIL+=("$name not provisioned")
+  return 1
+}
+
 # ── run state ─────────────────────────────────────────────────────────────
 HARD_MISS=()       # hard preflight misses → stop
 HARDEN_FAIL=()     # failed assertions (stage 11) → no success claim
@@ -818,6 +853,21 @@ else
   note "mail skipped — grant it later with: scripts/setup.sh"
   SKIPPED+=("Gmail not granted")
 fi
+
+# A local CLI needs no credential, so it is provisioned here rather than commented
+# out: the entry IS the grant, and it is what makes the delegate visible to the
+# model before it plans (T28). Whether the binary is on PATH is checked now and
+# again every time the inventory is built, so an absent CLI is *said*, not found
+# by failing halfway through a long task.
+say ""
+say "opencode is the delegate's CLI (Icarus's headline job, SPEC §5, T29)."
+if command -v opencode >/dev/null 2>&1; then
+  ok "opencode found at $(command -v opencode)"
+else
+  warn "opencode is not installed — provisioned anyway, and the model is told it is absent"
+  SKIPPED+=("opencode not on PATH — install it, then re-run this wizard (the resource is already recorded)")
+fi
+_provision_local_cli opencode "workspace,net" "the delegate CLI (SPEC §5)"
 pause "Continue?"
 
 # ══════════════════════════════════════════════════════════════════════════

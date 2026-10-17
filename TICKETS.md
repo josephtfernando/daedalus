@@ -637,7 +637,7 @@ claim the ticket makes about it.
 
 #### P5 — OpenCode delegation
 
-### T28 — `opencode` becomes a resource · `open`
+### T28 — `opencode` becomes a resource · `done`
 *SPEC §3.5 Layer 3 (a resource is access + credentials, provisioned once, listed at
 startup), §5 (local CLIs include `opencode`), §8.5 stage 8 (optional resources).*
 
@@ -651,6 +651,19 @@ through a delegation is how a long task dies at the end.
 resource with the scopes it may act in; it is listed to the model at startup; the
 wizard's optional stage provisions it; when it is absent the model is told it is absent,
 not left to find out by failing.
+
+*Done 17 Oct.* `resources/registry.py` gained `provision_local_cli()` (an **active**
+`[[resource]]` entry — a local CLI has no credential to comment out, because the entry
+*is* the grant) and a `PATH` check in `inventory()` for every `local_cli`, so a
+provisioned-but-missing binary reads `— NOT INSTALLED (not on PATH)` in the prompt the
+model gets at startup. Scopes are `workspace` (a named workspace it may touch — T29) and
+`net` (its model). The wizard's optional resources stage provisions it either way and
+reports whether it is on `PATH`. Reading a registry no longer trusts `added_at` to be a
+number: a TOML datetime, an ISO string and an unparseable value are all survived, because
+a hand-edit must not be what stops a startup. 8 tests in `tests/test_resources.py`.
+Falsified: always reporting a local CLI as installed reddens the missing/absent/prompt
+tests (three red). Docs: ARCHITECTURE §8.3, CHANGELOG. *Supersedes: `opencode` named in
+the spec and absent from the registry.*
 
 ### T29 — a delegation goes out into a workspace and comes back reviewable · `open`
 *SPEC §7 (Icarus owns the OpenCode delegate), §3.5 (`git` is its own egress action).

@@ -12,9 +12,36 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. The **dashboard now reaches the owner's phone again** — a fixed port, published on start, taken down on stop. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 876-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. The **dashboard now reaches the owner's phone again** — a fixed port, published on start, taken down on stop. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 884-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **`opencode` is a provisioned resource, and the model is told whether it is there.** SPEC §5 names
+  `opencode` as a local CLI and `Resource.class_` already carried `local_cli`, so this was
+  *provisioning* — but a local CLI is the one resource whose presence cannot be taken for granted:
+  it has no credential to prove it exists, only a binary on `PATH`. So the registry learned two
+  things and the wizard gained one step:
+
+  - **`provision_local_cli(registry, name, scopes=…)`** writes an **active** `[[resource]]` entry
+    (`class = "local_cli"`, `access = "local"`, no `cred_ref`) — there is nothing to comment out
+    and nothing to encrypt, because the entry *is* the grant. Idempotent: a re-run returns what is
+    there rather than widening scopes the owner may have narrowed by hand.
+  - **The inventory checks `PATH`.** `ResourceRegistry.inventory()` now asks a resolver (default
+    `shutil.which`, injectable for tests) whether each `local_cli` is installed and says
+    `— installed at /usr/bin/opencode` or `— NOT INSTALLED (not on PATH)`. This is the whole point
+    of listing resources at startup (SPEC §3.5): a delegation is minutes of work, and finding out
+    its CLI is missing at the end of it is exactly the failure the listing exists to prevent.
+  - **The wizard's optional resources stage provisions it** (`scripts/setup.sh` stage 8): it reports
+    whether `opencode` is on `PATH`, records the resource either way (via the product's own
+    environment with `uv run`, so the file written is the file the runtime reads), and adds the
+    install to the to-do list when the binary is missing.
+  - **Reading a registry can no longer stop a startup.** `added_at` is accepted as a TOML datetime,
+    an ISO string, or a number, and anything unreadable reads as "now" — the field is a note about
+    when access was granted, not an identity, and a hand-edit must not be what breaks boot.
+
+  *Supersedes:* `opencode` being named in the spec and absent from the registry. *Cost, stated
+  plainly:* one `PATH` lookup per `local_cli` each time the inventory is built (startup and each
+  turn's context), which is a `stat` per resource.
 
 - **A message is routed to the seat it belongs to, so the owner never has to name one.** The cabinet
   existed and was reachable only by naming a seat or editing `active = true`, which is a switchboard
