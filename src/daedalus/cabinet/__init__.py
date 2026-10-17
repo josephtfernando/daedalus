@@ -2,11 +2,29 @@
 
 A seat is identity + charter + memory namespace, never a process. The charters
 are files under ``$DAEDALUS_HOME/cabinet/seats/`` (see :mod:`.seat`); the memories
-are namespaces under ``$DAEDALUS_HOME/memory/`` (see :mod:`.namespace`). The loop
-runs as whichever seat is active — Daedalus unless the owner says otherwise.
+are namespaces under ``$DAEDALUS_HOME/memory/`` (see :mod:`.namespace`); and what
+one seat says to another is a typed, durable message in
+``$DAEDALUS_HOME/cabinet/messages.db`` (see :mod:`.protocol` and :mod:`.broker`).
+The loop runs as whichever seat is active — Daedalus unless the owner says
+otherwise.
 """
 
+from .broker import Broker, Delivery, Receipt, UnknownMessage, broker_for, db_path
 from .namespace import DEFAULT_NAMESPACE, NamespaceError, memory_for, namespace_for
+from .protocol import (
+    ACK,
+    CANCEL,
+    FAILURE,
+    PARTIAL,
+    REQUEST,
+    RESULT,
+    TERMINAL,
+    TYPES,
+    VERIFY,
+    Message,
+    MessageError,
+    seat_key,
+)
 from .seat import (
     BUILTIN,
     DEFAULT_SEAT,
@@ -26,23 +44,41 @@ from .seat import (
 )
 
 __all__ = [
+    "ACK",
     "BUILTIN",
+    "CANCEL",
     "DEFAULT_NAMESPACE",
     "DEFAULT_SEAT",
+    "FAILURE",
+    "PARTIAL",
+    "REQUEST",
+    "RESULT",
+    "TERMINAL",
+    "TYPES",
+    "VERIFY",
+    "Broker",
     "CharterError",
+    "Delivery",
+    "Message",
+    "MessageError",
     "NamespaceError",
+    "Receipt",
     "Seat",
+    "UnknownMessage",
     "UnknownSeat",
     "active_seat",
+    "broker_for",
     "builtin_charters",
     "charter_dir",
     "charter_file",
+    "db_path",
     "load_charters",
     "memory_for",
     "namespace_for",
     "pick",
     "read_charter",
     "resolve",
+    "seat_key",
     "set_active",
     "write_charter",
 ]

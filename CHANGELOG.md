@@ -12,9 +12,43 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (14/14 offline; 15/15 with `--live`) and an 800-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (14/14 offline; 15/15 with `--live`) and an 824-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **Seats can leave each other messages, and a message outlives the daemon that carried it.** SPEC §7
+  has always said a seat is *identity + charter + memory namespace, never a process* — so there is no
+  socket between them to lose a message on, and no in-memory list to keep one in either.
+  `cabinet/protocol.py` is the typed message (`request / ack / partial / result / verify / failure /
+  cancel`, with correlation and causation), and `cabinet/broker.py` is the durable queue over
+  `cabinet/messages.db`. ARCHITECTURE §9.2 promised at-least-once **with dedup**; the two halves are two
+  different promises, and each is made where it can actually be kept:
+
+  - **Dedup is the sender's id, chosen before the first attempt.** A retry is the same message when it
+    carries the same id, so the second write stores nothing, leaves the row's place in the queue alone,
+    and reports `duplicate=True`. An id minted inside the retry loop would be a brand-new message every
+    time and nothing downstream could tell — which is why the id is minted at construction, not at send.
+  - **Delivery is an offer, and it is counted.** A message is offered until it is *resolved*, so a seat
+    can be handed the same message twice; it is told (`attempts=2`) rather than left to guess whether the
+    earlier attempt finished. The broker cannot know that, and inventing the certainty is the
+    exactly-once lie §9.2 rules out. What it *can* do is make the repeat visible and make every side
+    effect dedupable by giving it a stable id.
+  - **Resolution happens once.** The second `resolve` of the same id is the duplicate of the first and
+    never rewrites it; `reopen` puts a *wrong* answer back on the queue and moves the count with it,
+    because a rejected answer was still an attempt.
+  - **A reply inherits the exchange.** `reply()` sets `causation_id` to the message it answers and
+    `correlation_id` to that message's correlation, so `thread(any id in it)` replays the whole exchange
+    in order and the route back cannot be passed in wrong. A correlation id nobody queries is a field,
+    not a link.
+
+  Refused, because each is silent otherwise: an unknown `type` (a seat that reads `restult` answers
+  nothing), a payload that is not a mapping, a message from a seat to itself (the routing slip — a
+  seat's notes to itself are memory or a scheduled job), and a **display name** as a recipient: `Melinoë`
+  is what the owner reads, `melinoe` is the only thing addressable, and a message sent to the former
+  would sit in the queue forever looking exactly like a seat that never answers. 24 tests in
+  `tests/test_broker.py`, including the whole `Icarus → Melinoë (verify) → Icarus (result)` exchange
+  across three brokers on one path. *New; nothing superseded. Nothing consumes the queue yet* — wiring a
+  seat to read its inbox is the collaboration ticket, and keeping that out of this one is deliberate.
 
 - **A run whose moment fell while the daemon was down is caught up, not dropped — one at a time, and only
   when it is still worth saying.** `cron.matches` only ever asks about *now*, so a job whose 08:00 tick

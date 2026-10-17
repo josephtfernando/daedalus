@@ -278,7 +278,7 @@ changes (one edit, not two), refuses an unknown name, and accepts a display name
 including the exact failure this fixes: a turn with the flag set on `athena.toml`
 whose system prompt still said "You are Daedalus".
 
-### T14 — `cabinet/protocol.py` + `broker.py`: seat↔seat · `open`
+### T14 — `cabinet/protocol.py` + `broker.py`: seat↔seat · `done`
 *ARCHITECTURE §9.2, §7.5. Only needed once two seats must actually collaborate.*
 
 The typed message shape, `cabinet/messages.db`, at-least-once delivery **with
@@ -286,6 +286,30 @@ dedup** (never exactly-once), correlation and causation links.
 
 **Acceptance:** a message survives a restart; a redelivered message is deduped; a
 reply carries the id of the request it answers.
+**Done** — two modules, split at the seam that matters: `protocol.py` is the
+message and its invariants (no I/O), `broker.py` is the durable queue over
+`cabinet/messages.db`. Three rules carry the ticket. **The id is minted before the
+first attempt** — a retry reuses it, so the second write stores nothing, keeps the
+row's place in the queue, and reports `duplicate=True`; an id minted inside the
+retry loop would be a new message every time and no downstream check could tell.
+**Delivery is an offer, counted** — a message is offered until it is *resolved*, so
+a seat handed it twice is told (`attempts=2`) rather than left to guess whether the
+earlier attempt finished; the broker cannot know that, and asserting otherwise is
+the exactly-once lie §9.2 rules out. **A reply inherits the exchange** —
+`reply()` sets `causation_id` to the message it answers and `correlation_id` to that
+message's `correlation`, so `thread(any id in it)` returns the whole exchange in
+order and the route back cannot be passed in wrong. Also refused, because each is a
+silent failure otherwise: an unknown `type`, a payload that is not a mapping, a
+message from a seat to itself, and — the one that would sit in the queue forever
+looking like a seat that never answers — a **display name** as a recipient
+(`Melinoë`), refused with the key (`melinoe`) spelled out. 24 tests in
+`tests/test_broker.py`, including the whole exchange across three brokers on one
+path. Falsified: with the broker's state in the process instead of the file, the
+five durability tests go red and the other nineteen still pass. Docs: SPEC §7,
+ARCHITECTURE §7.5 and §9.2. **Nothing consumes it yet** — the queue is the
+substrate; wiring a seat to read its inbox is the collaboration ticket, and that is
+deliberate, because a broker nobody sends to cannot be wrong in a way this ticket
+could have caught.
 
 ### T18 — Missed jobs queue and stagger on startup · `done`
 *The owner's ask (16 Oct): "jobs are queued up when not run, and run when started

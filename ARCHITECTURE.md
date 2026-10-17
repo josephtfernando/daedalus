@@ -372,6 +372,14 @@ controls, this needs no surface, so both `serve` and the daemon attach it.
 
 Seats communicate over the **typed durable protocol** (§9.2) via the broker; messages persist in `cabinet/messages.db`. Example: `Icarus → Melinoë (verify) → Icarus (result) → Daedalus (summary)`. Deterministic code owns correlation, dedup, and delivery.
 
+```
+Icarus ──request/verify──▶ messages.db ──offer──▶ Melinoë
+   ▲                    (correlation_id = request.id)        │
+   └─────────────result   (causation_id = request.id)─────────┘
+```
+
+The queue is **at-least-once with dedup**, and the two halves are two different promises. *Delivery* is an offer, counted and reported: a seat handed the same message twice is told (`attempts=2`) that an earlier attempt did not resolve it, because the broker **cannot** know whether that attempt finished — asserting otherwise would be the exactly-once lie §9.2 rules out. *Dedup* is what the broker can see: a retry is the same message when it carries the same id, and the sender minted that id before its first attempt (`protocol.py`), so the second write stores nothing, leaves the row's place in the queue alone, and answers `duplicate=True`; the second *answer* to an already-resolved message reports `False` and never rewrites the first. Ordering is the row's own `seq`, so a retry cannot jump the queue; `thread(correlation_id)` replays an exchange in the order it happened, and a message that opened one carries its own id as the correlation — a correlation id nobody can query is a field, not a link.
+
 ### 7.6 Calendar sync
 
 ```
@@ -518,7 +526,12 @@ middleware.
 type ∈ request | ack | partial | result | verify | failure | cancel
 ```
 
-**At-least-once with dedup** (never exactly-once). Deterministic broker owns ordering, retries, and delivery; seats own semantics.
+**At-least-once with dedup** (never exactly-once). Deterministic broker owns ordering, retries, and delivery; seats own semantics. `from` and `to` are the *keys* (`melinoe`), never the display names — a message addressed to `Melinoë` is a letter to an empty room, so `protocol.py` refuses it and spells out the key. The Python attributes are `sender` / `recipient`: `from` is a keyword.
+
+- **`id` is the sender's, minted before the first attempt.** A retry reuses it and is therefore recognised as the same message; an id minted inside the retry is a new message every time, and no dedup downstream can recover that.
+- **Delivery is an offer, and it is counted.** A message is offered until it is *resolved*, so a seat can be handed it twice — and is told so, instead of being left to guess whether the earlier attempt finished.
+- **Resolution happens once.** The second `resolve` of the same id is the duplicate of the first and never rewrites it. `reopen` puts a *wrong* answer back on the queue and moves the count, because a rejected answer was still an attempt.
+- **`correlation_id` names the exchange, `causation_id` one hop back.** A reply inherits the correlation and points its causation at the message it answers, so a thread is one query and "why did you say this" is a hop.
 
 ### 9.3 Capability run protocol
 

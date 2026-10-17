@@ -429,6 +429,17 @@ activating one seat means deactivating another and two charters claiming the own
 refused at the next startup. A name nobody answers to is not an error worth stopping a turn
 for: the request lands on the active seat.
 
+**Seats do not call each other — they leave messages.** A seat is not a process, so
+there is no socket to lose a message on and no in-memory list to keep one in. What one seat
+says to another is a typed message (`request / ack / partial / result / verify / failure /
+cancel`) written to `cabinet/messages.db`, with `correlation_id` naming the exchange and
+`causation_id` naming the message it answers. The queue is **at-least-once with dedup, never
+exactly-once**: a message is offered until it is resolved, and each offer is counted, so a
+seat handed a message a second time can see that whoever held it before may have half-done
+the work. What makes the repeat safe is that the sender chose the message's id **before** its
+first attempt — a retry carrying the same id is the same message, and the second answer to a
+resolved message is recognised as the duplicate of the first.
+
 ---
 
 ## 8. Runtime & Process
