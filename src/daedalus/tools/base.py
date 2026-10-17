@@ -26,6 +26,20 @@ class ToolResult:
     def error(cls, message: str) -> "ToolResult":
         return cls(ok=False, output=message)
 
+    @classmethod
+    def ask(cls, question: str, *, refusal: str, **data: Any) -> "ToolResult":
+        """A refusal whose answer is a choice the owner has to make, not the model.
+
+        ``refusal`` is what the **model** is told: how to name the thing, with
+        the calls that would work. ``question`` is what the **owner** is asked,
+        and it is the owner's because a tool that cannot tell *which* of several
+        things was meant has asked the right question of the wrong party — the
+        model cannot answer it, which is the whole reason it is stuck. If the
+        loop does run out of road, this is what the owner is handed instead of an
+        account of the agent's failure.
+        """
+        return cls(ok=False, output=refusal, data={**data, "question": question})
+
     def for_model(self) -> dict[str, Any]:
         return {"ok": self.ok, "output": self.output}
 

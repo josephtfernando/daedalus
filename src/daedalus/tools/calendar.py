@@ -196,6 +196,36 @@ def _looks_like_day(text: str) -> bool:
     return len(text) == 10 and text[4] == "-" and text[7] == "-" and text.replace("-", "").isdigit()
 
 
+def _ask_owner(op: str, named: str, rows: list[Any]) -> str:
+    """The question only the owner can settle, when the model could not.
+
+    Not a restatement of the refusal. The model needed to be told how to *name*
+    an event; the owner needs to be told what the agent could not work out for
+    itself — and what that is depends on how many events answered to the name.
+
+    * Two or more is a **choice**: nothing in the call distinguishes them, so the
+      owner has to. The two events on 17 Oct were identical in every visible way
+      but their id (one reminder, created twice), so the id has to travel or the
+      owner is asked to choose between two identical lines.
+    * Exactly one is a **confirmation**: there is nothing to choose, so *"which
+      one?"* would be a false question. But the agent still could not turn the
+      name into the address, and a write is the owner's to confirm.
+    """
+    doing = {"get": "show you", "update": "change", "delete": "remove"}.get(op, "change")
+    listing = "\n".join(f"- {row.line(show_id=True)}" for row in rows)
+    if len(rows) == 1:
+        return (
+            f"Only one event here is called {named!r}, and it is this one:\n{listing}\n"
+            f"Say the word and I'll {doing} it."
+        )
+    many = "two events" if len(rows) == 2 else f"{len(rows)} events"
+    return (
+        f"I can't tell which one to {doing} — there are {many} called {named!r}:\n"
+        f"{listing}\n"
+        "Which one? Give me the id or the time, or say \"all of them\" and I'll go by the name."
+    )
+
+
 class CalendarTool(Tool):
     name = "calendar"
     title = "Read or change the calendar"
@@ -472,7 +502,7 @@ class CalendarTool(Tool):
     def _get(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         uid = str(args.get("uid", "")).strip()
         if not uid:
-            return ToolResult.error(self._no_target(args, ctx, "get"))
+            return self._no_target(args, ctx, "get")
         event = ctx.calendar.get(uid)
         if event is None:
             return ToolResult.error(f"no event {uid!r}; `list` shows what exists")
@@ -574,7 +604,7 @@ class CalendarTool(Tool):
         if not uid and (match or on):
             return self._bulk_update(args, ctx, match, on, at)
         if not uid:
-            return ToolResult.error(self._no_target(args, ctx, "update"))
+            return self._no_target(args, ctx, "update")
         changes: dict[str, Any] = {
             key: str(args.get(key, "")).strip()
             for key in ("summary", "start", "end", "location", "description", "rrule")
@@ -643,7 +673,7 @@ class CalendarTool(Tool):
             data={"count": len(changed), "uids": [e.uid for e in changed]},
         )
 
-    def _no_target(self, args: dict[str, Any], ctx: "Runtime", op: str) -> str:
+    def _no_target(self, args: dict[str, Any], ctx: "Runtime", op: str) -> ToolResult:
         """A call that named no event — answered with the call that would.
 
         `summary` is the name a write *sets*; it is not the address a write goes
@@ -659,10 +689,15 @@ class CalendarTool(Tool):
         `get` carrying nothing usable is answered the same way — with the op that
         was probably meant, because "what is coming in the next 7 days" is
         `agenda`, not `get`.
+
+        When the reason really is a choice — two events answer to the name and
+        only the owner knows which — the refusal also carries that question. The
+        model cannot answer it, which is the whole reason it is stuck; the loop
+        hands it up rather than ending the turn on the agent's own failure.
         """
         named, _field = _named(args)
         if not named:
-            return self._no_name(args, op)
+            return ToolResult.error(self._no_name(args, op))
         said = _phrase(_misused(args))
         verb = "reads" if op == "get" else "changes"
         head = f"op={op} {verb} one event, and {said} cannot say which"
@@ -673,12 +708,12 @@ class CalendarTool(Tool):
         if not rows:
             others = ctx.calendar.series(limit=8, allow_local_only=ctx.allows_local_only())
             if not others:
-                return (
+                return ToolResult.error(
                     f"{head}: they are what a write *sets*, not the address it writes "
                     f"to. Nothing here is called {quoted}, and the calendar is empty."
                 )
             listing = "\n".join(f"- {e.line(show_id=True)}" for e in others)
-            return (
+            return ToolResult.error(
                 f"{head}: they are what a write *sets*, not the address it writes to. "
                 f"Nothing here is called {quoted}. What exists:\n{listing}"
             )
@@ -691,11 +726,15 @@ class CalendarTool(Tool):
         if _looks_like_day(day):
             choices.append(f'    op={op} on="{day}"')
         choices.append(f"    op={op} match={quoted}")
-        return (
-            f"{head}: they are what a write *sets*, not the address it writes to. "
-            f"Any of these would name it:\n"
-            + "\n".join(choices)
-            + f"\nMatching events:\n{listing}"
+        return ToolResult.ask(
+            _ask_owner(op, named, rows),
+            refusal=(
+                f"{head}: they are what a write *sets*, not the address it writes to. "
+                f"Any of these would name it:\n"
+                + "\n".join(choices)
+                + f"\nMatching events:\n{listing}"
+            ),
+            candidates=[{"uid": e.uid, "start": e.start, "summary": e.summary} for e in rows],
         )
 
     def _no_name(self, args: dict[str, Any], op: str) -> str:
@@ -783,7 +822,7 @@ class CalendarTool(Tool):
                 data={"count": removed},
             )
         if not uid:
-            return ToolResult.error(self._no_target(args, ctx, "delete"))
+            return self._no_target(args, ctx, "delete")
         if not ctx.calendar.delete(
             uid,
             recurrence_id=str(args.get("recurrence_id", "")).strip(),

@@ -1609,3 +1609,51 @@ async def test_a_delete_that_names_nothing_at_all_is_told_the_day(
     assert not result.ok
     assert '`op=delete on="2026-10-20"`' in result.output
     assert "`start`" in result.output and "`query`" not in result.output
+
+
+async def test_an_ambiguous_target_gives_the_model_the_rule_and_the_owner_the_question(
+    runtime: Runtime,
+) -> None:
+    """When the choice is the owner's, the refusal says so — to each of them.
+
+    The model has to be told how to *name* an event, and the owner has to be told
+    that two events answer to the name it used. Asking the model the owner's
+    question is how a turn ends with "I got stuck, tell me what to try instead"
+    while the agent is holding both ids.
+    """
+    first = runtime.calendar.add(summary="Standup", start="2026-10-20T09:00")
+    second = runtime.calendar.add(summary="Standup", start="2026-10-21T09:00")
+
+    result = await CalendarTool().run({"op": "delete", "summary": "Standup"}, runtime)
+
+    assert not result.ok
+    # The model is told how to point at one.
+    assert "Any of these would name it" in result.output
+    assert f"op=delete uid={first.uid}" in result.output
+    assert f"op=delete match=\"Standup\"" in result.output
+    # The owner is asked the one thing the model cannot answer for them.
+    question = (result.data or {}).get("question", "")
+    assert "which one to remove" in question, "the owner was not asked which event"
+    assert first.uid in question and second.uid in question, (
+        "two identical-looking events were offered without the ids that tell them apart"
+    )
+    # And the owner's question never reaches the model as its own instruction.
+    assert "which one to remove" not in str(result.for_model())
+
+
+async def test_one_match_is_a_confirmation_not_a_choice(runtime: Runtime) -> None:
+    """"Which one?" is a false question when only one answers to the name.
+
+    There is nothing to choose, so the refusal must not pretend otherwise -- but
+    the write is still the owner's to confirm, and that is the half the loop can
+    hand over when the model cannot get there itself.
+    """
+    dentist = runtime.calendar.add(summary="Dentist", start="2026-10-20T09:00")
+
+    result = await CalendarTool().run({"op": "delete", "summary": "Dentist"}, runtime)
+
+    assert not result.ok
+    question = (result.data or {}).get("question", "")
+    assert "which one" not in question.lower(), "a false choice was offered"
+    assert dentist.uid in question
+    assert "Say the word" in question

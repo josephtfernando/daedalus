@@ -566,3 +566,49 @@ async def test_a_repeated_failing_call_counts_as_one_failure(runtime: Runtime) -
     # doubled first step contributed one, so this ends at 4 steps and not 3.
     assert result.steps == 4
     assert result.error == "repeated failure"
+
+
+async def test_a_stuck_turn_asks_the_owner_rather_than_reporting_its_failure(
+    runtime: Runtime,
+) -> None:
+    """The loop's last resort is a question when the tool had one to ask.
+
+    On 17 Oct the owner got *"I stopped rather than burn the rest of the turn on
+    it. Tell me what to try instead"* — while the agent was holding both events
+    and their ids, and the only thing missing was which one. That is a question,
+    not a failure, and it is the owner's to answer. The tool says so in its
+    refusal; the loop hands it up instead of an account of its own bad turn.
+    """
+    first = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
+    second = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
+    stuck = tool_call("calendar", op="delete", summary="LeetCode Weekly Contest 524")
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([stuck] * 8)],
+    )
+
+    result = await Engine(runtime).run_turn(
+        InboundEvent(text="drop the leetcode reminder", user_id="owner")
+    )
+
+    assert result.error == "repeated failure"
+    assert "which one to remove" in result.text, "the owner was not asked what only they know"
+    assert first.uid in result.text and second.uid in result.text, (
+        "the owner cannot answer without the ids that tell the two apart"
+    )
+    assert "I got stuck" not in result.text and "The call was" not in result.text
+
+
+async def test_a_tool_with_no_question_to_ask_still_reports_being_stuck(runtime: Runtime) -> None:
+    """The old dead end stays for failures that are the agent's own.
+
+    A tool that failed without a question — here a capability authored with no
+    source — has nothing to hand the owner, so the report stays a report.
+    """
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([tool_call("capability", op="author")] * 8)],
+    )
+
+    result = await Engine(runtime).run_turn(InboundEvent(text="author something", user_id="owner"))
+
+    assert result.error == "repeated failure"
+    assert "I got stuck" in result.text

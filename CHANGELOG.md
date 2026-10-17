@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 759-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 763-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -64,6 +64,22 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   14 tests in `tests/test_publish.py`.
 
 ### Fixed
+
+- **A turn the agent cannot get through now ends on a question the owner can answer, not on the agent's
+  failure.** The correction added last turn told the model *what* to send; the model re-sent the same call
+  anyway, and the turn ended with the owner handed the wreckage — *"I got stuck repeating the same failing
+  step … The call was {'op': 'delete', …}. I stopped rather than burn the rest of the turn on it. Tell me
+  what to try instead."* That is the agent describing its own bad turn to the person who asked for a
+  reminder, while holding both events and both ids, with **which one** the only thing it did not know. A
+  tool that refuses because it cannot tell which of several things was meant has asked the right question
+  of the wrong party: the model cannot answer it, which is exactly why it is stuck. `ToolResult.ask` now
+  lets a tool hand up the owner's question alongside the model's refusal — separate texts, because they
+  answer different readers — and when the loop runs out of road it forwards *that* instead of its own
+  account. Two or more matches is a **choice** (`Which one? Give me the id or the time...`, with the ids,
+  since the two events on 17 Oct were identical but for them); exactly one is a **confirmation** (`Only one
+  event here is called 'Dentist'... Say the word and I'll remove it`), because "which one?" would be a false
+  question. A tool with no question to hand up — a capability authored with no source — keeps the old
+  report. 2 tests in `tests/test_engine.py`, 2 in `tests/test_calendar.py`.
 
 - **A call sent twice in one message now runs once.** On 17 Oct the owner asked for a reminder for
   tomorrow's contest. The model emitted **two byte-identical `calendar op=create` calls in a single
@@ -121,7 +137,7 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   dashboard tests had the same shape from the other side: they pinned their data to a fixed Friday and then
   asked the server for `/dashboard`, which draws *today* — passing six days a week. They seed the event on
   today's date. Both failures were reproduced before the fix and are gone after it; the self-test reports
-  13/13 and the suite is green for the first time (759 passed).
+  13/13 and the suite is green for the first time (763 passed).
 
 - **A refusal now answers the question the model was actually asking.** "college is from 8am to 11am" cost
   four turns: the model sent `op=update summary="College"` with no `uid`, and the refusal said only
