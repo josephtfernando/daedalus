@@ -567,7 +567,16 @@ so a restart moved the port and left the route pointing at nothing. The phone pa
 broken and nothing reported it. **The route half is fixed** (T27, 17 Oct): the daemon's
 dashboard binds a fixed port and publishes it on start, so the route now points at the
 live port or is down. What remains of T15 is the `push`/Taildrop leg and confirming the
-dashboard from the phone itself — which needs the owner's phone.*
+dashboard from the phone itself — which needs the owner's phone.
+
+*Owner action (17 Oct): the tailnet has a stale second `delphi` node — offline since
+27 Sep, a duplicate registration of this laptop — and a node cannot remove another node
+from the CLI (`tailscale` has no peer-removal, and no `TAILSCALE_API_KEY` is provisioned
+on this machine, nor should the agent go looking for one in `.env`). It is a 20-second
+console action: <https://login.tailscale.com/admin/machines> → the `delphi` row last seen
+27 Sep → Remove. If the owner would rather Daedalus could do it, that is a `tailscale`
+resource (access + credentials, T9's pending→adopted shape) rather than a code change —
+and removing a device is destructive, so it stays a proposal either way.*
 
 ### T25 — the agent's own `serve` · `open`
 *SPEC §3.5 (output channels: `serve`, `push`). §8.5 step 11.*
