@@ -1056,6 +1056,34 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Changed
 
+- **The cabinet now says what each seat owns, and no seat claims a job it does not have.** The eight
+  charters were the roster from SPEC §7 copied verbatim — one line each, and one of them
+  (*"Engineering & prototypes. Owns the OpenCode delegate."*) describing work that does not exist yet —
+  so the draft that followed decided, per seat, what it owns, how it behaves, and where its boundary
+  is: Daedalus as coordinator and the only identity the owner talks to by default; Melinoë keeping a
+  record of **what she refused and why**, so the same request does not get a different answer next
+  week; Heracles working from local records only and saying so when a question could only be answered
+  by putting the owner's body into a remote request; dave owning the laptop and the remote path and
+  asking before deleting anything he did not create; Calliope owning distribution as well as voice, so
+  publishing is proposed rather than quietly done.
+
+  Two rules came out of it and are now recorded where the charters live:
+
+  - **`SYSTEM_PROMPT` no longer tells every seat it is "their chief of staff."** The frame prefixed
+    *every* identity with that claim and then appended the charter, so Athena was told she was the
+    owner's chief of staff and then told she owns DSA practice. The role now lives in the one charter
+    it belongs to; the frame says only what is true of all of them. *Supersedes:* the hardcoded
+    `You are their chief of staff` line.
+  - **A charter does not name a tool.** Icarus's charter listed the OpenCode delegate he cannot yet
+    reach; capabilities, resources and tools are printed into every prompt from their own registries,
+    so a capability named in a charter goes stale the day it is added or removed — and the model
+    believes the charter over the listing. His charter now says what he can hand work to is whatever
+    the tools listing says.
+
+  Verified by the existing suite (845) and `daedalus seats`, which renders every charter from the
+  file that now carries it. The drafted charters are also the built-in fallback, so a fresh install
+  gets the real ones rather than the one-liners.
+
 - **A refused calendar call says what it heard, and hands back what the next call needs.** A model
   that reached for a plausible alias (`id` for `uid`) or sent only a date was told only what was
   *missing*, so it repeated the same wrong key — three identical failures in the owner's own turn.

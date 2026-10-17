@@ -460,6 +460,16 @@ answers as that seat and its writes land only in its own namespace; a nameless t
 still answers as Daedalus; each has one scheduled or authored thing of its own that has
 run and that the owner saw.
 
+*Drafted 17 Oct — charters done, the rest open.* All eight charters were rewritten to say
+what each seat owns rather than repeating §7's table, and two rules came out of it: the
+frame no longer calls every seat the owner's chief of staff (it said so for all eight,
+which was true of Daedalus alone and contradicted every other charter), and a charter no
+longer names a tool (Icarus's listed the OpenCode delegate he cannot yet reach; the tools
+listing already tells him). What remains here is the third and fourth clauses — a **thing
+each of Icarus and Odysseus owns, that has run**, and the owner having seen it. The
+charters being current is necessary and not sufficient: a seat whose work has never
+executed is still a file.
+
 ### T22 — Melinoë, next · `open`
 *SPEC §7 (verification, privacy, approvals), §3.5 (the Melinoë gate).*
 
