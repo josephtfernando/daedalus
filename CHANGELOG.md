@@ -12,9 +12,30 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 727-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 748-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **A repeated failure earns a correction before the turn ends.** Three identical failures used to end the
+  turn on the spot: the owner was told *"I got stuck repeating the same failing step"* and the **model was
+  told nothing at all** — so the one party holding the failing call was the party that never learned it was
+  repeating, and a model that could have changed course had no reason to. It is now told: which call, with
+  which arguments, the tool's own error **whole** (the stuck message cut it at 160 characters, which is how
+  a refusal naming the exact fix stayed unread), and an instruction to change approach or stop. A call
+  repeated *after* that correction still ends the turn at once — the correction is a chance, not a licence —
+  and the budget is two dead ends per turn, so a third ends there. *Supersedes:* the immediate return at
+  `MAX_IDENTICAL_FAILURES`. 4 tests in `tests/test_engine.py`.
+
+- **A restart is not amnesia: the conversation is kept, and kept for every way a turn can end.** The prompt
+  already replayed a window of the exchange, but only from `Runtime.history` — a dict **in the process** —
+  and only for turns that ended in prose. A turn the repeat guard cut short, a turn the step limit cut
+  short, a turn the owner denied: none were recorded, so the next turn read a conversation that had never
+  contained the owner's last message and the same request could be made four times with no sign it had been
+  heard. Every terminal path now records the turn, and the window is written to
+  `state/history/<conversation>.json` — owner-only (`0600`), bounded to the last 24 messages, moved into
+  place atomically — so a restart no longer wipes it. It is a *transcript*, not memory: facts still belong
+  in the facets, where they can be superseded, classified and searched. New
+  `src/daedalus/loop/transcript.py`; 8 tests in `tests/test_transcript.py`, 3 in `tests/test_engine.py`.
 
 - **`daedalus serve --publish` — the dashboard reaches the phone, over the tailnet and never past
   it.** SPEC §3.5 has always said the dashboard is *"published privately via Tailscale Serve
@@ -43,6 +64,29 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   14 tests in `tests/test_publish.py`.
 
 ### Fixed
+
+- **A refusal now answers the question the model was actually asking.** "college is from 8am to 11am" cost
+  four turns: the model sent `op=update summary="College"` with no `uid`, and the refusal said only
+  *"needs a target"* — so it sent the same call again, and again, and again, until the guard ended the turn.
+  It had the id all along: its first call that evening was a `search` that had printed
+  `[9eeeb38d18ed] … College`. `summary` is the name a write **sets**; it is not the address a write goes to,
+  and nothing in the schema or the description said so. `op=get`/`update`/`delete` with no target now
+  restate the rule, name the field that was misused, and **hand back the ids** of the events matching the
+  name the model used — the handback `_no_match` already did for a set that matched nothing. A `get`
+  carrying a window (`days`, `start`) is pointed at `agenda`, because "what is coming in the next 7 days"
+  was never a `get`. The `summary` and `uid` descriptions now carry the rule where the model reads them
+  instead of leaving it to be inferred from a failed call. `schedule op=add` had the same defect and shares
+  the fix — it named neither what was missing nor what was sent, so the model guessed at `name`/`cron` three
+  times. 5 tests in `tests/test_calendar.py`.
+
+- **The tick lands on the minute, not sixty seconds after the last one.** `_ticker` slept `tick_seconds`
+  *after* each tick, so the real period was the tick's own duration **plus** the interval: the tick time
+  walked forward a little every minute, and once it crossed into the next minute a job pinned to a single
+  minute — `0 8,20 * * *`, which is exactly what the Codeforces reminder was set to — was simply never due.
+  The drift is invisible until the one morning it matters, and the failure looks like *"the capability is
+  not running"* rather than *"the scheduler skipped the minute"*. The wait is now computed against the wall
+  clock, and a tick that overruns is caught up instead of pushing the next one further out. 2 tests in
+  `tests/test_daemon.py`.
 
 - **Approving a capability's network access now actually records the yes.** The Melinoë gate refuses
   an egressing capability until a standing grant keyed `capability:<name>` exists — and **nothing in
@@ -704,6 +748,31 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 - **Interface decisions** — output modes (`message` · `file` · `serve` · `push`); the MCP seam (consume external servers, expose the capability registry) as a forward path, not a P0 build.
 - **Phases** — P0 (loop + substrate + proof-of-life) through P6 (group chat), with seats introduced one at a time.
 - **P0 definition** — the unseen free-text request, completed end-to-end with nothing hardcoded; the substrate is in P0 because the proof-of-life cannot happen without it.
+
+### Security
+
+- **A live Discord webhook URL was committed to this repo, and the capability that held it could not even
+  use it.** `codeforces_webhook.txt` sat at the repo root with a working webhook token in it, added in
+  `8dc0443` and never ignored. The capability it was written for, `codeforces_webhook_direct`, could never
+  have used it: the scheduler starts a job with **no arguments**, so its `args["webhook_url"]` was always
+  absent and the one run it was ever due for would have emitted *"no webhook URL configured"*. Its sibling
+  `codeforces_contest_reminder` read the same file by a **relative** path from a different working
+  directory, so the one run it got raised `FileNotFoundError`. The third, `codeforces_contest_alert`,
+  declared `net = []` while importing `requests` and calling `codeforces.com` — a manifest that understated
+  what it reached. Three capabilities, none of them running, one of them holding a secret.
+
+  The file is gone from the tree, out of the index, and ignored; the blob is purged from every commit that
+  carried it. The capability is gone with it. Its replacement, `codeforces_contest_alert`, **posts nowhere**:
+  it returns a notification and the scheduler delivers that to the owner's own surface, so the credential
+  does not need to exist, cannot leak, and there is nothing to add to a rotation list. Its manifest declares
+  `net = ["codeforces.com"]` alone, with no deps and no secrets; the standing grant
+  `capability:codeforces_webhook_direct` is revoked with it, because a permission to a capability that no
+  longer exists is a permission to nothing — and it carried `discord.com` egress that nothing needs.
+
+  **Rotating the token is still the owner's, and it is the part that matters.** Purging history does not make
+  a live credential safe: it was valid from the moment it was written until someone revokes it in Discord,
+  and a purge cannot un-send anything that already left. Revoke the webhook; the purge only stops the next
+  copy from carrying it.
 
 ### Changed
 

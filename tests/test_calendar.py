@@ -1481,3 +1481,78 @@ def test_the_definition_view_admits_to_the_extra_dates(store: CalendarStore) -> 
     one = store.add(summary="Workshop", start="2026-11-02T09:00")
     store.update(one.uid, rdates=["2026-11-05T09:00"])
     assert "+1 extra date" in store.get(one.uid).line()  # type: ignore[union-attr]
+
+
+# -- a refusal that answers the question the model was asking ---------------
+
+
+async def test_update_with_only_a_summary_hands_back_the_uid(runtime: Runtime) -> None:
+    """The exact loop from the acceptance run, answered in one call.
+
+    The owner said "college is from 8am to 11am". The model had already found
+    the event — a `search` had printed `[9eeeb38d18ed] … College` — and then
+    sent `op=update summary="College"` with no `uid`, because a name is what an
+    event *is* and nothing said that `summary` is what a write *sets*. Told only
+    "needs a target", it sent the same call three more times until the guard
+    ended the turn. The refusal now carries the id.
+    """
+    college = runtime.calendar.add(summary="College", start="2026-10-21")
+
+    result = await CalendarTool().run(
+        {"op": "update", "summary": "College", "start": "", "query": "", "uid": ""}, runtime
+    )
+
+    assert not result.ok
+    assert college.uid in result.output, "the id the model needed was not handed back"
+    assert "`summary`" in result.output, "the field that was misused was not named"
+    assert 'match="College"' in result.output, "the call that would work was not spelled out"
+
+
+async def test_delete_with_only_a_summary_hands_back_the_uid(runtime: Runtime) -> None:
+    dentist = runtime.calendar.add(summary="Dentist", start="2026-10-20T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "delete", "summary": "Dentist", "start": "", "query": "", "uid": ""}, runtime
+    )
+
+    assert not result.ok
+    assert dentist.uid in result.output
+
+
+async def test_a_get_for_an_event_that_does_not_exist_lists_what_does(runtime: Runtime) -> None:
+    """`get` names an id; naming an event it does not have still gets an answer."""
+    runtime.calendar.add(summary="Standup", start="2026-10-12T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "get", "summary": "Nonexistent", "start": "", "query": "", "uid": ""}, runtime
+    )
+
+    assert not result.ok
+    assert "Standup" in result.output, "what does exist was not shown"
+
+
+async def test_a_get_with_a_window_is_pointed_at_agenda(runtime: Runtime) -> None:
+    """A read that picked the wrong op is told the right one.
+
+    The failing turn sent `op=get` with `days=7` — it was asking "what is
+    coming", which is `agenda`. Telling it that `uid` is missing answers a
+    question it did not ask.
+    """
+    runtime.calendar.add(summary="Standup", start="2026-10-12T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "get", "summary": "", "start": "", "query": "", "uid": "", "days": 7}, runtime
+    )
+
+    assert not result.ok
+    assert "op=agenda" in result.output
+    assert "days=7" in result.output
+
+
+async def test_a_get_with_nothing_at_all_still_names_the_way_in(runtime: Runtime) -> None:
+    result = await CalendarTool().run(
+        {"op": "get", "summary": "", "start": "", "query": "", "uid": ""}, runtime
+    )
+
+    assert not result.ok
+    assert "op=search" in result.output and "op=list" in result.output

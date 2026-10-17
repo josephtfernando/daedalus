@@ -6,7 +6,7 @@ from typing import Any, TYPE_CHECKING
 
 from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
-from .base import Tool, ToolResult, params
+from .base import Tool, ToolResult, params, sent_args
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
@@ -49,7 +49,15 @@ class ScheduleTool(Tool):
             name = str(args.get("name", "")).strip()
             cron = str(args.get("cron", "")).strip()
             if not name or not cron:
-                return ToolResult.error("add needs name and cron")
+                missing = " and ".join(
+                    label for label, value in (("`name`", name), ("`cron`", cron)) if not value
+                )
+                return ToolResult.error(
+                    f"add needs {missing} — `name` is the job's handle in this list, and `cron` "
+                    'is when it runs ("0 7 * * *" is daily at 07:00; "0 8,20 * * *" is twice a '
+                    f"day). Kind defaults to `capability`, so give `target` too. "
+                    f"You sent: {sent_args(args)}"
+                )
             try:
                 job = scheduler.add_job(
                     name=name,

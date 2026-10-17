@@ -130,7 +130,7 @@ def build_messages(
         {"role": "system", "content": build_system_prompt(ctx, event, seat=seat)}
     ]
     key = event.thread_id or event.channel_id or event.user_id
-    messages.extend(ctx.history.get(key, [])[-max_history:])
+    messages.extend(ctx.recent(key, max_history))
     messages.append({"role": "user", "content": event.text})
     return messages
 

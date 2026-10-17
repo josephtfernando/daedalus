@@ -12,6 +12,7 @@ arguments, because the model should not have to know which of five tools
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING
 
@@ -19,7 +20,7 @@ from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
 from ..calendar.event import normalise_when, parse_iso
 from ..security.provenance import DataClass
-from .base import Tool, ToolResult, params
+from .base import Tool, ToolResult, params, sent_args
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
@@ -102,17 +103,42 @@ def _scope(args: dict[str, Any]) -> str:
 def _sent(args: dict[str, Any]) -> str:
     """The argument names a call actually carried, so an error can echo them.
 
-    A model that reached for a plausible alias (``id`` for ``uid``) is otherwise
-    told only *what is missing*, and repeats the same wrong key — which is
-    exactly the loop this is here to break. Empty required placeholders are not
-    named, so the list is what the model meant to say.
+    Shared with ``schedule`` — a refusal that says only what is missing is how
+    the same wrong key gets sent four times.
     """
-    names = [
-        key
-        for key, value in args.items()
-        if key != "op" and value not in ("", None, [], {})
-    ]
-    return ", ".join(f"`{name}`" for name in names) if names else "(no arguments)"
+    return sent_args(args)
+
+
+def _as_int(value: Any, default: int) -> int:
+    """An integer from a model-supplied value, without raising on nonsense.
+
+    The schema says ``days`` is an integer, but a model may send ``"7"`` — and a
+    refusal that dies on ``int("next week")`` would replace one bad turn with a
+    crashed one.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _named(args: dict[str, Any]) -> tuple[str, str]:
+    """The text a call used to *name* an event, and the field it came in on.
+
+    ``summary`` is the name a write **sets**; a model reaching for "the event
+    called College" fills it in anyway, as if naming the event were the same
+    thing as addressing it. ``query`` is the same mistake made through
+    ``search``'s field. Both are read here so a refusal can answer the question
+    the model was actually asking — *which* event — instead of only reporting
+    what was missing, which is what leaves it repeating the same wrong call.
+    """
+    summary = str(args.get("summary", "")).strip()
+    if summary:
+        return summary, "summary"
+    query = str(args.get("query", "")).strip()
+    if query:
+        return query, "query"
+    return "", ""
 
 
 class CalendarTool(Tool):
@@ -123,10 +149,13 @@ class CalendarTool(Tool):
         "appear on each day they fall); `list` shows the events as defined; "
         "`busy` shows the stretches they are not free in (and anything that "
         "overlaps); `free` finds slots they are; `search` finds events by text; "
-        "`get`, `create`, `update` and `delete` manage them — `update`/`delete` take "
-        "one event by `uid`, or a set: every event whose name contains `match`, "
-        "and/or every event that falls on the day `on` (with `at` to give a set a "
-        "new time of day, or `shift` to move a set by a date delta such as '-7d'). "
+        "`get`, `create`, `update` and `delete` manage them. "
+        "**To change an existing event, `get`/`update`/`delete` must be told which "
+        "one**: either `uid` (one event — `agenda`, `list` and `search` print it) or "
+        "`match`/`on` (a set: every event whose name contains `match`, and/or every "
+        "event that falls on the day `on`, with `at` to give a set a new time of day "
+        "or `shift` to move a set by a date delta such as '-7d'). `summary` is the "
+        "name a write *sets* — it never selects an event. "
         "Times are local: "
         "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. A repeating "
         "event is one event with an rrule, not many copies."
@@ -148,8 +177,9 @@ class CalendarTool(Tool):
             {
                 "type": "string",
                 "description": (
-                    "what the event is, for op=create and op=update. Pass \"\" for the "
-                    "read ops."
+                    "the event's name, for op=create and op=update — the title a write "
+                    "*sets*. It never selects which event to change: for op=update/delete "
+                    "use `uid` or `match` for that. Pass \"\" for the read ops."
                 ),
             },
             True,
@@ -169,8 +199,9 @@ class CalendarTool(Tool):
             {
                 "type": "string",
                 "description": (
-                    "the event to act on, for op=get/update/delete. `agenda` and `list` "
-                    "print it."
+                    "the event to act on, for op=get/update/delete. `agenda`, `list` and "
+                    "`search` print it. Required whenever one of those ops names an event "
+                    "— `match`/`on` is the alternative for a set."
                 ),
             },
             False,
@@ -379,7 +410,7 @@ class CalendarTool(Tool):
     def _get(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
         uid = str(args.get("uid", "")).strip()
         if not uid:
-            return ToolResult.error("op=get needs `uid`; `agenda` or `list` prints it")
+            return ToolResult.error(self._no_target(args, ctx, "get"))
         event = ctx.calendar.get(uid)
         if event is None:
             return ToolResult.error(f"no event {uid!r}; `list` shows what exists")
@@ -481,12 +512,7 @@ class CalendarTool(Tool):
         if not uid and (match or on):
             return self._bulk_update(args, ctx, match, on, at)
         if not uid:
-            return ToolResult.error(
-                "op=update needs a target: `uid` (one event, as `list` prints it), or "
-                '`match`/`on` for a set — `on="2026-10-25"` is a day, `shift="-7d"` '
-                "moves the set by a week. "
-                f"You sent: {_sent(args)}"
-            )
+            return ToolResult.error(self._no_target(args, ctx, "update"))
         changes: dict[str, Any] = {
             key: str(args.get(key, "")).strip()
             for key in ("summary", "start", "end", "location", "description", "rrule")
@@ -555,6 +581,81 @@ class CalendarTool(Tool):
             data={"count": len(changed), "uids": [e.uid for e in changed]},
         )
 
+    def _no_target(self, args: dict[str, Any], ctx: "Runtime", op: str) -> str:
+        """A call that named no event — answered with the call that would.
+
+        `summary` is the name a write *sets*; it is not the address a write goes
+        to, and `get`/`update`/`delete` take `uid`, or `match`/`on` for a set.
+        Saying only *"needs a target"* cost the owner four turns in one evening:
+        the model held the event's name — and, from a `search` that had just
+        succeeded, its id — and still could not see how to point at it, so it
+        re-sent the same call until the repeat guard ended the turn.
+
+        So the refusal does three things instead: it restates the rule, it names
+        the field that was misused, and it hands back the ids that answer the
+        question the model was actually asking. A `get` carrying nothing usable
+        is answered the same way — with the op that was probably meant, because
+        "what is coming in the next 7 days" is `agenda`, not `get`.
+        """
+        named, field = _named(args)
+        if not named:
+            return self._no_name(args, op)
+        if op == "get":
+            head = "op=get needs `uid` — the event to read, as `agenda` or `list` prints it"
+        else:
+            head = (
+                f"op={op} needs a target: `uid` (one event, as `list` prints it), or "
+                '`match`/`on` for a set — `on="2026-10-25"` is a day, `shift="-7d"` '
+                "moves the set by a week"
+            )
+        rows = ctx.calendar.matching(
+            named, limit=8, allow_local_only=ctx.allows_local_only()
+        )
+        quoted = json.dumps(named)
+        if not rows:
+            others = ctx.calendar.series(limit=8, allow_local_only=ctx.allows_local_only())
+            if not others:
+                return f"{head}. Nothing here is called {quoted}, and the calendar is empty."
+            listing = "\n".join(f"- {e.line(show_id=True)}" for e in others)
+            return (
+                f"{head}. Nothing here is called {quoted} — `{field}` is what a write "
+                f"sets, not how an event is chosen. What exists:\n{listing}"
+            )
+        listing = "\n".join(f"- {e.line(show_id=True)}" for e in rows)
+        target = "it" if len(rows) == 1 else "one of these"
+        return (
+            f"{head}. `{field}={quoted}` does not select an event — `{field}` is what a "
+            f"write *sets*, not the address it writes to. To act on {target}, call again "
+            f"with the `uid` below, or with `match={quoted}`:\n{listing}"
+        )
+
+    def _no_name(self, args: dict[str, Any], op: str) -> str:
+        """A call that named no event *and* offered nothing that could name one.
+
+        Nothing here to hand back, so the useful answer is the op that was
+        probably meant. A `get` carrying a window — `days`, or a `start` — is a
+        read that picked the wrong op; "what is coming in the next 7 days" is
+        `agenda`, and saying so is cheaper than the four turns it cost when the
+        refusal only reported that `uid` was missing.
+        """
+        if op == "get":
+            if str(args.get("start", "")).strip() or args.get("days"):
+                wanted = _as_int(args.get("days"), 7)
+                return (
+                    "op=get needs `uid` — one event, as `agenda` or `list` prints it. "
+                    f'For "what is coming", that is `op=agenda days={wanted}`; for a word, '
+                    '`op=search query="…"`. Both print the `uid` this op needs.'
+                )
+            return (
+                "op=get needs `uid` — one event, as `agenda` or `list` prints it. "
+                f"To find one: `op=list`, or `op=search query=\"…\"`. You sent: {_sent(args)}"
+            )
+        return (
+            f"op={op} needs a target: `uid` (one event, as `list` prints it), or "
+            '`match`/`on` for a set — `on="2026-10-25"` is a day, `shift="-7d"` '
+            f"moves the set by a week. You sent: {_sent(args)}"
+        )
+
     def _no_match(self, match: str, on: str, ctx: "Runtime") -> str:
         """Say what did not match *and* hand back what is there, in one call.
 
@@ -594,11 +695,7 @@ class CalendarTool(Tool):
                 data={"count": removed},
             )
         if not uid:
-            return ToolResult.error(
-                "op=delete needs a target: `uid` (one event, as `list` prints it), or "
-                '`match`/`on` for a set — `on="2026-10-25"` is a day. '
-                f"You sent: {_sent(args)}"
-            )
+            return ToolResult.error(self._no_target(args, ctx, "delete"))
         if not ctx.calendar.delete(
             uid,
             recurrence_id=str(args.get("recurrence_id", "")).strip(),

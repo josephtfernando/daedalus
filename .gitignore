@@ -10,3 +10,9 @@ build/
 # never commit state or secrets
 .env
 .DS_Store
+
+# A live Discord webhook URL lived here (see CHANGELOG "Security"). The
+# capability that needed it is gone — alerts go to the owner's own surface — and
+# the blob is purged from history. Anything dropped here by hand must not come
+# back through a commit.
+codeforces_webhook.txt

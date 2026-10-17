@@ -25,6 +25,13 @@ log = logging.getLogger("daedalus.loop")
 # `capability op=author` with no arguments at all. Cap what one result can add.
 MAX_TOOL_CHARS = 8000
 MAX_IDENTICAL_FAILURES = 3
+# How many distinct dead ends get one corrective nudge before the turn ends.
+# The repeat guard used to stop the turn the moment a call failed the third
+# time, which is a dead end: the model was never told *that it was repeating*
+# and so had no reason to change course. It gets told now, and gets room to
+# use the answer — but only twice, and never over the same call: a model that
+# repeats a call it has just been told to stop sending ends the turn.
+MAX_CORRECTIONS_PER_TURN = 2
 
 
 def _truncate(output: str) -> str:
@@ -76,8 +83,22 @@ class Engine:
         schemas = ctx.tools.schemas()
         used: list[str] = []
         failures: dict[str, int] = {}
+        nudged: set[str] = set()
         denied: set[str] = set()
         steps = 0
+
+        def finish(text: str, *, error: str = "", provider: str = "") -> TurnResult:
+            """End the turn, and write down that it happened.
+
+            Every way out goes through here. A turn that ends because the loop
+            gave up is still a turn the owner was part of, and the next one has
+            to remember the question even when the answer was "I got stuck".
+            """
+            ctx.remember(event, event.text, text)
+            return TurnResult(
+                text=text, steps=steps, tools_used=used, provider=provider, error=error
+            )
+
         while steps < ctx.settings.max_steps:
             steps += 1
             try:
@@ -88,31 +109,21 @@ class Engine:
                     text_hint=event.text,
                 )
             except NoProviderAvailable as exc:
-                return TurnResult(
-                    text=f"I couldn't reach a model — {exc}",
-                    steps=steps,
-                    tools_used=used,
-                    error=str(exc),
-                )
+                return finish(f"I couldn't reach a model — {exc}", error=str(exc))
             if not result.tool_calls:
-                text = result.content.strip()
-                ctx.remember(event, event.text, text)
-                return TurnResult(text=text, steps=steps, tools_used=used, provider=result.provider)
+                return finish(result.content.strip(), provider=result.provider)
 
             messages.append(_assistant_message(result.content, result.tool_calls))
+            corrections: list[str] = []
             for call in result.tool_calls:
                 used.append(call.name)
                 # The owner already answered this exact call. Asking again is
                 # how one denial becomes two identical prompts and the owner
                 # starts doubting whether the first click registered.
                 if _call_signature(call) in denied:
-                    return TurnResult(
-                        text=(
-                            "You denied that a moment ago, so I stopped rather than ask again. "
-                            "Tell me what you'd like instead and I'll pick it up from there."
-                        ),
-                        steps=steps,
-                        tools_used=used,
+                    return finish(
+                        "You denied that a moment ago, so I stopped rather than ask again. "
+                        "Tell me what you'd like instead and I'll pick it up from there.",
                         error="denied",
                     )
                 payload, ok, detail = await self._execute(call, event, denied)
@@ -124,29 +135,36 @@ class Engine:
                     continue
                 # The acceptance run spent sixteen steps calling the same tool
                 # with the same missing argument, and every retry was identical.
-                # Repeating a failure is not progress; stop and say so. The
-                # signature carries the *arguments* as well as the error, so two
-                # genuinely different attempts that happen to fail the same way
-                # are not collapsed into one "repeated step".
+                # Repeating a failure is not progress — but ending the turn the
+                # instant it is spotted is its own failure, because the model
+                # never learns *why* it is stuck. The signature carries the
+                # *arguments* as well as the error, so two genuinely different
+                # attempts that happen to fail the same way are not collapsed
+                # into one repeated step — and it is the signature the nudge
+                # sticks to, so a call repeated after a correction is the end.
                 signature = f"{_call_signature(call)}: {detail[:80]}"
                 failures[signature] = failures.get(signature, 0) + 1
-                if failures[signature] >= MAX_IDENTICAL_FAILURES:
-                    return TurnResult(
-                        text=(
+                if signature in nudged or failures[signature] >= MAX_IDENTICAL_FAILURES:
+                    if signature not in nudged and len(nudged) < MAX_CORRECTIONS_PER_TURN:
+                        nudged.add(signature)
+                        corrections.append(_correction(call, detail, failures[signature]))
+                        continue
+                    return finish(
+                        (
                             f"I got stuck repeating the same failing step — `{call.name}` kept "
-                            f"coming back with: {detail[:160]}\n\n"
+                            f"coming back with: {detail[:400]}\n\n"
                             f"The call was {_arguments(call.arguments)}.\n\n"
                             "I stopped rather than burn the rest of the turn on it. Tell me what to "
                             "try instead, and I'll pick it up from there."
                         ),
-                        steps=steps,
-                        tools_used=used,
                         error="repeated failure",
                     )
-        return TurnResult(
-            text="(I hit the step limit on that one — say the word and I'll continue.)",
-            steps=steps,
-            tools_used=used,
+            if corrections:
+                # A note to the model, never to the transcript: this is the
+                # harness steering mid-turn, not something the owner said.
+                messages.append({"role": "user", "content": "\n\n".join(corrections)})
+        return finish(
+            "(I hit the step limit on that one — say the word and I'll continue.)",
             error="step limit",
         )
 
@@ -275,6 +293,32 @@ class Engine:
             await ctx.surface.send("\n".join(lines))
         except Exception:  # noqa: BLE001 — cosmetic, the refusal already happened
             log.debug("could not report a refusal", exc_info=True)
+
+
+def _correction(call: ToolCall, detail: str, count: int) -> str:
+    """What the model is told when it has repeated one failing call.
+
+    The old guard ended the turn here. The owner then had to guess what the
+    agent had been trying and rephrase it — which is what the acceptance
+    transcript shows, four times over. The model, not the owner, is the one
+    holding the failing call, so the model is the one to tell: here is the call,
+    here is what it kept saying, stop sending it, and if the error names the
+    argument it wanted, send that instead.
+
+    The tool's own error travels whole (up to a generous cap), because a
+    refusal that says *"`summary` is what a write sets, not how an event is
+    chosen — pass `uid` or `match`"* is the actual fix, and truncating it at 160
+    characters is how it stayed unread.
+    """
+    return (
+        f"Stop — you have sent `{call.name}` with {_arguments(call.arguments)} and it "
+        f"failed {count} times in a row with this:\n\n"
+        f"{detail[:1200]}\n\n"
+        "Do not send that call again unchanged; it will fail the same way. If the "
+        "error says what it wanted, do that. Otherwise change your approach — a "
+        "different tool, a different argument, or ask me a question. If you cannot "
+        "make progress, say so in one line and stop."
+    )
 
 
 def _call_signature(call: ToolCall) -> str:

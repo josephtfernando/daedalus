@@ -98,7 +98,9 @@ async def test_a_repeated_identical_failure_stops_the_turn(runtime: Runtime) -> 
 
     `capability op=author` with no name and no run_py cannot succeed, and the
     model asked for it over and over until the budget was gone. Repeating a
-    failure is not progress.
+    failure is not progress — but the turn no longer ends the moment it is
+    spotted: the model is told *that it is repeating* first, and only a model
+    that repeats the call anyway (or finds a second dead end) ends the turn.
     """
     runtime.settings.max_steps = 16
     runtime.model = ModelClient(
@@ -106,9 +108,78 @@ async def test_a_repeated_identical_failure_stops_the_turn(runtime: Runtime) -> 
         providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
     )
     result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
-    assert result.steps == 3, "it kept retrying a failure it had already seen twice"
+    assert result.steps == 4, "the third identical failure should correct, the fourth should stop"
     assert result.error == "repeated failure"
     assert "stuck repeating" in result.text
+
+
+async def test_the_model_is_told_it_is_repeating_before_the_turn_ends(runtime: Runtime) -> None:
+    """A dead end the model never hears about is a dead end it cannot leave.
+
+    The old guard ended the turn on the third identical failure without a word
+    to the caller: the owner got "I got stuck", and the model got nothing. The
+    correction names the failing call, carries the tool's own error whole, and
+    tells the model not to send it again — so a model that *can* change course
+    gets the chance.
+    """
+    runtime.settings.max_steps = 16
+    provider = ScriptedProvider([tool_call("capability", op="author")] * 10)
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+
+    await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
+
+    told = [m for call in provider.calls for m in call if m.get("role") == "user"]
+    correction = [m["content"] for m in told if m["content"].startswith("Stop —")]
+    assert correction, "the model was never told it was repeating"
+    assert "failed 3 times in a row" in correction[0]
+
+
+async def test_a_call_repeated_after_a_correction_ends_the_turn(runtime: Runtime) -> None:
+    """The correction is a chance, not a licence.
+
+    A model that sends the call it was just told to stop sending is not
+    thinking its way out of anything, so the turn ends at once rather than
+    spending two more identical failures earning a second nudge.
+    """
+    runtime.settings.max_steps = 16
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
+    # 1, 2, 3 fail -> correction; 4 is identical -> stop. Not 6.
+    assert result.steps == 4
+
+
+async def test_two_dead_ends_each_get_one_correction_then_the_turn_ends(
+    runtime: Runtime,
+) -> None:
+    """The correction budget is finite, and it is spent on *distinct* calls."""
+    runtime.settings.max_steps = 16
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    tool_call("capability", op="author", name="alpha"),
+                    tool_call("capability", op="author", name="alpha"),
+                    tool_call("capability", op="author", name="alpha"),
+                    tool_call("capability", op="author", name="beta"),
+                    tool_call("capability", op="author", name="beta"),
+                    tool_call("capability", op="author", name="beta"),
+                    tool_call("capability", op="author", name="gamma"),
+                    tool_call("capability", op="author", name="gamma"),
+                    tool_call("capability", op="author", name="gamma"),
+                    ChatResult(content="Never reached."),
+                ]
+            )
+        ],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="author things", user_id="owner"))
+    assert result.error == "repeated failure", "a third dead end must not get a third correction"
+    # alpha: 3 fails -> correction; beta: 3 fails -> correction (the budget is
+    # now spent); gamma: its third failure ends the turn rather than correcting.
+    assert result.steps == 9
 
 
 async def test_progress_between_failures_does_not_stop_the_turn(runtime: Runtime) -> None:
@@ -341,3 +412,69 @@ async def test_one_huge_tool_result_cannot_flood_the_context(runtime: Runtime) -
     fed_back = tool_messages[-1]["content"]
     assert "truncated" in fed_back, "the whole file was fed back unchecked"
     assert len(fed_back) < MAX_TOOL_CHARS + 500
+
+
+# -- the turn is remembered however it ends ---------------------------------
+
+
+async def test_a_turn_that_ends_in_a_dead_end_is_still_remembered(runtime: Runtime) -> None:
+    """The owner's words survive a turn that went nowhere.
+
+    Only turns that ended in prose were recorded, so a turn the guard cut short
+    left no trace at all — the next turn read a conversation that had never
+    contained the owner's last message. That is why the same request could be
+    made four times in one evening with no sign it had been heard.
+    """
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([tool_call("capability", op="author")] * 5)],
+    )
+
+    result = await Engine(runtime).run_turn(
+        InboundEvent(text="give me a contest alert", user_id="owner")
+    )
+
+    assert result.error == "repeated failure"
+    remembered = [m["content"] for m in runtime.recent("owner", 24)]
+    assert "give me a contest alert" in remembered, "the owner's message was dropped"
+    assert "stuck repeating" in remembered[-1], "the reply that ended the turn was dropped"
+
+
+async def test_a_conversation_survives_a_restart(runtime: Runtime) -> None:
+    """A daemon restart is not amnesia.
+
+    The acceptance transcript spans one: the daemon died and came back, and the
+    conversation carried on as if it had never been. `history` was a dict in the
+    process, so everything said before the restart was gone — half of why the
+    agent kept asking what the owner was working on.
+    """
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([ChatResult(content="Noted.")])],
+    )
+    await Engine(runtime).run_turn(InboundEvent(text="remember the drill", user_id="owner"))
+
+    restarted = build_runtime(runtime.settings, provider=ScriptedProvider([]))
+
+    conversation = restarted.recent("owner", 24)
+    assert conversation, "the conversation did not outlive the process"
+    assert conversation[0]["content"] == "remember the drill"
+    assert conversation[-1]["content"] == "Noted."
+
+
+async def test_a_restarted_conversation_is_replayed_into_the_prompt(runtime: Runtime) -> None:
+    """Remembered is not enough — it has to reach the model."""
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([ChatResult(content="Noted.")])],
+    )
+    await Engine(runtime).run_turn(InboundEvent(text="the deadline is Friday", user_id="owner"))
+
+    restarted = build_runtime(runtime.settings, provider=ScriptedProvider([]))
+    provider = ScriptedProvider([ChatResult(content="ok")])
+    restarted.model = ModelClient(restarted.settings, providers=[provider])
+
+    await Engine(restarted).run_turn(InboundEvent(text="when is it?", user_id="owner"))
+
+    sent = "\n".join(str(m.get("content")) for m in provider.calls[0])
+    assert "the deadline is Friday" in sent, "the replayed conversation never reached the model"

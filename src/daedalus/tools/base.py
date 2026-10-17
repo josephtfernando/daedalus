@@ -103,6 +103,21 @@ class Tool:
 _PROPS = "properties"
 
 
+def sent_args(args: dict[str, Any]) -> str:
+    """The argument names a call actually carried, so an error can echo them.
+
+    A model that reached for a plausible alias (``id`` for ``uid``) is otherwise
+    told only *what is missing*, and repeats the same wrong key — which is
+    exactly the loop this is here to break, in ``calendar`` and ``schedule``
+    alike. Empty placeholders are not named, so the list is what the model meant
+    to say rather than what the schema padded the call with.
+    """
+    names = [
+        key for key, value in args.items() if key != "op" and value not in ("", None, [], {})
+    ]
+    return ", ".join(f"`{name}`" for name in names) if names else "(no arguments)"
+
+
 def params(**props: Any) -> dict[str, Any]:
     """Build an object schema; ``required`` props are marked with a tuple value."""
     required: list[str] = []

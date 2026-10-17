@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 import sys
 import time
 from datetime import datetime
@@ -340,18 +341,39 @@ async def deliver(surface: Surface, result: TurnResult) -> bool:
     return True
 
 
+def _seconds_to_next_tick(now: float, interval_s: float) -> float:
+    """How long to wait, from ``now``, for the next aligned tick boundary.
+
+    Split out so the arithmetic can be tested without running the loop: the
+    property that matters is that the tick lands on the same offset past every
+    minute, forever, no matter how long a tick took.
+    """
+    nxt = (math.floor(now / interval_s) + 1) * interval_s
+    return max(nxt - now, 0.0)
+
+
 async def _ticker(rt: Runtime, interval_s: float) -> None:
     """Pump scheduler ticks in-process, forever (SPEC §8).
 
     There is deliberately no separate `tick` verb — the daemon pumps its own
     ticks, so the timer unit triggers `daedalus run` rather than a one-shot.
+
+    Ticks are aligned to the wall clock, not spaced from the end of the last
+    one. Sleeping ``interval_s`` after each tick makes the period *tick duration
+    + interval*, so the tick time walks forward a little every minute; after a
+    few hours it crosses into the next minute and a job pinned to a single
+    minute — ``0 8,20 * * *`` — is simply never due. The drift is invisible
+    until the one morning it matters, so the sleep is computed against the clock
+    and a tick that overruns is caught up immediately instead of pushing the
+    schedule further out.
     """
     while True:
         try:
             await rt.scheduler.dispatch_tick(rt, wake_handler=rt.wake)
         except Exception:  # noqa: BLE001 — a bad tick must not kill the daemon
             logging.getLogger("daedalus.scheduler").exception("tick failed")
-        await asyncio.sleep(interval_s)
+        now = time.time()
+        await asyncio.sleep(_seconds_to_next_tick(now, interval_s))
 
 
 async def serve(surface: Surface, rt: Runtime, tick_seconds: float = 60) -> int:

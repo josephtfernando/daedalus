@@ -115,3 +115,36 @@ async def test_serve_reports_a_surface_that_dies_before_ready() -> None:
         await asyncio.wait_for(serve(FailingSurface(), rt, tick_seconds=3600), timeout=2)
 
     assert rt.closed, "the runtime leaked when the surface failed to start"
+
+
+# -- the ticker does not walk the schedule forward --------------------------
+
+
+def test_a_tick_that_takes_time_does_not_push_the_next_one_later() -> None:
+    """Sleeping after the tick makes the period tick + interval, and it drifts.
+
+    A job pinned to one minute — `0 8,20 * * *` — is due only while
+    `datetime.now().minute` is exactly 0. Drift that crosses a minute boundary
+    skips it silently, which is exactly the shape of the 07:00 job that never
+    ran. The wait is computed against the clock, so each tick lands at the same
+    offset past the minute however long the tick itself took.
+    """
+    from daedalus.main import _seconds_to_next_tick
+
+    interval, tick_cost, now = 60.0, 0.4, 0.0
+    for _ in range(5000):  # ~3.5 days of minutes
+        now += tick_cost
+        now += _seconds_to_next_tick(now, interval)
+        assert now % interval <= tick_cost + 1e-9, "the tick drifted off its minute"
+
+
+def test_an_overrunning_tick_is_caught_up_not_deferred() -> None:
+    """A tick that ran past its own boundary must not push the next one out."""
+    from daedalus.main import _seconds_to_next_tick
+
+    # 12:00:00 exactly: the next boundary is a whole interval away, not zero.
+    assert _seconds_to_next_tick(7200.0, 60.0) == pytest.approx(60.0)
+    # 12:00:30, mid-minute: the next boundary is half a minute away.
+    assert _seconds_to_next_tick(7230.0, 60.0) == pytest.approx(30.0)
+    # A tick that overran into the next minute still aims at the boundary after.
+    assert _seconds_to_next_tick(7200.5, 60.0) == pytest.approx(59.5)

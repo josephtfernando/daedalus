@@ -42,6 +42,7 @@ def ensure_tree(home: Path) -> Path:
         home / "genui/drafts",
         home / "approvals",
         home / "state",
+        home / "state/history",
         home / "ui",
         home / "logs",
     ):

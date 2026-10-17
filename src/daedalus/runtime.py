@@ -21,6 +21,8 @@ from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
 from .config import Settings
 from .loop.context import history_key
+from .loop.transcript import MAX_MESSAGES as TRANSCRIPT_LIMIT
+from .loop.transcript import Transcript
 from .memory.store import MemoryStore
 from .model.client import ModelClient
 from .model.providers import Provider
@@ -74,6 +76,9 @@ class Runtime:
     seats: dict[str, Seat] = field(default_factory=builtin_charters)
     surface: Surface | None = None
     history: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: Where `history` is kept between runs. ``None`` means in-memory only,
+    #: which is what a hand-built Runtime in a test gets.
+    transcript: Transcript | None = None
     session: Session | None = None
 
     # -- turn bookkeeping -------------------------------------------------
@@ -96,13 +101,40 @@ class Runtime:
         return memory_for(self.memory_root, self.seat)
 
     def remember(self, event: InboundEvent, user_text: str, assistant_text: str) -> None:
-        if not assistant_text:
+        """Add one exchange to this conversation's running record.
+
+        Called on **every** way a turn can end, not only the ones that end in
+        prose. The owner still said something when a turn was cut short by the
+        repeat guard, the step limit, or a denial — and the next turn has to
+        know it. Recording only the happy path is what let one evening of the
+        acceptance transcript ask the same question four times with no memory of
+        the three answers it had already been given.
+        """
+        if not user_text and not assistant_text:
             return
         key = history_key(event)
-        thread = self.history.setdefault(key, [])
-        thread.append({"role": "user", "content": user_text})
-        thread.append({"role": "assistant", "content": assistant_text})
-        del thread[:-24]
+        thread = list(self.history.get(key) or [])
+        if user_text:
+            thread.append({"role": "user", "content": user_text})
+        if assistant_text:
+            thread.append({"role": "assistant", "content": assistant_text})
+        thread = thread[-TRANSCRIPT_LIMIT:]
+        self.history[key] = thread
+        if self.transcript is not None:
+            self.transcript.write(key, thread)
+
+    def recent(self, key: str, limit: int) -> list[dict[str, Any]]:
+        """The last few messages of a conversation, from memory or from disk.
+
+        Memory first because it is the live copy; disk second, so a conversation
+        that began before a restart still has its opening moves.
+        """
+        thread = self.history.get(key)
+        if not thread and self.transcript is not None:
+            thread = self.transcript.read(key)
+            if thread:
+                self.history[key] = thread
+        return list(thread or [])[-limit:]
 
     def allows_local_only(self) -> bool:
         """Whether `local_only` values may take part in the current turn.
@@ -240,6 +272,7 @@ def build_runtime(
         quarantine=Quarantine(),
         seats=load_charters(settings.home),
         surface=surface,
+        transcript=Transcript(settings.home / "state" / "history"),
     )
 
 
