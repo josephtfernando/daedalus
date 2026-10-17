@@ -24,44 +24,19 @@ import asyncio
 import json
 import os
 import shutil
-import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..limits import LAUNCH as _LAUNCH
+from ..limits import SAMPLE_S as _SAMPLE_S
+from ..limits import kill_tree as _kill
+from ..limits import rss_mb as _rss_mb
 from ..security.env import scrubbed
 from .manifest import Caps, Manifest
 
 MAX_OUTPUT = 256 * 1024
-
-#: How often the runner looks at the child's resident memory. Far below the time it
-#: takes a capability to do anything useful, and far above the cost of reading one
-#: small file.
-_SAMPLE_S = 0.1
-
-#: The child is started as ``python -c <this>`` and then `exec`s the artifact, so
-#: the limits are set in the very process that runs the code and survive the exec.
-#: Deliberately *not* `preexec_fn`: that runs between fork and exec in a process
-#: that may have threads, which Python documents as unsafe, and this daemon has them
-#: (the dashboard server).
-_LAUNCH = """
-import os, resource, sys
-backstop_mb, cpu, entry = int(sys.argv[1]), float(sys.argv[2]), sys.argv[3]
-cores = os.cpu_count() or 1
-share = max(1, min(cores, int(cpu)))   # whole cores, rounded down: a cap is not exceeded
-try:
-    os.sched_setaffinity(0, set(range(share)))
-except (AttributeError, OSError):
-    pass
-limit = backstop_mb * 1024 * 1024
-resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-try:
-    os.execv(sys.executable, [sys.executable, entry])
-except OSError as exc:
-    sys.stderr.write("capability launcher: cannot start %s: %s\\n" % (entry, exc))
-    raise SystemExit(127)
-"""
 
 
 @dataclass(slots=True)
