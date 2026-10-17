@@ -1,7 +1,7 @@
 # Daedalus — Spec
 
 **Scope:** single-user, local-first (only the owner can talk to it)
-**Status:** P0 and P1 implemented as code (loop + primitives + capability substrate + memory depth + internal calendar + scheduler + proactive gate + Melinoë gate + Discord surface + setup wizard), 190 tests green; `0.1.0` pending Discord proof-of-life
+**Status:** P0, P1, P2 and the internal calendar implemented as code (loop + primitives + capability substrate + memory depth + calendar + scheduler + proactive gate + Melinoë gate + Discord surface + setup wizard), with the P3 substrate under it (charters as files, a memory namespace per seat, one active identity, and the durable seat↔seat queue); 845 tests green, `daedalus selftest` 15/15 offline. The **proof-of-life (§11) holds** — observed from Discord on 17 Oct, a free-text request authored and scheduled a capability with no code touched.
 **Date:** 2026-10-16
 **Supersedes:** the Hermes-based `~/down/daedalus.md` plan (architecture reference retained; runtime decision reversed)
 
@@ -31,7 +31,7 @@ A single-user, local-first **chief-of-staff agent** that runs on the owner's lap
 
 ## 2. Non-goals for P0
 
-The cabinet, theming, remote/Tailscale access, OpenCode delegation, and the multi-agent group chat are **out of scope** until the loop does a real thing that was not hardcoded.
+The cabinet, theming, remote/Tailscale access, OpenCode delegation, and the multi-agent group chat are **out of scope for P0** — P0's gate on them ("until the loop does a real thing that was not hardcoded") was met on 17 Oct (§11), so they are now a matter of phase order (P3 → P4 → P5 → P6), not of permission.
 
 ---
 
@@ -509,6 +509,8 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 **Why the substrate is in P0:** the proof-of-life *cannot happen* without Layer 1 (primitives) and Layer 2 (authored capabilities). They are not a later phase.
 
 **Constraint (accepted).** The P0 loop ships and does one real thing before any cabinet seat is wired.
+
+**Satisfied — 17 Oct 2026.** Seen in the journal, not taken on faith: an unseen free-text request at 08:24 authored a capability (`capability op=list` → `capability` → `schedule`), and a later one answered a calendar question with `calendar op=agenda -> ok` — no code touched, no hardcoded flow. The gate on §7's seats is therefore met; what keeps a seat out of the delivered default now is only phase order.
 
 **Build order:**
 

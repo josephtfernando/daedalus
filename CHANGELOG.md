@@ -16,6 +16,19 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The proof-of-life holds, and the status lines that said otherwise no longer do.** SPEC §11 defines
+  P0's acceptance as the owner sending a free-text request it has never seen and watching it complete
+  end-to-end with no code touched — and §11's own gate on the cabinet ("the loop ships and does one real
+  thing before any seat is wired") hangs off it. It was being treated as outstanding because one turn
+  (`tools=none`) had been read as the whole story; the journal says otherwise: on 17 Oct a free-text
+  request at 08:24 walked `capability op=list` → `capability` → `schedule` and came back with the work
+  authored and scheduled, and later turns answered calendar questions through the `calendar` tool
+  (`op=agenda -> ok`, and `op=create -> ok` on the back of plain text). No hardcoded flow anywhere in it.
+  SPEC's status header (which still claimed "190 tests green; `0.1.0` pending Discord proof-of-life") and
+  §2's non-goals line are corrected to match, and T13's parenthetical no longer claims a missing
+  precondition. *Nothing in the code changed — this is the record catching up with the machine, which is
+  the whole reason the §11 gate was written down instead of assumed.*
+
 - **A process that dies now says so, and the record of it outlives the daemon that started it.**
   `process start` left something running and `process list` showed `rc=` — the *same* value for "still
   running" and "died at 04:00", so the one question worth asking could not be answered from the output.

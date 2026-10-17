@@ -263,7 +263,9 @@ charter file naming a namespace that could escape the tree, and a scripted turn 
 `athena` whose fact is invisible to the coordinator.
 
 ### T13 — Activate one seat · `done`
-*SPEC §7 (no seat is wired until the proof-of-life holds), AGENTS.md.*
+*SPEC §7, AGENTS.md. (The §11 gate this ticket waited on — "no seat is wired until
+the proof-of-life holds" — was met on 17 Oct; what keeps a seat out of the delivered
+default now is that wiring one is the next ticket, not a missing precondition.)*
 
 Choose a seat for a turn, put its charter in the prompt, and keep **one** active
 at a time. The default stays Daedalus.
