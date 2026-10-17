@@ -12,9 +12,38 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. The **dashboard now reaches the owner's phone again** — a fixed port, published on start, taken down on stop. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 876-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. The **dashboard now reaches the owner's phone again** — a fixed port, published on start, taken down on stop. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 880-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **The wizard provisions the tailnet path instead of narrating it** (`scripts/setup.sh`,
+  stage 8, re-runnable like every resource stage). The spec's stage 8 has named tailscale
+  since the P0 draft; the wizard honoured it with an advisory `command -v` and a Hardening
+  line that read *"a P4 posture, nothing to assert"*. Meanwhile the phone path became real
+  — a fixed port, published on start, taken down on stop — and the stale `delphi` node
+  turned out to need a console action no CLI could take. Now:
+
+  - **Install and login are asserted, not narrated** — present/logged-in are checked and
+    said; otherwise the exact commands are printed and the skip is recorded as a skip.
+  - **Funnel is asserted off**, twice (the resource stage and Hardening), read the same
+    way `genui/publish.py` reads it — a shared `_funnel_state` helper: the JSON's `Funnel`
+    map, non-empty = on; unreadable = *unknown*, warned about, never a pass. The publisher
+    refuses to publish onto a Funnel-on node; the wizard now makes the posture true before
+    that refusal is ever needed.
+  - **A Tailscale API key is capturable as a resource**: pasted through hidden entry,
+    sealed into the credential store through a 0600 temp file that is then deleted, the
+    variable unset the line after its last use, and noted in `resources/registry.toml` as
+    `remote_api` / `apikey` scoped `devices.read,devices.remove` — a commented placeholder,
+    the same proposal shape gcal gets. With it, tailnet hygiene — removing a stale
+    duplicate node — becomes something Daedalus can *propose* (T9's pending→adopted shape)
+    instead of a console action. Removing a device is destructive, so it is never
+    autonomous.
+  - 4 tests in `tests/test_setup_wizard.py` (new), reading the wizard the way its own
+    Hardening stage reads config: no line of the script can turn Funnel on; the key
+    variable has exactly its four uses and only the store as a destination; the registry
+    note is commented-only; and the wizard's Funnel reading agrees with the publisher's on
+    the same inputs (falsified with a `funnel on` line and an always-`off` reader — both
+    red, both restored).
 
 - **A message is routed to the seat it belongs to, so the owner never has to name one.** The cabinet
   existed and was reachable only by naming a seat or editing `active = true`, which is a switchboard
