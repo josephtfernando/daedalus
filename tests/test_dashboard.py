@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -243,12 +243,17 @@ def test_the_front_page_is_the_one_the_owner_opens_on(week: CalendarStore, tmp_p
 def test_the_server_serves_the_dashboard_and_leaves_the_artifact_behind(
     week: CalendarStore, tmp_path: Path
 ) -> None:
+    # `/dashboard` draws *today*, whatever day the suite runs on. The fixture
+    # pins its events to a fixed Friday, so the event that proves the owner's
+    # data reached the page goes on today — otherwise this passes six days a
+    # week and fails on the seventh.
+    week.add(summary="the plan for today", start=f"{date.today().isoformat()}T12:00")
     server = LocalServer(tmp_path, token="tok", calendar=week)
 
     response = server.get("/dashboard")
 
     assert response.status == 200
-    assert "standup" in response.text
+    assert "the plan for today" in response.text
     assert (tmp_path / "ui" / "index.html").read_text(encoding="utf-8") == response.text
 
 
@@ -285,6 +290,7 @@ def test_the_route_is_no_longer_answered_as_unbuilt(week: CalendarStore, tmp_pat
 
 def test_the_dashboard_answers_over_a_real_socket(week: CalendarStore, tmp_path: Path) -> None:
     """T1 serves it, which is the half a unit test of `get()` cannot prove."""
+    week.add(summary="the plan for today", start=f"{date.today().isoformat()}T12:00")
     server = LocalServer(tmp_path, token="tok", port=0, calendar=week)
     url = server.start()
     try:
@@ -298,7 +304,7 @@ def test_the_dashboard_answers_over_a_real_socket(week: CalendarStore, tmp_path:
     finally:
         server.stop()
 
-    assert "standup" in body
+    assert "the plan for today" in body
     assert (tmp_path / "ui" / "index.html").exists()
 
 

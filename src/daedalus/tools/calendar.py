@@ -141,6 +141,61 @@ def _named(args: dict[str, Any]) -> tuple[str, str]:
     return "", ""
 
 
+#: The fields that *describe* an event rather than *choose* one. A write sets
+#: them; none of them can address an event, however much a call wants one to.
+_VALUE_FIELDS = (
+    "summary",
+    "start",
+    "end",
+    "location",
+    "description",
+    "rrule",
+    "remind",
+    "at",
+    "shift",
+    "query",
+)
+
+
+def _misused(args: dict[str, Any]) -> list[str]:
+    """The *value* fields a call filled in as though they could choose an event.
+
+    A model reaching for an event it can name but not address fills every value
+    field it has: on 17 Oct one `delete` carried ``summary``, ``start`` **and**
+    ``query="delete"``. A refusal that names only the first leaves it holding two
+    more things it still believes are addresses.
+    """
+    return [f for f in _VALUE_FIELDS if str(args.get(f, "")).strip() not in ("", "None")]
+
+
+def _phrase(names: list[str]) -> str:
+    """``x``; ``x`` and ``y``; ``x``, ``y`` and ``z`` — a list the ear can follow."""
+    quoted = [f"`{name}`" for name in names]
+    if len(quoted) == 1:
+        return quoted[0]
+    return ", ".join(quoted[:-1]) + f" and {quoted[-1]}"
+
+
+def _suggested(op: str, uid: str) -> str:
+    """The literal call that would work, in the model's own vocabulary.
+
+    Describing the right call leaves the model to translate it — and its own
+    wrong call is sitting in the context, one message back, to be copied
+    instead. That is what happened four times. Handing it a line to copy gives
+    it something else to copy.
+    """
+    if op == "get":
+        return f"op=get uid={uid}"
+    if op == "delete":
+        return f"op=delete uid={uid}"
+    return f"op=update uid={uid} <the fields to change>"
+
+
+def _looks_like_day(text: str) -> bool:
+    """Whether a model-supplied string is a bare ``YYYY-MM-DD`` — not the hour."""
+    return len(text) == 10 and text[4] == "-" and text[7] == "-" and text.replace("-", "").isdigit()
+
+
 class CalendarTool(Tool):
     name = "calendar"
     title = "Read or change the calendar"
@@ -150,12 +205,20 @@ class CalendarTool(Tool):
         "`busy` shows the stretches they are not free in (and anything that "
         "overlaps); `free` finds slots they are; `search` finds events by text; "
         "`get`, `create`, `update` and `delete` manage them. "
+        "**Each op takes its own fields — send only those, and omit the rest.** "
+        "`agenda` takes `days`; `list` takes `limit`; `get` takes `uid`; `busy` takes "
+        "`days`; `free` takes `days`, `minutes`, `hours`; `search` takes `query`; "
+        "`create` takes `summary` and `start` (plus any of `end`, `location`, "
+        "`description`, `rrule`, `remind`); `update` takes a target *and* the fields to "
+        "change; `delete` takes a target and nothing else. A field that belongs to "
+        "another op is not a weaker way to say it — it is not read. "
         "**To change an existing event, `get`/`update`/`delete` must be told which "
         "one**: either `uid` (one event — `agenda`, `list` and `search` print it) or "
         "`match`/`on` (a set: every event whose name contains `match`, and/or every "
         "event that falls on the day `on`, with `at` to give a set a new time of day "
-        "or `shift` to move a set by a date delta such as '-7d'). `summary` is the "
-        "name a write *sets* — it never selects an event. "
+        "or `shift` to move a set by a date delta such as '-7d'). `summary` and `start` "
+        "are what a write *sets* — neither can select an event, however much a call "
+        "wants one. "
         "Times are local: "
         "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. A repeating "
         "event is one event with an rrule, not many copies."
@@ -177,23 +240,24 @@ class CalendarTool(Tool):
             {
                 "type": "string",
                 "description": (
-                    "the event's name, for op=create and op=update — the title a write "
-                    "*sets*. It never selects which event to change: for op=update/delete "
-                    "use `uid` or `match` for that. Pass \"\" for the read ops."
+                    "for op=create (required) and op=update: the event's name — the title "
+                    "a write *sets*. It can never select which event to change: for "
+                    "op=update/delete, use `uid` or `match` for that."
                 ),
             },
-            True,
+            False,
         ),
         start=(
             {
                 "type": "string",
                 "description": (
-                    "when it begins, for op=create and op=update — local "
-                    "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. Pass \"\" "
-                    "for the read ops."
+                    "for op=create (required) and op=update: when it begins, local "
+                    "'2026-10-16T09:10', or '2026-10-16' for a whole-day event. It is "
+                    "not a way to choose an event — to pick one by its time, use `on` "
+                    "(the day). For op=update with `match`/`on`, use `at` or `shift`."
                 ),
             },
-            True,
+            False,
         ),
         uid=(
             {
@@ -280,11 +344,9 @@ class CalendarTool(Tool):
         query=(
             {
                 "type": "string",
-                "description": (
-                    "the words to look for, for op=search. Pass \"\" for every other op."
-                ),
+                "description": "for op=search (required): the words to look for.",
             },
-            True,
+            False,
         ),
         minutes=(
             {
@@ -592,22 +654,18 @@ class CalendarTool(Tool):
         re-sent the same call until the repeat guard ended the turn.
 
         So the refusal does three things instead: it restates the rule, it names
-        the field that was misused, and it hands back the ids that answer the
-        question the model was actually asking. A `get` carrying nothing usable
-        is answered the same way — with the op that was probably meant, because
-        "what is coming in the next 7 days" is `agenda`, not `get`.
+        every value field the call misused as an address, and it hands back the
+        calls and ids that answer the question the model was actually asking. A
+        `get` carrying nothing usable is answered the same way — with the op that
+        was probably meant, because "what is coming in the next 7 days" is
+        `agenda`, not `get`.
         """
-        named, field = _named(args)
+        named, _field = _named(args)
         if not named:
             return self._no_name(args, op)
-        if op == "get":
-            head = "op=get needs `uid` — the event to read, as `agenda` or `list` prints it"
-        else:
-            head = (
-                f"op={op} needs a target: `uid` (one event, as `list` prints it), or "
-                '`match`/`on` for a set — `on="2026-10-25"` is a day, `shift="-7d"` '
-                "moves the set by a week"
-            )
+        said = _phrase(_misused(args))
+        verb = "reads" if op == "get" else "changes"
+        head = f"op={op} {verb} one event, and {said} cannot say which"
         rows = ctx.calendar.matching(
             named, limit=8, allow_local_only=ctx.allows_local_only()
         )
@@ -615,28 +673,41 @@ class CalendarTool(Tool):
         if not rows:
             others = ctx.calendar.series(limit=8, allow_local_only=ctx.allows_local_only())
             if not others:
-                return f"{head}. Nothing here is called {quoted}, and the calendar is empty."
+                return (
+                    f"{head}: they are what a write *sets*, not the address it writes "
+                    f"to. Nothing here is called {quoted}, and the calendar is empty."
+                )
             listing = "\n".join(f"- {e.line(show_id=True)}" for e in others)
             return (
-                f"{head}. Nothing here is called {quoted} — `{field}` is what a write "
-                f"sets, not how an event is chosen. What exists:\n{listing}"
+                f"{head}: they are what a write *sets*, not the address it writes to. "
+                f"Nothing here is called {quoted}. What exists:\n{listing}"
             )
         listing = "\n".join(f"- {e.line(show_id=True)}" for e in rows)
-        target = "it" if len(rows) == 1 else "one of these"
+        # Every form that would name it, spelled out. The model's wrong call is
+        # one message back in its own context; the only way to win that contest
+        # is to put the right call there instead, ready to copy.
+        choices = [f"    {_suggested(op, rows[0].uid)}"]
+        day = str(args.get("start", "")).strip()[:10]
+        if _looks_like_day(day):
+            choices.append(f'    op={op} on="{day}"')
+        choices.append(f"    op={op} match={quoted}")
         return (
-            f"{head}. `{field}={quoted}` does not select an event — `{field}` is what a "
-            f"write *sets*, not the address it writes to. To act on {target}, call again "
-            f"with the `uid` below, or with `match={quoted}`:\n{listing}"
+            f"{head}: they are what a write *sets*, not the address it writes to. "
+            f"Any of these would name it:\n"
+            + "\n".join(choices)
+            + f"\nMatching events:\n{listing}"
         )
 
     def _no_name(self, args: dict[str, Any], op: str) -> str:
         """A call that named no event *and* offered nothing that could name one.
 
         Nothing here to hand back, so the useful answer is the op that was
-        probably meant. A `get` carrying a window — `days`, or a `start` — is a
-        read that picked the wrong op; "what is coming in the next 7 days" is
-        `agenda`, and saying so is cheaper than the four turns it cost when the
-        refusal only reported that `uid` was missing.
+        probably meant, plus the rule the call broke. A `get` carrying a window
+        — `days`, or a `start` — is a read that picked the wrong op; "what is
+        coming in the next 7 days" is `agenda`, and saying so is cheaper than
+        the four turns it cost when the refusal only reported that `uid` was
+        missing. A `delete` carrying a `start` is the same mistake on the write
+        side: an hour is when an event is, not how to pick one.
         """
         if op == "get":
             if str(args.get("start", "")).strip() or args.get("days"):
@@ -648,13 +719,30 @@ class CalendarTool(Tool):
                 )
             return (
                 "op=get needs `uid` — one event, as `agenda` or `list` prints it. "
-                f"To find one: `op=list`, or `op=search query=\"…\"`. You sent: {_sent(args)}"
+                f'To find one: `op=list`, or `op=search query="…"`. You sent: {_sent(args)}'
             )
-        return (
-            f"op={op} needs a target: `uid` (one event, as `list` prints it), or "
-            '`match`/`on` for a set — `on="2026-10-25"` is a day, `shift="-7d"` '
-            f"moves the set by a week. You sent: {_sent(args)}"
+        head = (
+            "op=delete needs a target and nothing else"
+            if op == "delete"
+            else f"op={op} needs a target"
         )
+        lines = [
+            f"{head}: `uid` (one event, as `list` prints it), or `match`/`on` for a set "
+            '— `on="2026-10-25"` is a day, `shift="-7d"` moves the set by a week.'
+        ]
+        said = _misused(args)
+        if said:
+            lines.append(
+                f"{_phrase(said)} cannot choose an event: they are what a write *sets*, "
+                "not the address it writes to."
+            )
+        day = str(args.get("start", "")).strip()[:10]
+        if _looks_like_day(day):
+            lines.append(
+                f'To choose by *time*, use `on` — the day, not the hour: `op={op} on="{day}"`.'
+            )
+        lines.append(f"You sent: {_sent(args)}")
+        return " ".join(lines)
 
     def _no_match(self, match: str, on: str, ctx: "Runtime") -> str:
         """Say what did not match *and* hand back what is there, in one call.

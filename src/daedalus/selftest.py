@@ -306,7 +306,15 @@ def _check_calendar(rt: Runtime) -> Check:
         return Check("calendar", False, "an outside calendar did not come in")
     # An `RDATE` the store reads but does not keep is an occurrence that quietly
     # stops happening, so the round trip is proven by asking for both days.
-    extra = rt.calendar.occurrences(datetime(2099, 1, 3), datetime(2099, 1, 5))
+    # The window is scoped to this uid on purpose: the repeating probe above is
+    # a *forever* weekly series and lands in 2099 like any other date, so asking
+    # for the whole list asserted something this check does not mean — and it
+    # failed on every run whose anchor weekday matched 2099-01-03.
+    extra = [
+        e
+        for e in rt.calendar.occurrences(datetime(2099, 1, 3), datetime(2099, 1, 5))
+        if e.uid == "selftest-imported@example.com"
+    ]
     if [e.start for e in extra] != ["2099-01-03T09:00", "2099-01-04T09:00"]:
         return Check("calendar", False, "an imported RDATE did not arrive as an occurrence")
     if rt.calendar.import_ics(handover).added != 0:

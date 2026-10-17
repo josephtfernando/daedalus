@@ -33,6 +33,14 @@ MAX_IDENTICAL_FAILURES = 3
 # repeats a call it has just been told to stop sending ends the turn.
 MAX_CORRECTIONS_PER_TURN = 2
 
+#: Appended to the answer a *duplicate* call receives within one step. Saying so
+#: matters: a model that thinks it created two things will spend the rest of the
+#: turn looking for one to undo.
+_ALREADY_RAN = (
+    "\n\n(You sent this exact call twice in the same step. It ran once — "
+    "repeating a call does not repeat its effect.)"
+)
+
 
 def _truncate(output: str) -> str:
     if len(output) <= MAX_TOOL_CHARS:
@@ -115,18 +123,39 @@ class Engine:
 
             messages.append(_assistant_message(result.content, result.tool_calls))
             corrections: list[str] = []
+            # A model can emit the same call twice in one message, and it never
+            # means "do it twice" — it means the model said one thing and the
+            # transport repeated it. Running both is how one reminder became two
+            # calendar entries in the same second, and then four failing deletes
+            # spent the rest of the turn trying to remove the twin. Byte-identical
+            # calls in one step run **once**. The second still gets its answer, so
+            # the transcript stays well-formed, and it is told what happened — a
+            # model that believes it made two things goes looking for one to undo.
+            ran: dict[str, tuple[str, bool, str]] = {}
             for call in result.tool_calls:
+                call_signature = _call_signature(call)
+                if call_signature in ran:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "name": call.name,
+                            "content": ran[call_signature][0] + _ALREADY_RAN,
+                        }
+                    )
+                    continue
                 used.append(call.name)
                 # The owner already answered this exact call. Asking again is
                 # how one denial becomes two identical prompts and the owner
                 # starts doubting whether the first click registered.
-                if _call_signature(call) in denied:
+                if call_signature in denied:
                     return finish(
                         "You denied that a moment ago, so I stopped rather than ask again. "
                         "Tell me what you'd like instead and I'll pick it up from there.",
                         error="denied",
                     )
                 payload, ok, detail = await self._execute(call, event, denied)
+                ran[call_signature] = (payload, ok, detail)
                 messages.append(
                     {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": payload}
                 )
@@ -142,7 +171,7 @@ class Engine:
                 # attempts that happen to fail the same way are not collapsed
                 # into one repeated step — and it is the signature the nudge
                 # sticks to, so a call repeated after a correction is the end.
-                signature = f"{_call_signature(call)}: {detail[:80]}"
+                signature = f"{call_signature}: {detail[:80]}"
                 failures[signature] = failures.get(signature, 0) + 1
                 if signature in nudged or failures[signature] >= MAX_IDENTICAL_FAILURES:
                     if signature not in nudged and len(nudged) < MAX_CORRECTIONS_PER_TURN:

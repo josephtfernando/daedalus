@@ -3,7 +3,7 @@ from __future__ import annotations
 from daedalus.config import Settings
 from daedalus.loop.engine import Engine
 from daedalus.model.client import ModelClient
-from daedalus.model.providers import ChatResult, ScriptedProvider
+from daedalus.model.providers import ChatResult, ScriptedProvider, ToolCall
 from daedalus.runtime import Runtime, build_runtime
 from daedalus.surface.base import InboundEvent
 from daedalus.surface.cli import ScriptedSurface
@@ -478,3 +478,91 @@ async def test_a_restarted_conversation_is_replayed_into_the_prompt(runtime: Run
 
     sent = "\n".join(str(m.get("content")) for m in provider.calls[0])
     assert "the deadline is Friday" in sent, "the replayed conversation never reached the model"
+
+
+# -- one step, one effect ---------------------------------------------------
+
+
+def _twice(tool: str, **arguments: object) -> ChatResult:
+    """The same call, twice, in one assistant message — different ids, same bytes."""
+    return ChatResult(
+        tool_calls=[
+            ToolCall(id="call_1", name=tool, arguments=dict(arguments)),
+            ToolCall(id="call_2", name=tool, arguments=dict(arguments)),
+        ]
+    )
+
+
+async def test_a_call_sent_twice_in_one_step_runs_once(runtime: Runtime) -> None:
+    """The model said one thing; the transport repeated it — not two reminders.
+
+    On 17 Oct the model emitted two byte-identical `calendar op=create` calls in
+    a single message and the engine ran both, in the same second. The owner got
+    two copies of one reminder, and the rest of the turn went on four failing
+    deletes trying to remove the twin. A repeated call is not a repeated intent.
+    """
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    _twice(
+                        "calendar",
+                        op="create",
+                        summary="LeetCode Weekly Contest 524",
+                        start="2026-10-18T08:00",
+                    ),
+                    ChatResult(content="One reminder set."),
+                ]
+            )
+        ],
+    )
+
+    result = await Engine(runtime).run_turn(
+        InboundEvent(text="reminder for tomorrow's contest", user_id="owner")
+    )
+
+    assert result.text == "One reminder set."
+    assert len(runtime.calendar.series()) == 1, "the repeated call created a second event"
+
+
+async def test_every_id_of_a_repeated_call_is_answered(runtime: Runtime) -> None:
+    """Each tool_call_id needs its own tool message, or the next request is malformed."""
+    provider = ScriptedProvider([_twice("calendar", op="list"), ChatResult(content="Done.")])
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+
+    await Engine(runtime).run_turn(InboundEvent(text="what is on", user_id="owner"))
+
+    sent = provider.calls[1]
+    answered = [m["tool_call_id"] for m in sent if m.get("role") == "tool"]
+    assert answered == ["call_1", "call_2"]
+    assert "ran once" in sent[-1]["content"], "the model was not told its call was a repeat"
+
+
+async def test_a_repeated_failing_call_counts_as_one_failure(runtime: Runtime) -> None:
+    """The duplicate is the same attempt, so it cannot be the second strike.
+
+    The repeat guard counts *attempts that differ* in getting nowhere. A call the
+    model sent twice in one step is one attempt; counting it twice would let a
+    single malformed message burn a correction the model never earned.
+    """
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    _twice("capability", op="author"),
+                    tool_call("capability", op="author"),
+                    tool_call("capability", op="author"),
+                    tool_call("capability", op="author"),
+                ]
+            )
+        ],
+    )
+
+    result = await Engine(runtime).run_turn(InboundEvent(text="author something", user_id="owner"))
+
+    # Three distinct failures earn the correction, the fourth ends the turn. The
+    # doubled first step contributed one, so this ends at 4 steps and not 3.
+    assert result.steps == 4
+    assert result.error == "repeated failure"

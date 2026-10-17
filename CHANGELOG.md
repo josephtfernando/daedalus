@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 749-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 759-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -64,6 +64,64 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   14 tests in `tests/test_publish.py`.
 
 ### Fixed
+
+- **A call sent twice in one message now runs once.** On 17 Oct the owner asked for a reminder for
+  tomorrow's contest. The model emitted **two byte-identical `calendar op=create` calls in a single
+  assistant message**, and the engine ran both: two copies of one event, in the same second, on the
+  owner's real calendar. The rest of the turn then went on four failing deletes trying to remove the twin
+  it had just made, and the turn ended with the duplicate still there. A repeated call is not a repeated
+  intention — byte-identical calls within one step are now executed **once**, and the duplicate still gets
+  its own tool message (the API requires one answer per `tool_call_id`), carrying the first call's result
+  plus a line saying the call was a repeat. That line is the point: a model that believes it made two
+  things goes looking for one to undo, which is exactly what happened. A duplicated *failing* call also
+  counts as one failure, so a single malformed message can no longer burn one of the two corrections a
+  turn is allowed. 3 tests in `tests/test_engine.py`.
+
+- **The calendar schema no longer makes every op carry every other op's fields.** `summary`, `start` and
+  `query` were declared **required** on a tool with nine ops, so `op=delete` was *forced* to supply an event
+  name and a start time — and the model dutifully filled them with the event it was trying to delete, then
+  put the verb in `query="delete"` for good measure. Three fields that describe an event, sent as if they
+  addressed one, because the schema would not accept the call without them. Each op now takes only its own
+  fields: the schema says which op needs which, and the tool enforces it per op (`create` without `summary`
+  or `start` still refuses, naming both; `search` without `query` still refuses, naming it). `id` targets
+  are unchanged. *Supersedes:* the tool-wide rule that a payload param is always `required` — which is
+  right for a one-op tool like `capability`/`files`/`memory` and wrong for a nine-op one; that rule still
+  holds for every single-op tool, and `tests/test_tool_schemas.py` now holds the multi-op guarantee the
+  other way.
+
+- **A refusal names every field the call misused, and hands back the call that would work.** The
+  handback added last turn named one field and described the fix in prose — and the model, whose own wrong
+  call was one message back in its context, copied *that* instead: four identical failures in a row with the
+  ids and the rule in front of it. The refusal is now explicit in three ways: it names **every** value
+  field the call filled in as an address (`summary`, `start`, `query` — the ones it actually sent, not just
+  the first), it lists **each** target form that would name the event as a line to copy
+  (`op=delete uid=3f2a9b1c08de`, `op=delete on="2026-10-18"`, `op=delete match="…"`), and when the call
+  carried a `start` it reads the *day* out of it and offers `on=` — because an hour is when an event is,
+  not how to pick one. 2 tests in `tests/test_calendar.py`.
+
+- **`search` was reporting "(no results)" for a page full of results, and for a page that refused to
+  answer at all.** Two failures wearing the same coat. The parser expected `class="result-link"` *before*
+  `href`, double-quoted; the page now writes `href` first, single-quoted — so every result parsed to zero
+  and the tool called it an empty web, five times across two turns, while the model told the owner there
+  was nothing to find. It is parsed by element and class now, because attribute order and quoting are the
+  page's business, not a contract. Separately, the endpoint serves **HTTP 202 carrying a bot challenge** to
+  the bare `httpx` User-Agent, and that was also being reported as "(no results)" — a statement about the
+  world that the tool had no basis for. A challenge is now an error that says so, and a page that genuinely
+  has nothing is a *success* with "(no results for '…')", so an honest empty answer stops feeding the
+  repeat guard a strike. The tool now sends a User-Agent that names itself (`Daedalus/0.1 (local
+  chief-of-staff agent)`) — which is not decoration: the challenge goes to the bare library signature, and
+  the endpoint answers a client that says what it is. New `tests/test_search.py`, 4 tests.
+
+- **The self-test's verdict no longer depends on which day of the week it runs on.** Its calendar check
+  imported an `.ics` and asserted the **whole** list of occurrences in a 2099 window equalled the two
+  imported days — but the check just above it creates a *forever*-weekly repeating event, which lands in
+  2099 like any other date. So on every run whose anchor weekday happened to match `2099-01-03` the list
+  had three entries and the report read *"an imported RDATE did not arrive as an occurrence"* — a check
+  failing at the one thing it was not testing. The window is now scoped to the imported uid. The two
+  dashboard tests had the same shape from the other side: they pinned their data to a fixed Friday and then
+  asked the server for `/dashboard`, which draws *today* — passing six days a week. They seed the event on
+  today's date. Both failures were reproduced before the fix and are gone after it; the self-test reports
+  13/13 and the suite is green for the first time (759 passed).
 
 - **A refusal now answers the question the model was actually asking.** "college is from 8am to 11am" cost
   four turns: the model sent `op=update summary="College"` with no `uid`, and the refusal said only

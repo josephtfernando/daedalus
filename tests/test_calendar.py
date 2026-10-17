@@ -1556,3 +1556,56 @@ async def test_a_get_with_nothing_at_all_still_names_the_way_in(runtime: Runtime
 
     assert not result.ok
     assert "op=search" in result.output and "op=list" in result.output
+
+
+async def test_a_delete_naming_no_event_names_every_field_it_misread(
+    runtime: Runtime,
+) -> None:
+    """The exact call from the 08:05 turn, and everything it got wrong told back.
+
+    The model had just created "LeetCode Weekly Contest 524" (twice) and wanted
+    one of them gone. It sent `op=delete` with `summary` (the name), `start` (the
+    hour) and `query="delete"` (the verb, in `search`'s field) — three fields that
+    describe an event, none of which can choose one. The old refusal named only
+    `summary`, so it re-sent the call four times and the guard ended the turn.
+    """
+    event = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
+
+    result = await CalendarTool().run(
+        {
+            "data_class": "public",
+            "op": "delete",
+            "query": "delete",
+            "start": "2026-10-18T08:00",
+            "summary": "LeetCode Weekly Contest 524",
+        },
+        runtime,
+    )
+
+    assert not result.ok
+    for field in ("`summary`", "`start`", "`query`"):
+        assert field in result.output, f"{field} was misused as an address and not named"
+    assert f"op=delete uid={event.uid}" in result.output, "the call that works was not spelled out"
+    assert 'op=delete on="2026-10-18"' in result.output, "the day was not offered as a selector"
+    assert 'op=delete match="LeetCode Weekly Contest 524"' in result.output
+
+
+async def test_a_delete_that_names_nothing_at_all_is_told_the_day(
+    runtime: Runtime,
+) -> None:
+    """"Remove the 8am thing" is `on`, not an hour — and the day is derivable.
+
+    The model sent `start` as an address twice with no name at all. Rather than
+    say only "a target is required", the refusal reads the day out of the hour
+    it was given and hands back the call that uses it.
+    """
+    runtime.calendar.add(summary="Dentist", start="2026-10-20T09:00")
+
+    result = await CalendarTool().run(
+        {"op": "delete", "start": "2026-10-20T09:00", "summary": "", "query": "", "uid": ""},
+        runtime,
+    )
+
+    assert not result.ok
+    assert '`op=delete on="2026-10-20"`' in result.output
+    assert "`start`" in result.output and "`query`" not in result.output
