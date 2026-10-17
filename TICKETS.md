@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)**
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct)**
 
 ---
 
@@ -532,19 +532,23 @@ a lifetime and can be taken down; publishing is impossible without the tailnet i
 of it, and a node with Funnel on is refused, not warned about.
 
 ### T26 — the calendar from the phone · `open`
-*SPEC §5.5 (a full dashboard view), §13 (calendar dashboard scope — the open decision),
-T8 (dashboard controls already routed through the approval split).*
+*SPEC §5.5 (a full dashboard view), §13 (calendar dashboard scope — the open decision).*
 
-The day view ships (T10) and dashboard writes already go through the same
-authorization the `calendar` tool needs (T8). What §13 leaves to the owner is *scope*:
-which views come first (day / week / month) and which edit operations are worth offering
-on a small screen. That is a decision to make, not to guess — and the honest default
-until it is made is the day view, read-only.
+**Corrected 17 Oct, by checking instead of remembering.** This ticket was written from
+the assumption that only the day view existed. It is wrong: `genui/dashboard.py` carries
+`VIEWS = ("day", "week", "month")` and `genui/server.py` routes `/dashboard`, `/week`,
+`/week/<date>` and `/month`, with tests covering each (`tests/test_dashboard.py` — the
+whole point of the month test is "days that are not the first of anything"). So the
+month view is *built*, and this ticket is much smaller than it read. What is actually
+left is (a) that the phone cannot reach any of it today, because the route is dangling
+(T27), and (b) the scope §13 genuinely left open — which **edit** operations are worth
+offering on a small screen, given T8 already routed dashboard writes through the same
+authorization the `calendar` tool needs.
 
-**Acceptance:** the views the owner chose render correctly from the phone; an edit made
-from the phone is refused without the authorization the `calendar` tool requires, with
-T8's comparison test extended to the remote path; nothing on the small screen can act on
-a *series* while naming one instance (the failure T8's own work exposed).
+**Acceptance:** each view opens from the phone once the route is live; an edit made from
+the phone is refused without the authorization the `calendar` tool requires (T8's
+comparison test extended to the remote path); nothing on the small screen can act on a
+*series* while naming one instance (the failure T8's own work exposed).
 
 ### T27 — still there in the morning · `open`
 *SPEC §8 (the laptop stays awake with the lid closed; `enable-linger`). §3.5.*
@@ -666,3 +670,130 @@ join it and stop it; what is kept can be read back later; and if seat traffic is
 summarized rather than shown, the summary names which seats spoke and the full exchange
 is still recoverable — otherwise the decision to summarize has silently become a
 decision to discard.
+
+---
+
+## Asked for on 17 Oct — files on the road, a surface worth looking at, three trackers
+
+*The owner's own asks, written down the day they were made. Two of them are P4/P6 work
+that was going to arrive anyway (files over the tailnet, the dashboard's look); three are
+new capability work for named seats. The verification that prompted this section is in
+T26's correction and in T27's measured notes: P4 is mostly built, P5 is not started, P6
+is substrate only.*
+
+### T34 — files, from wherever you are · `open`
+*SPEC §3.5 (output channels `serve` / `push`; external action `file`). The owner, 17 Oct:
+"a path that could serve files for me through Tailscale, when I'm away from my laptop,
+like being able to query for files within my laptop through Discord and either display
+the file or let me download it."*
+
+Two halves, and the second is the one with teeth. **Asking:** a Discord message names or
+describes a file, the agent finds it inside a *declared* root and answers with either a
+rendered view (a page can show text, markdown, an image) or a download offer.
+**Handing it over:** the download is served over the tailnet through the same path and
+posture T2 established for the dashboard — loopback-bound, no Funnel ever constructed,
+the command printed before it runs — with a lifetime and a one-time token, and taken
+down when it expires.
+
+The bounds are the design, not the polish: which roots are reachable (the workspace and
+whatever the owner declared; never `.env`, `docs/private`, the vault's `private/`, the
+secrets store), a size cap, and — the rule this ticket exists to hold — **serving a file
+is an egress action**. Everything else in this system keeps values local and moves only
+structure; a download is a value leaving the laptop, so it is the owner's move, taken
+deliberately, and the *guard* decides what is reachable, never the model's confidence
+that a path looked fine.
+
+**Acceptance:** from Discord, a request for a file under a declared root returns either a
+rendered view or a working download link; a request outside the declared roots is refused
+by name, with the root it was refused against; the served URL is tailnet-only, carries a
+one-time token, and stops working when it expires; naming a protected file directly does
+not make it servable; and the agent cannot publish a root it was not given.
+
+### T35 — the surface stops being one page in one mood · `open`
+*SPEC §3.6 (visual → dashboard; "the mood token set (the owner's)"). The owner, 17 Oct:
+"the dashboard surface is too static and not very aesthetic … dynamic for what I asked
+for in that moment, or just an overall aesthetic dashboard with a custom theming engine."*
+
+**Ground truth first, measured 17 Oct** — the dynamic half of this is more built than it
+feels from the phone, and the aesthetic half is where the emptiness is:
+
+- The calendar views are done (see T26's correction): day, week and month render today.
+- The **theming engine is real**: tokens are validated by kind (`_COLOUR`, `_LENGTH`,
+  `_FONT` with a forbidden set), resolved from server mood → owner overrides →
+  adopted tunes (`genui/theming.py`, `tuners.py`, `tokens/approved.toml`), with a draft
+  preview path.
+- What is thin is the *content* of that engine: **two moods** (`calm`, `celebration`)
+  and **five components** (`list`, `timeline`, `table`, `prose`, `calendar`) — and
+  `genui/tokens/` and `genui/components/` on the real home are **empty**, meaning the
+  engine has never been used in anger and every page has rendered on built-in defaults.
+- "Dynamic per moment" is already the architecture — the model composes a spec, code
+  binds local values — but the standing dashboard composes the same page every day,
+  which is what "static" is actually describing.
+
+**The honest fork, and it needs a decision.** `shadcn/ui` is React + Tailwind + a Node
+build. This page is one self-contained document that fetches nothing and runs no script
+(`CSP default-src 'none'`), and that property is load-bearing — it is how §3.6's "the
+model composes structure, code binds values" stays structural rather than aspirational,
+and it is why the dashboard works on a phone over a tailnet with no build step. Adopting
+the toolchain buys components at the cost of that property. Adopting shadcn's **design
+language** — a real spacing/radius/shadow/type scale, dark and light as first-class,
+more moods than two — costs nothing and is where the gap actually is. Recommendation:
+the design language and a CSS-only interaction set (`<details>`, `:target`, form posts,
+which the controls already use), not the toolchain.
+
+**Acceptance:** the owner asks for a month, a week, or what is left today and gets it
+from the surface without editing code; the mood set has real range and the owner's
+adopted overrides visibly render; the component vocabulary grows by *proposal* (new
+entries through the same validation door, not drift); a page still fetches nothing and
+runs no script unless the owner has explicitly opened that door — and if the toolchain
+itself is chosen, that is recorded as a decision that supersedes §3.6's no-script
+property rather than quietly eroding it.
+
+### T36 — the habit tracker · `open`
+*SPEC §3.5 (capabilities are local scripts first). SPEC §7 (the seats it belongs to).*
+
+The smallest of the three, and the one that needs a cadence rather than a conversation —
+which makes it the natural first customer of the scheduler. A habit is a small daily
+fact: did it happen, when, how many days in a row. State lives in the capability's own
+state directory. **Open question for the owner, recorded rather than guessed: whose seat
+is this?** The body is Heracles', but habits are also the coordinator's territory —
+Daedalus is the one who guards sleep and writes the honest weekly audit.
+
+**Acceptance:** the owner records a habit by message and it is remembered; marks and
+misses are recorded with their date; asking for "how am I doing" answers from the
+capability's own state rather than from the model's memory; a missed day is visible as a
+miss, not silently absent; the streak it reports is the streak the stored days imply.
+
+### T37 — the LC tracker · `open`
+*SPEC §7 (Athena — DSA, aptitude, competitive programming, interview prep).*
+
+LeetCode practice, for the seat whose whole charter is getting better at exactly this.
+The useful shape is not a counter — it is *coverage and staleness*: which topics have
+been touched, which have gone cold, what is due for a repeat. Athena reads it on her
+cadence and speaks from it.
+
+**Acceptance:** the owner (or the agent, from a turn) records a solved problem with its
+topic and result; the tracker reports per-topic progress and what has gone stale;
+its record is Athena's namespace, so what she "remembers" about practice is the stored
+record and not a recollection; recording the same problem twice updates it rather than
+duplicating it.
+
+### T38 — the workout tracker · `open`
+*SPEC §7 (Heracles — the body: training, nutrition, sleep). AGENTS.md (health data is
+out of bounds; structure travels, values stay local). T24 (Heracles is the seat with a
+boundary in front of it).*
+
+Training data is personal data, and this is the first capability whose whole content is
+in that category — so its posture is part of its acceptance rather than a footnote
+added later. Storing it is fine and ordinary: it is the owner's own record, on the
+owner's own laptop, at `0700`. The two things that must be designed rather than assumed
+are (a) what may be *read* by whom, and (b) that these values never reach a remote
+model. That is why this tracker's reporting is deterministic code plus, if anything,
+the local model — an exercise log is not worth sending to a provider, and "it was only
+a number" is exactly the reasoning this rule exists to pre-empt.
+
+**Acceptance:** the owner records a session (what, how much, when) and it is remembered;
+the progress it reports is computed from stored sessions; **the owner has recorded what
+this may read and what may never leave the laptop, and the capability is wired only to
+that**; no remote model call carries a workout value, checked as a property of the
+capability's egress rather than trusted to its prompt.
