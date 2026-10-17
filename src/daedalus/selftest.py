@@ -106,6 +106,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(_check_tuners(scratch))
             report.checks.append(_check_approvals(rt))
             report.checks.append(await _check_capability_gate(rt))
+            report.checks.append(await _check_caps(rt))
             report.checks.append(await _check_scheduler(rt))
             report.checks.append(await _check_proactive(rt))
             report.checks.append(await _check_catchup(scratch))
@@ -471,7 +472,40 @@ async def _check_capability_gate(rt: Runtime) -> Check:
     return Check("capability gate", True, "authored, Melinoë-verified, registered")
 
 
+async def _check_caps(rt: Runtime) -> Check:
+    """A declared cap must bite. A limit that is recorded and not applied is a lie.
+
+    Run straight through the runner rather than the Melinoë gate, because an artifact
+    that breaches its own cap *should* fail that gate — the thing being checked here
+    is the enforcement. This is also the check that notices when `/proc` stops being
+    readable, since then `mem_mb` would silently stop being enforced at all.
+    """
+    from .capabilities.manifest import Caps, Manifest
+
+    hog = (
+        "import time\n"
+        "blocks = []\n"
+        "while True:\n"
+        "    block = bytearray(4 * 1024 * 1024)\n"
+        "    for i in range(0, len(block), 4096):\n"
+        "        block[i] = 1\n"
+        "    blocks.append(block)\n"
+        "    time.sleep(0.005)\n"
+    )
+    manifest = Manifest(name="cap_probe", caps=Caps(mem_mb=64, time_s=30))
+    cap_dir = rt.runner.cap_dir(manifest)
+    manifest.save(cap_dir)
+    (cap_dir / "run.py").write_text(hog, encoding="utf-8")
+
+    result = await rt.runner.run(manifest)
+    if result.ok or "mem_mb=64" not in result.error:
+        detail = result.error or f"ran to completion, peak {result.peak_mb:.0f} MB"
+        return Check("resource caps", False, f"mem_mb=64 was not enforced: {detail}")
+    return Check("resource caps", True, f"mem_mb=64 stopped a runaway at {result.peak_mb:.0f} MB")
+
+
 async def _check_scheduler(rt: Runtime) -> Check:
+
     job = rt.scheduler.add_job(name="cap-daily_focus", cron="0 7 * * *", kind="capability", target="daily_focus")
     results = await rt.scheduler.dispatch_tick(rt, when=_at_minute("0 7 * * *"))
     ran = [r for r in results if r.job == job.name]

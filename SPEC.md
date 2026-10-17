@@ -569,10 +569,10 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Tuner control set — which token and system dimensions are directly adjustable on the dashboard.
 - Dashboard interactions that are *actions* (not tuning) — routed through the Discord approval split.
 - Long-running-process supervision (how `process` children survive restarts / sleep).
-- Capability resource-cap enforcement — `time_s` is enforced as a hard timeout, but
-  `cpu` / `mem_mb` are declared in the manifest and not yet applied to the child. A
-  rushed `RLIMIT_AS` can kill a healthy Python process, so this wants the rlimit-vs-cgroup
-  choice made deliberately rather than guessed.
+- Capability resource caps beyond what ships — `time_s`, `cpu` and `mem_mb` are all
+  enforced now (see ARCHITECTURE §11), but enforcement is per-process: a **cgroup**
+  would bound a capability's whole *tree* and could express a sub-core share, which
+  affinity and resident sampling cannot.
 - gcal sync details — cursor/token storage, tombstone and delete semantics, conflict edge cases across the authority split.
 - Calendar dashboard scope — which views (day/week/month) and which edit operations ship first.
 - Mail summarize cadence — on-demand vs scheduled digest.

@@ -634,7 +634,7 @@ environment too, not only to request bodies.
 ## 11. Capability substrate details
 
 - **Registry** — the set of authored capabilities, listed to the model at startup (name · description · io · schedule). File-first; hand-editable.
-- **Runner** — spawns `run.py` in the capability's uv venv with declared scopes and caps; owns timeout, kill switch, and audit record.
+- **Runner** — spawns `run.py` in the capability's uv venv with declared scopes and caps. **The caps are enforced, not recorded:** `time_s` is a wall-clock timeout; `cpu` is CPU affinity over `floor(cpu)` whole cores (a cap is never rounded *up*); `mem_mb` is enforced on **resident** memory by sampling `/proc/<pid>/status` while the artifact runs, because address space is not memory — a tight `RLIMIT_AS` kills a healthy CPython for reserving what it never touches (SPEC §13). A generous `RLIMIT_AS` remains only as a backstop for one allocation large enough to land between samples. The child is its own session leader, so a timeout or a breach takes everything it spawned. Owns the kill switch and the audit record, which carries the peak MB.
 - **Authoring** — the model writes the artifact; the *engine* owns registration and gating. No hand-coded feature may be required to satisfy a request.
 - **Lifecycle** — `born → verified → scheduled → monitored → re-authored | killed`. Daedalus audits capabilities like projects.
 - **Growth** — proposals only; authoring requires an explicit owner yes. Never autonomous.

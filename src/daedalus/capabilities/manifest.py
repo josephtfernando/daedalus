@@ -46,14 +46,44 @@ class Caps:
     def to_dict(self) -> dict[str, Any]:
         return {"cpu": self.cpu, "mem_mb": self.mem_mb, "time_s": self.time_s}
 
+    def backstop_mb(self) -> int:
+        """The `RLIMIT_AS` runaway backstop — deliberately *not* the declared cap.
+
+        Address space is not memory: a healthy CPython maps far more than it ever
+        touches, so a tight `RLIMIT_AS` kills working capabilities, which is the
+        trap SPEC §13 names. The declared `mem_mb` is enforced on **resident**
+        memory by the runner; this number exists only so that one enormous
+        allocation cannot land between two of its samples. So it is generous — four
+        times the declared cap, and never below 2 GiB.
+        """
+        return max(4 * self.mem_mb, 2048)
+
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "Caps":
         data = data or {}
-        return cls(
+        caps = cls(
             cpu=float(data.get("cpu", 1.0)),
             mem_mb=int(data.get("mem_mb", 512)),
             time_s=int(data.get("time_s", 120)),
         )
+        # A cap of zero is not a strict boundary, it is a kill switch: the sampler
+        # would breach on its first look and every run would die. Refused where it
+        # is read, so a hand-edited manifest says so instead of failing obscurely.
+        if caps.mem_mb < 1 or caps.time_s < 1:
+            raise ValueError(
+                f"caps must be positive (mem_mb={caps.mem_mb}, time_s={caps.time_s}) — "
+                "a zero cap stops every run, it does not bound one"
+            )
+        # Cores are granted whole, because CPU affinity is whole-core: a sub-core
+        # share needs a cgroup quota, which is not what enforces this. Granting the
+        # next whole core up would exceed what was declared, and a cap that is
+        # exceeded is not a cap.
+        if caps.cpu < 1:
+            raise ValueError(
+                f"cpu={caps.cpu} is under one core, which affinity cannot express (SPEC §13: "
+                "a sub-core share wants a cgroup quota) — the smallest enforced share is 1"
+            )
+        return caps
 
 
 @dataclass(slots=True)

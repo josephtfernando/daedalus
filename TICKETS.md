@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T15
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · T15
 
 ---
 
@@ -345,3 +345,67 @@ What T2 leaves: the dashboard over the tailnet, and the `push` output channel.
 
 **Acceptance:** the dashboard opens from the phone; the tailnet is the only way
 in; a `push` delivers a file over Taildrop.
+
+### T19 — A declared cap is a cap · `done`
+*`capabilities/runner.py`, `capabilities/manifest.py`. SPEC §13 (the `cpu` /
+`mem_mb` line), ARCHITECTURE §9.3 and §11. Found 17 Oct, while reading the runner
+for the seat work.*
+
+Every manifest declares `[caps] cpu / mem_mb / time_s`. The values are persisted,
+they are shown to the model that authored them, they are part of the artifact's
+promise — and only `time_s` is enforced. Nothing stops an authored capability from
+taking every core, or allocating until the kernel picks a victim, and the victim is
+usually the daemon or whatever the owner is actually doing. **A boundary that is
+written down and not enforced is worse than no boundary**, because the model
+reasoning about its own resource use and the owner reading the manifest both act as
+though it is there.
+
+**Acceptance:** a capability that passes `mem_mb` is stopped and the failure names
+the cap; `cpu` bounds the share of the machine it can take; `time_s` still stops a
+hang; a capability inside its caps is unaffected; and every number comes from the
+manifest, not from the runner.
+**Done** — every declared cap is now a boundary, and the three answers are the
+ticket. **`mem_mb` is enforced on resident memory**, by the runner sampling
+`/proc/<pid>/status` while the artifact runs — not with a tight `RLIMIT_AS`, which
+is exactly the trap SPEC §13 named: address space is not memory, and a healthy
+CPython maps far more than it ever touches, so a tight limit kills working
+capabilities. Resident is also what the owner means by "512 MB", and it is what the
+failure can quote afterwards (`hit its mem_mb=64 cap: resident memory reached
+116 MB`). A generous `RLIMIT_AS` stays, at four times the declared cap and never
+below 2 GiB, as a backstop for one allocation large enough to land *between* two
+samples — a documented secondary mechanism, never the cap itself.
+**`cpu` is a share of the machine**, set as CPU affinity over whole cores, rounded
+**down**: handing out the next core up would exceed what the manifest declared, and
+a cap that is exceeded is not a cap. A sub-core share cannot be expressed this way,
+so `cpu < 1` is *refused* with that reason rather than silently rounded up; the
+cgroup quota that would do it is recorded in SPEC §13. Because all three are set in
+the child (a stdlib launcher that `exec`s the artifact — not `preexec_fn`, which is
+unsafe in a process that may have threads) they survive the exec and are inherited
+by anything the artifact spawns, and the child now leads its own session so a
+timeout or a breach takes the whole tree instead of orphaning helpers that keep the
+caps they were started with.
+Two smaller things fell out. Caps of zero are **refused where they are read**,
+because a zero cap is a kill switch, not a boundary, and the authoring tool now
+takes `cpu` and `mem_mb` too — a cap the model cannot declare is a hidden default.
+And a failed run now reports its cause (the last stderr line, or the signal)
+instead of blaming the absent JSON.
+10 tests in `tests/test_caps.py` plus a 15th selftest check (`resource caps`, which
+is also what would notice if `/proc` stopped being readable and `mem_mb` silently
+went back to being decorative). Falsified both ways: neutering the sampler reddens
+exactly the three breach tests, and dropping the affinity call reddens the `cpu`
+test (`assert 16 == 1`). Docs: ARCHITECTURE §11, SPEC §13.
+
+### T20 — A process that dies is visible, and outlives a restart · `open`
+*`tools/process.py`. SPEC §13 ("long-running-process supervision"). Found 17 Oct.*
+
+`process start` leaves something running and `process list` shows `rc=` — but
+nothing ever says a process *ended*; the log is a list in memory; and the registry
+is a dict on the manager, so a daemon restart forgets every process it started.
+They keep running as orphans that `list` no longer shows and `stop` can no longer
+reach, and the owner's only clue is a laptop behaving oddly.
+
+**Acceptance:** a process that exits on its own is reported — its exit code and when
+it ended are visible without asking; a process started before a daemon restart is
+still listed, with liveness read from the real pid; `stop` on an entry that is
+already gone says *that*, rather than "no process"; and a stop never signals a pid
+that something else has since been given.

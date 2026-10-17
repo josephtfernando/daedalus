@@ -65,7 +65,23 @@ class CapabilityTool(Tool):
         net=({"type": "array", "items": {"type": "string"}, "description": "allowed hosts"}, False),
         trust_tier=({"type": "string", "enum": ["auto", "ask", "block"], "default": "auto"}, False),
         args=({"type": "object", "description": "for op=run"}, False),
-        time_s=({"type": "integer", "default": 120}, False),
+        cpu=(
+            {
+                "type": "number",
+                "default": 1.0,
+                "description": "cores this capability may use, enforced as a share of the machine"
+            },
+            False,
+        ),
+        mem_mb=(
+            {
+                "type": "integer",
+                "default": 512,
+                "description": "resident memory it may use before the runner stops it"
+            },
+            False,
+        ),
+        time_s=({"type": "integer", "default": 120, "description": "hard wall-clock limit"}, False),
     )
 
     def risk_for(self, args: dict[str, Any]) -> Risk:
@@ -165,13 +181,23 @@ class CapabilityTool(Tool):
                 "created. run_py is the complete Python source of run.py — you write it, the tool "
                 "only stores it. Retry the same call with the full source included."
             )
+        try:
+            caps = Caps.from_dict(
+                {
+                    "cpu": args.get("cpu", 1.0),
+                    "mem_mb": args.get("mem_mb", 512),
+                    "time_s": args.get("time_s", 120),
+                }
+            )
+        except ValueError as exc:
+            return ToolResult.error(f"{exc} — nothing was created")
         manifest = Manifest(
             name=name,
             description=str(args.get("description", "")),
             schedule=str(args.get("schedule") or "") or None,
             deps=list(args.get("deps", []) or []),
             scopes=Scopes(net=list(args.get("net", []) or [])),
-            caps=Caps(time_s=int(args.get("time_s", 120))),
+            caps=caps,
             trust_tier=str(args.get("trust_tier", "auto")),
             io={"input_schema": args.get("input_schema", {}), "output_schema": args.get("output_schema", {})},
         )

@@ -12,9 +12,41 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (14/14 offline; 15/15 with `--live`) and an 824-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 834-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **A declared resource cap is now a cap.** Every capability manifest declares `caps = { cpu, mem_mb, time_s }`,
+  the values were written down, persisted, shown to the model that authored them and shown to the owner —
+  and only `time_s` was ever applied. Nothing stopped an artifact from taking every core or allocating
+  until the kernel picked a victim, and the victim is usually the daemon or whatever the owner is doing.
+  A boundary that is recorded and not enforced is worse than no boundary, because the model reasoning
+  about its own resource use and the owner reading the manifest both act as though it is there. All three
+  bite now:
+
+  - **`mem_mb` is enforced on resident memory**, not address space. The runner samples `/proc/<pid>/status`
+    while the artifact runs and stops it the moment it passes the cap, naming the number
+    (`hit its mem_mb=64 cap: resident memory reached 116 MB`). A tight `RLIMIT_AS` was the obvious
+    implementation and the wrong one — address space is not memory, a healthy CPython reserves far more
+    than it ever touches, and SPEC §13 had already flagged that a rushed limit kills working capabilities.
+    Resident is also what "512 MB" means. A generous `RLIMIT_AS` stays as a **backstop only**, four times
+    the declared cap and never below 2 GiB, for an allocation big enough to land between two samples.
+  - **`cpu` is a share of the machine**, applied as CPU affinity over whole cores and rounded **down**.
+    Rounding up would hand out more than the manifest declared, and a cap that is exceeded is not a cap. A
+    sub-core share cannot be expressed by affinity at all, so `cpu < 1` is **refused** with that reason
+    instead of being silently rounded up to one core; the cgroup quota that would express it stays
+    recorded in SPEC §13 as the upgrade path.
+  - **All three live in the child.** A stdlib launcher sets them and then `exec`s the artifact, so they
+    survive the exec and are inherited by anything it spawns — and the child is now its own session
+    leader, so a timeout or a breach kills the whole tree instead of orphaning helpers that keep the caps
+    they were started with.
+
+  Two smaller consequences, both about not hiding things: a cap of zero is refused where it is read (a
+  zero cap is a kill switch, not a boundary), and the `capability` authoring tool now takes `cpu` and
+  `mem_mb`, because a cap the model cannot declare is a hidden default rather than a contract. A failed
+  run also reports its cause — the last stderr line, or the signal — instead of blaming its own absent
+  JSON. 10 tests in `tests/test_caps.py` and a 15th selftest check. *Supersedes a deferral recorded in
+  SPEC §13.*
 
 - **Seats can leave each other messages, and a message outlives the daemon that carried it.** SPEC §7
   has always said a seat is *identity + charter + memory namespace, never a process* — so there is no
