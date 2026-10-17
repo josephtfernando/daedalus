@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · T15
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)**
 
 ---
 
@@ -340,13 +340,6 @@ whether it may speak — quiet hours still apply to a briefing caught up at 03:0
 the queue in its own scratch home. Falsified: with `catch_up` returning early,
 the seven acceptance tests go red.
 
-### T15 — P4: reach it from the phone · `open`
-*SPEC §10 (P4), §3.5 (`push` / Taildrop).*
-
-What T2 leaves: the dashboard over the tailnet, and the `push` output channel.
-
-**Acceptance:** the dashboard opens from the phone; the tailnet is the only way
-in; a `push` delivers a file over Taildrop.
 
 ### T19 — A declared cap is a cap · `done`
 *`capabilities/runner.py`, `capabilities/manifest.py`. SPEC §13 (the `cpu` /
@@ -440,3 +433,236 @@ The ending is recorded and reported and the decision stays with the owner. 11 te
 them; `_is_alive` trusting the pid alone reddens the recycled-pid test; and dropping
 the ending-record reddens the reporting tests. Docs: ARCHITECTURE §5 and §8.5, SPEC
 §13.
+
+---
+
+## The road from here — P3 seats, then P4 → P5 → P6
+
+*Written 17 Oct at the owner's ask. The seat order is the owner's: **Icarus and
+Odysseus are worth it now**, then Melinoë, then Athena, then Calliope and Heracles —
+each wired only as it earns its place. P4, P5 and P6 are tickets now instead of
+intentions. Where `SPEC.md` has not decided something, the ticket says so and names
+the decision; it does not invent a product to fill the gap.*
+
+### T21 — Icarus and Odysseus, first · `open`
+*SPEC §7 (seats), §10 (P3). The owner, 17 Oct: "icarus and odysseus are worth it now."*
+
+Together, because they are already a pair in §7: Odysseus researches, Icarus builds.
+"Wired" means the same four things for either seat — a charter on disk that says what
+the owner wants *now* rather than what was written at first load, a namespace with
+something in it, an activation that switches the identity cleanly, and **one thing the
+seat owns that has actually run**. Icarus's headline job, the OpenCode delegate, is P5
+(T28–T30); until then it earns its place on something else, or waits — this ticket is
+the seat, not the delegate.
+
+**Acceptance:** `daedalus seats` shows both with current charters; activating each
+answers as that seat and its writes land only in its own namespace; a nameless turn
+still answers as Daedalus; each has one scheduled or authored thing of its own that has
+run and that the owner saw.
+
+### T22 — Melinoë, next · `open`
+*SPEC §7 (verification, privacy, approvals), §3.5 (the Melinoë gate).*
+
+Melinoë already *acts* — the gate runs every authored capability before it may be
+scheduled — but she is not yet a seat: her verdicts are the coordinator's sentences,
+and what she has refused is not anywhere she can answer from. The interesting half is
+not the switch, it is that a refusal should be remembered *by her*, with the reason,
+so that the next capability in the same shape meets the same answer.
+
+**Acceptance:** her namespace holds what she verified and what she refused, with
+reasons; activating her answers from it; re-authoring a capability she refused
+re-triggers the gate rather than sliding past it; a nameless turn is still Daedalus.
+
+### T23 — Athena · `open`
+*SPEC §7 (knowledge and coding mastery — DSA, aptitude, competitive programming,
+interview prep; pairs with Odysseus).*
+
+The seat with the most obvious recurring job, and the one that leans on the scheduler
+rather than on a conversation: practice and strategy need a cadence, not a reply.
+
+**Acceptance:** her charter is current and her namespace holds her own progress; one
+scheduled thing she owns runs on its cadence and reports to the owner; what she
+remembers is invisible to the other seats and to the coordinator's namespace.
+
+### T24 — Calliope and Heracles, last · `open`
+*SPEC §7 (creative voice and distribution; the body — training, nutrition, sleep).
+AGENTS.md (personal data is out of bounds).*
+
+Last on the owner's list, and the two with a boundary in front of them rather than a
+mechanism. Calliope's work ends in *distribution* — publication is an egress action,
+so it needs a grant and an approval posture before it can do anything real. Heracles
+is the first seat whose subject matter is the protected category: training, nutrition
+and sleep are personal data, and AGENTS.md keeps them out of bounds until the owner
+opens them, deliberately and in writing.
+
+**Acceptance:** for Calliope, a piece of writing reaches the owner and *publishing* it
+is a proposal with a grant, never an autonomous move; for Heracles, **the owner has
+first decided and recorded what it may read, what stays on the laptop, and whether a
+remote model ever sees it** — and the seat is wired only to what that decision allows.
+
+#### P4 — remote / Tailscale Serve
+
+### T15 — P4: reach it from the phone · `open`
+*SPEC §10 (P4), §3.5 (`push` / Taildrop).*
+
+What T2 leaves: the dashboard over the tailnet, and the `push` output channel.
+
+**Acceptance:** the dashboard opens from the phone; the tailnet is the only way
+in; a `push` delivers a file over Taildrop.
+
+*Note (17 Oct, measured): the tailnet route is live but dangling — `tailscale serve
+status` proxies `127.0.0.1:43945`, where nothing is listening, while the daemon serving
+today's dashboard is on 40169. Publishing maps the port of the run that published it, so
+a restart moves the port and leaves the route pointing at nothing. The phone path is
+broken right now, and nothing reports it. That is T27.*
+
+### T25 — the agent's own `serve` · `open`
+*SPEC §3.5 (output channels: `serve`, `push`). §8.5 step 11.*
+
+T2 publishes the **dashboard**, from a CLI flag the owner runs. Nothing lets the agent
+hand over anything else it made — a page, a report, a project it built under T29 — even
+though §3.5 files `serve` and `push` as *output channels*, which is to say things the
+agent uses rather than things the owner runs. The gate for this already exists and is
+right: `genui/publish.py` prints the command before running it, refuses when Funnel is
+on, and never builds a Funnel command. Reuse that posture rather than re-deciding it.
+
+**Acceptance:** from a turn, the agent publishes one named artifact to the tailnet and
+the owner opens it on the phone; the URL it reports actually resolves; the artifact has
+a lifetime and can be taken down; publishing is impossible without the tailnet in front
+of it, and a node with Funnel on is refused, not warned about.
+
+### T26 — the calendar from the phone · `open`
+*SPEC §5.5 (a full dashboard view), §13 (calendar dashboard scope — the open decision),
+T8 (dashboard controls already routed through the approval split).*
+
+The day view ships (T10) and dashboard writes already go through the same
+authorization the `calendar` tool needs (T8). What §13 leaves to the owner is *scope*:
+which views come first (day / week / month) and which edit operations are worth offering
+on a small screen. That is a decision to make, not to guess — and the honest default
+until it is made is the day view, read-only.
+
+**Acceptance:** the views the owner chose render correctly from the phone; an edit made
+from the phone is refused without the authorization the `calendar` tool requires, with
+T8's comparison test extended to the remote path; nothing on the small screen can act on
+a *series* while naming one instance (the failure T8's own work exposed).
+
+### T27 — still there in the morning · `open`
+*SPEC §8 (the laptop stays awake with the lid closed; `enable-linger`). §3.5.*
+
+Three measured facts on 17 Oct, one theme — the machine and its route outlive the run
+that set them up, and nothing notices when they stop working:
+
+- **The lid.** Effective `HandleLidSwitch` is `suspend` (`busctl get-property
+  org.freedesktop.login1 …`), while SPEC §8 says the laptop must stay awake with the lid
+  closed because remote access and overnight work depend on it. The wizard prints the
+  `/etc/systemd/logind.conf` lines for the owner to apply with sudo, and nothing checks
+  whether they were applied.
+- **The dangling route.** Publishing maps the port of the publishing run; a restart
+  moves the port and leaves the tailnet route pointing at a dead one. Measured:
+  route → 43945, daemon → 40169, nothing listening. The phone shows a connection error
+  and no log says why.
+- **The two that were already right.** Linger is on and Funnel is off — worth asserting
+  so they stay that way.
+
+**Acceptance:** closing the lid does not end remote access, asserted against the
+*effective* logind configuration rather than a comment; after a restart the published
+route points at the live port or is taken down, and a mismatch is reported instead of
+left; the selftest says plainly when the lid will suspend it (it cannot fix that itself —
+sudo — so it must not stay quiet about it).
+
+#### P5 — OpenCode delegation
+
+### T28 — `opencode` becomes a resource · `open`
+*SPEC §3.5 Layer 3 (a resource is access + credentials, provisioned once, listed at
+startup), §5 (local CLIs include `opencode`), §8.5 stage 8 (optional resources).*
+
+`opencode` is installed (`/usr/bin/opencode`) and named in the spec as a local CLI, and
+`Resource.class_` already carries `local_cli` — so this is provisioning, which by the
+spec's own rule is never a code change. The point of listing it at startup is that the
+model knows what it may reach *before* it plans: discovering a missing CLI halfway
+through a delegation is how a long task dies at the end.
+
+**Acceptance:** `opencode` appears in `resources/registry.toml` as a `local_cli`
+resource with the scopes it may act in; it is listed to the model at startup; the
+wizard's optional stage provisions it; when it is absent the model is told it is absent,
+not left to find out by failing.
+
+### T29 — a delegation goes out into a workspace and comes back reviewable · `open`
+*SPEC §7 (Icarus owns the OpenCode delegate), §3.5 (`git` is its own egress action).
+ARCHITECTURE §698 (P5 → `resources`, `capabilities`).*
+
+The shape matters more than the CLI. A delegation is a task, a **named workspace** it
+may touch — and the personal tree is not one of them — and a result the owner can
+review: what changed, what was run, what it could not do. It never commits, never
+pushes, never merges. Those stay with the owner, and §3.5 already files `git` as a
+separate egress action needing its own grant; letting a delegate perform them would
+quietly merge two trust decisions into one.
+
+**Acceptance:** a delegated task returns a diff plus a run record; a delegation naming a
+path outside its declared workspace is refused *before* the CLI is spawned, not after;
+nothing the delegate does reaches the network without the egress grant the tools already
+require; and no path it takes results in a commit, a push or a merge.
+
+### T30 — a long delegation is visible, capped and cancellable · `open`
+*SPEC §9 (long tasks run in threads). T19 (capability caps), T20 (the process registry).*
+
+An OpenCode run is minutes, not seconds — longer than a turn's patience and exactly the
+case T19 and T20 were built for. This is where they earn their keep: the delegation runs
+as something with a pid, its own `mem_mb` / `cpu` / `time_s`, live status, and a way to
+stop it. Its progress belongs in a thread (§9) rather than in the turn's reply.
+
+**Acceptance:** a delegation is listed with live status while it runs; exceeding its cap
+stops it and the stop is visible with the cap named; cancelling from the surface kills
+the whole tree, not just the process the daemon happens to hold a handle to; when it
+finishes, its exit and its output are still readable afterwards.
+
+#### P6 — the group chat
+
+### T31 — a seat reads its inbox · `open`
+*SPEC §7 ("seats do not call each other — they leave messages"). T14 (`broker.py`, done
+and unwired). ARCHITECTURE §9.2.*
+
+P6's first honest step, and the one T14 deliberately stopped short of: the queue is
+durable, tested, and nothing calls `broker_for(home)`. A seat with a pending message must
+be **offered** it when it runs, be able to answer, and have that answer resolve the
+message — with the offer counted, so a second delivery is visible rather than silent.
+The rule that makes this safe is already in the substrate: a message's id is chosen
+before its first attempt, so a retry is the same message and the second answer to a
+resolved one is recognisably the duplicate.
+
+**Acceptance:** a message left for a seat is delivered on that seat's next turn and
+resolved by its answer; an unanswered message is offered again later; a repeated offer
+is *reported* as another attempt, not hidden; reading a message never deletes it, and a
+reply carries the exchange it answers.
+
+### T32 — a room is a bounded exchange · `open`
+*SPEC §7 (the typed vocabulary, including `verify`). **The decision this needs is the
+owner's, and SPEC does not make it yet.***
+
+A group chat among seats is a different product from seats the owner addresses, and the
+difference is almost entirely *bounds*. This ticket exists to force the decision into
+`SPEC.md` before any code: who may convene a room; how many hops an exchange may take
+before it must stop; what a seat may spend while it participates; what happens when
+nobody answers (a message offered forever is a queue that never drains, which is the one
+failure at-least-once delivery guarantees); and whether a seat's work has to be
+**verified** — the `verify` message type exists for a reason — before its answer counts.
+
+**Acceptance:** the bounds are written into SPEC first, then enforced in code and
+tested: an exchange that would exceed its hops or its budget stops and says why, and an
+exchange nobody will answer ends as a reported dead end rather than as a queue that
+grows.
+
+### T33 — the owner sees the room · `open`
+*SPEC §9 (the surface). §3.6 (visual → dashboard, action → Discord).*
+
+The room is only the owner's if they can watch it and interrupt it. Where an exchange
+appears (a Discord thread, the dashboard, a served page — T25 makes the third possible);
+whether seat-to-seat traffic is shown **as itself** or summarized into a single voice,
+which are genuinely different products and not a formatting choice; how the owner joins
+or steers mid-exchange; and what is kept afterwards, for how long, and readable how.
+
+**Acceptance:** an exchange is readable from the surface while it happens; the owner can
+join it and stop it; what is kept can be read back later; and if seat traffic is
+summarized rather than shown, the summary names which seats spoke and the full exchange
+is still recoverable — otherwise the decision to summarize has silently become a
+decision to discard.
