@@ -1,20 +1,37 @@
-"""``search`` primitive — web search. Egress, so it asks first."""
+"""``search`` primitive — web search. Egress, so it asks first.
+
+Two backends on purpose, and the order is the point:
+
+1. **SearXNG**, if the owner runs one. It is a *service that answers in JSON*, so
+   nothing here breaks when someone else's HTML changes — which is exactly what
+   happened on 17 Oct, when DuckDuckGo moved an attribute and every page full of
+   results parsed to zero.
+2. **DuckDuckGo**, as the fallback. So an owner with no SearXNG still has search,
+   and so a first backend that comes back empty gets a second opinion.
+
+Neither is a single point of failure, and a fallback that succeeds is silent —
+it does its job in the journal, not in the owner's face.
+"""
 
 from __future__ import annotations
 
 import html
+import logging
+from functools import partial
 from html.parser import HTMLParser
 from typing import Any, TYPE_CHECKING
 
 import httpx
 
+from .. import __version__
 from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
-from .. import __version__
 from .base import Tool, ToolResult, params
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
+
+log = logging.getLogger(__name__)
 
 LITE = "https://lite.duckduckgo.com/lite/"
 
@@ -28,6 +45,63 @@ USER_AGENT = f"Daedalus/{__version__} (local chief-of-staff agent)"
 #: Elements that never take a closing tag. Counting them as open would leave the
 #: parser collecting a snippet that never ends.
 _VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"})
+
+
+class Refused(Exception):
+    """A backend answered, and its answer was a refusal — not "nothing found"."""
+
+
+class Unusable(Exception):
+    """A backend did not answer, or answered with something that is not results."""
+
+
+def _render(rows: list[tuple[str, str, str]], limit: int) -> list[str]:
+    """``(title, url, snippet)`` triples as the numbered block the model reads."""
+    out: list[str] = []
+    for i, (title, url, snippet) in enumerate(rows[:limit], 1):
+        out.append(f"{i}. {title}\n   {url}\n   {snippet}")
+    return out
+
+
+# -- SearXNG -----------------------------------------------------------------
+
+
+async def _searxng(
+    client: httpx.AsyncClient, query: str, limit: int, *, base: str
+) -> list[str]:
+    """Search a SearXNG instance and read its JSON. The preferred backend."""
+    try:
+        resp = await client.get(
+            f"{base.rstrip('/')}/search",
+            params={"q": query, "format": "json"},
+            headers={"User-Agent": USER_AGENT},
+        )
+    except httpx.HTTPError as exc:
+        raise Unusable(f"the local SearXNG at {base} did not answer ({type(exc).__name__})") from exc
+    if resp.status_code != 200:
+        raise Unusable(f"the local SearXNG answered HTTP {resp.status_code}")
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise Unusable(
+            f"the local SearXNG did not answer with JSON — is `json` enabled in its "
+            f"`search.formats`?"
+        ) from exc
+    rows: list[tuple[str, str, str]] = []
+    for item in payload.get("results") or []:
+        url = str(item.get("url") or "").strip()
+        if url:
+            rows.append(
+                (
+                    str(item.get("title") or url).strip(),
+                    url,
+                    str(item.get("content") or "").strip(),
+                )
+            )
+    return _render(rows, limit)
+
+
+# -- DuckDuckGo --------------------------------------------------------------
 
 
 class _LiteParser(HTMLParser):
@@ -91,7 +165,7 @@ class _LiteParser(HTMLParser):
             self._text.append(data)
 
 
-def _refused(status: int, body: str) -> str:
+def _duckduckgo_refusal(status: int, body: str) -> str:
     """Why the backend answered with a challenge instead of a page, or ``""``.
 
     It serves a 202 with an "anomaly" modal when it decides the caller is a
@@ -101,12 +175,41 @@ def _refused(status: int, body: str) -> str:
     """
     if "anomaly-modal" in body:
         return (
-            "the search backend served a bot challenge instead of results, so this "
-            "says nothing about the query — it is refusing this machine right now"
+            "DuckDuckGo served a bot challenge instead of results, so this says "
+            "nothing about the query — it is refusing this machine right now"
         )
     if status == 202:
-        return "the search backend answered with a challenge (HTTP 202), not a page"
+        return "DuckDuckGo answered with a challenge (HTTP 202), not a page"
     return ""
+
+
+async def _duckduckgo(client: httpx.AsyncClient, query: str, limit: int) -> list[str]:
+    """Search DuckDuckGo's lite endpoint and parse its page. The fallback."""
+    try:
+        resp = await client.post(
+            LITE, data={"q": query}, headers={"User-Agent": USER_AGENT}
+        )
+    except httpx.HTTPError as exc:
+        raise Unusable(f"DuckDuckGo did not answer ({type(exc).__name__})") from exc
+    if resp.status_code >= 400:
+        raise Unusable(f"DuckDuckGo answered HTTP {resp.status_code}")
+    refusal = _duckduckgo_refusal(resp.status_code, resp.text)
+    if refusal:
+        raise Refused(refusal)
+    parser = _LiteParser()
+    parser.feed(resp.text)
+    rows = [
+        (
+            title,
+            html.unescape(url),
+            parser.snippets[i] if i < len(parser.snippets) else "",
+        )
+        for i, (url, title) in enumerate(parser.links)
+    ]
+    return _render(rows, limit)
+
+
+# -- the tool ----------------------------------------------------------------
 
 
 class SearchTool(Tool):
@@ -114,7 +217,10 @@ class SearchTool(Tool):
     title = "Search the web"
     description = "Search the web and return titles, URLs, and snippets."
     risk = Risk.ASK
-    scopes = {"net": ["duckduckgo.com"]}
+    #: Both routes out. The local SearXNG is reached on loopback and *it* is what
+    #: asks the public engines, which is why the approval prompt says where the
+    #: query goes rather than pretending there is one destination.
+    scopes = {"net": ["duckduckgo.com", "127.0.0.1"]}
     parameters = params(
         query=({"type": "string"}, True),
         max_results=({"type": "integer", "default": 5}, False),
@@ -124,7 +230,7 @@ class SearchTool(Tool):
         return Assessment(
             level=Level.CAUTION,
             summary="search the web",
-            reasons=("your query leaves the machine",),
+            reasons=("your query leaves the machine, via your own SearXNG when it is up",),
         )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:
@@ -132,32 +238,52 @@ class SearchTool(Tool):
         if not query:
             return ToolResult.error("empty query")
         limit = int(args.get("max_results", 5))
+
+        tried = self._backends(ctx)
+        problems: list[str] = []
+        nothing: list[str] = []
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            try:
-                resp = await client.post(
-                    LITE, data={"q": query}, headers={"User-Agent": USER_AGENT}
-                )
-            except httpx.HTTPError as exc:
-                return ToolResult.error(f"search failed: {exc}")
-        if resp.status_code >= 400:
-            return ToolResult.error(f"search HTTP {resp.status_code}")
-        refusal = _refused(resp.status_code, resp.text)
-        if refusal:
-            return ToolResult.error(f"search: {refusal}")
-        parser = _LiteParser()
-        parser.feed(resp.text)
-        results: list[str] = []
-        for i, (url, title) in enumerate(parser.links[:limit]):
-            snippet = parser.snippets[i] if i < len(parser.snippets) else ""
-            results.append(f"{i + 1}. {title}\n   {html.unescape(url)}\n   {snippet}")
-        if not results:
-            # The call worked and the answer is "nothing". That is a result, not
-            # a failure, and dressing it as one is the other half of the same
-            # mistake: it feeds the loop guard a strike for an honest answer.
+            for label, backend in tried:
+                try:
+                    results = await backend(client, query, limit)
+                except (Unusable, Refused) as exc:
+                    problems.append(str(exc))
+                    log.info("search: %s; trying the next backend", exc)
+                    continue
+                if results:
+                    # Which backend answered is provenance, not decoration: the
+                    # fallback is silent, so this is the only place the journal
+                    # can show that a dead SearXNG was quietly worked around.
+                    return ToolResult(
+                        output="\n".join(results),
+                        data={"results": results, "untrusted": True, "backend": label},
+                    )
+                nothing.append(label)
+
+        if nothing:
+            # A backend answered and had nothing. That is a result, not a failure,
+            # and dressing it as one feeds the loop guard a strike for an honest
+            # answer. A backend that *refused* is kept as a caveat, though: "no
+            # results" from one plus a bot challenge from the other is not the
+            # same as the web having nothing.
+            caveat = f" — but {problems[0]}, so this is not conclusive" if problems else ""
             return ToolResult(
-                output=f"(no results for {query!r})",
+                output=f"(no results for {query!r}{caveat})",
                 data={"results": [], "untrusted": True},
             )
-        return ToolResult(
-            output="\n".join(results), data={"results": results, "untrusted": True}
-        )
+        reason = "; ".join(problems) or f"no backend was reachable via {tried!r}"
+        return ToolResult.error(f"search: {reason}")
+
+    def _backends(self, ctx: "Runtime") -> list[tuple[str, Any]]:
+        """The backends to try and what to call them, in order.
+
+        SearXNG leads when one is configured — it answers in JSON, so nothing
+        here depends on another site's HTML staying still. DuckDuckGo is always
+        there behind it, so search survives a SearXNG that is not running, and a
+        first backend that comes back empty gets a second opinion.
+        """
+        chosen: list[tuple[str, Any]] = []
+        if ctx.settings.search_url:
+            chosen.append(("the local SearXNG", partial(_searxng, base=ctx.settings.search_url)))
+        chosen.append(("DuckDuckGo", _duckduckgo))
+        return chosen

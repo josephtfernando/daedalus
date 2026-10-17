@@ -12,9 +12,27 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 763-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 770-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **`search` now has two backends, and the first one is yours: a local SearXNG, with DuckDuckGo behind it.**
+  `search` broke on 17 Oct for two unrelated reasons that looked identical from the outside — both printed
+  *"(no results)"*. One was a parser that could not see results that were there; the other was DuckDuckGo
+  serving a **bot challenge** to the bare `httpx` User-Agent, and the tool calling a refusal an empty web.
+  Patching selectors again is a treadmill, so the primary backend is now a **service the owner runs**:
+  SearXNG answers in **JSON**, so nothing in the tool depends on another site's HTML staying still and no
+  challenge page can masquerade as an answer. DuckDuckGo stays as the fallback, so an owner with no SearXNG
+  keeps search, a SearXNG that is down costs nothing but a refused connection on loopback, and a first
+  backend that comes back **empty** gets a second opinion instead of the turn ending on it. Falls back
+  silently when it succeeds — the choice of backend is in the tool's `data` and the journal, not in the
+  owner's face. Configured by `DAEDALUS_SEARCH_URL` (default `http://127.0.0.1:8888`; `off` disables the
+  backend). The approval prompt was corrected to match: the query still leaves the machine, but via the
+  owner's own SearXNG when one is up, and the declared `net` scope now names both. The instance itself is
+  the `daedalus-searxng` container, published to **loopback only**, config at `~/.daedalus/searxng/settings.yml`
+  (`limiter: false`, since the rate limiter is for public instances and answers a scripted caller with a
+  block page — the same failure mode this backend exists to remove; and `formats: [html, json]`, without
+  which `?format=json` is a 403). 11 tests in `tests/test_search.py`.
 
 - **A repeated failure earns a correction before the turn ends.** Three identical failures used to end the
   turn on the spot: the owner was told *"I got stuck repeating the same failing step"* and the **model was

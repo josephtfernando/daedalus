@@ -27,6 +27,10 @@ NIM_BASE = "https://integrate.api.nvidia.com/v1"
 ZAI_BASE = "https://api.z.ai/api/paas/v4"
 LOCAL_BASE = "http://127.0.0.1:11434/v1"
 
+#: Where the local SearXNG listens if the owner runs one. Override with
+#: ``DAEDALUS_SEARCH_URL``; set it to ``off`` to disable the backend entirely.
+DEFAULT_SEARCH_URL = "http://127.0.0.1:8888"
+
 DEFAULT_HEAVY: list[dict[str, Any]] = [
     {
         "name": "nim-step-5-preview",
@@ -58,8 +62,7 @@ DEFAULT_HEAVY: list[dict[str, Any]] = [
     },
 ]
 
-DEFAULT_CHEAP: dict[str, Any] = {
-    "name": "bonsai-8b-local",
+DEFAULT_CHEAP: dict[str, Any] = {    "name": "bonsai-8b-local",
     "base_url": LOCAL_BASE,
     "model": "bonsai-8b",
     "api_key_env": "",  # local runner needs no key
@@ -180,6 +183,21 @@ class Settings:
     @property
     def discord_token(self) -> str:
         return self.secret("DISCORD_BOT_TOKEN")
+
+    @property
+    def search_url(self) -> str:
+        """Where the local SearXNG listens. Empty or ``off`` disables it.
+
+        SearXNG is a service the owner runs and therefore a *search backend that
+        answers in JSON* — nothing depends on another site's HTML staying still,
+        which is what took `search` out on 17 Oct. It is tried first, DuckDuckGo
+        is the fallback, and both are optional, so an owner who runs neither
+        loses nothing but a refused connection on loopback.
+        """
+        raw = self.secret("DAEDALUS_SEARCH_URL").strip()
+        if raw.lower() in ("off", "none"):
+            return ""
+        return raw or DEFAULT_SEARCH_URL
 
     def config_path(self) -> Path:
         return self.home / "config.toml"
