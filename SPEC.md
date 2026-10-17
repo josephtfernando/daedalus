@@ -98,7 +98,7 @@ How the agent hands artefacts **to the owner** — delivery, not action:
 
 - **`message`** — Discord, incl. proactive.
 - **`file`** — write / send.
-- **`serve`** — spin up a loopback HTTP server, published privately via **Tailscale Serve** (loopback-bound, **no public Funnel**). This is how a served project, a dashboard, or the **calendar view** reaches the phone.
+- **`serve`** — spin up a loopback HTTP server, published privately via **Tailscale Serve** (loopback-bound, **no public Funnel**). This is how a served project, a dashboard, or the **calendar view** reaches the phone. The daemon's own dashboard binds a **fixed port** (`[ui] port`, default `8787`) and is published at start and taken down at stop, so the route always points at a live port; `[ui] publish = false` keeps it loopback-only.
 - **`push`** — send to an owner device via **Taildrop** (e.g. the phone).
 
 Forward (not built yet): **voice / audio**, **live / streaming views**, **non-Discord notification transports**.

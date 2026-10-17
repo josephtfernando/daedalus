@@ -34,6 +34,7 @@ from pathlib import Path
 from secrets import token_urlsafe
 from typing import TYPE_CHECKING, Any, Mapping
 
+from ..config import DEFAULT_DASHBOARD_PORT
 from ..resources.secrets import SecretStore
 from .actions import Controls
 from .renderer import CSP, FORM_CSP
@@ -46,7 +47,7 @@ logger = logging.getLogger("daedalus.genui")
 
 #: The only address this server ever binds. Not a default to be overridden.
 LOOPBACK = "127.0.0.1"
-DEFAULT_PORT = 8787
+DEFAULT_PORT = DEFAULT_DASHBOARD_PORT
 #: The header a control request carries its token in.
 TOKEN_HEADER = "X-Daedalus-Token"
 #: Artifact names become file names, so they are *matched* before they are joined.

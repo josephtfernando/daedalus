@@ -321,8 +321,7 @@ def _run_cli_repl(settings: Settings) -> int:
                 result = await engine.run_turn(event, seat=decision.seat.key)
                 await deliver(surface, result, header=attribution(rt, decision))
         finally:
-            if dashboard is not None:
-                dashboard.stop()
+            _stop_dashboard(rt, dashboard)
             await rt.aclose()
         return 0
 
@@ -473,8 +472,7 @@ async def serve(surface: Surface, rt: Runtime, tick_seconds: float = 60) -> int:
         await serving
     finally:
         tick.cancel()
-        if dashboard is not None:
-            dashboard.stop()
+        _stop_dashboard(rt, dashboard)
         await rt.aclose()
     return 0
 
@@ -488,6 +486,12 @@ def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
     dashboard with controls attached — `daedalus serve` stays a read-only viewer
     and says so if a control reaches it. A dashboard that cannot start is
     reported and dropped: it is a convenience, and the daemon must not die for it.
+
+    **The port is fixed, not ephemeral.** A per-run port is what broke the phone:
+    `tailscale serve` installs a route to a *number*, so a route published by one
+    run pointed at nothing the moment that run exited, and nothing said so. A
+    fixed port also makes the bind the lock: a second daemon cannot quietly take
+    the first one's route.
     """
     import asyncio as _asyncio
 
@@ -495,29 +499,87 @@ def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
     from .genui.server import LocalServer, control_token
     from .genui.tuners import Tuners
 
+    log = logging.getLogger("daedalus.genui")
+    port = 0
     try:
+        port = rt.settings.dashboard_port
         token = control_token(rt.secrets)
         server = LocalServer(
             rt.settings.home,
             token=token,
-            port=0,
+            port=port,
             calendar=rt.calendar,
             controls=Controls(rt, loop=_asyncio.get_running_loop()),
             tuners=Tuners(rt.settings.home),
         )
         url = server.start()
-    except Exception:  # noqa: BLE001 — the daemon outranks its dashboard
-        logging.getLogger("daedalus.genui").warning(
-            "the dashboard did not start; the daemon runs without it", exc_info=True
-        )
+    except OSError as exc:
+        # A busy port is the interesting failure: something else is already
+        # answering on the number the tailnet route points at, and publishing
+        # over it would send the owner to the wrong process.
+        log.warning("the dashboard did not start on port %d (%s)", port, exc)
+        print(f"the dashboard did not start on port {port} ({exc}) — the daemon runs without it")
         return None
-    logging.getLogger("daedalus.genui").info("dashboard at %s/dashboard (loopback only)", url)
+    except Exception:  # noqa: BLE001 — the daemon outranks its dashboard
+        log.warning("the dashboard did not start; the daemon runs without it", exc_info=True)
+        return None
+    log.info("dashboard at %s/dashboard (loopback only)", url)
     print(f"the dashboard is at {url}/dashboard (loopback only)")
     if token:
         # The one bootstrap: opening it once hands the browser its session, so
         # the controls work and the token never has to appear in a document.
         print(f"  with controls: {url}/dashboard?t={token}")
+    _publish_dashboard(rt, port)
     return server
+
+
+def _publish_dashboard(rt: "Runtime", port: int) -> None:
+    """Put the dashboard behind the tailnet, or say why it stayed on the loopback.
+
+    Publishing is *replacing* the route, so this also heals the dangling route a
+    killed run leaves behind: whatever the route pointed at before, it points at
+    this port once the daemon is up. Refusals are reported rather than swallowed
+    — a dashboard the owner thinks is on their phone and is not is the failure
+    this whole path exists to prevent (SPEC §3.5, §11).
+    """
+    if not rt.settings.publish_dashboard:
+        print("  not published (ui.publish = false) — loopback only")
+        return
+    log = logging.getLogger("daedalus.genui.publish")
+    from .genui.publish import PublishError, publish
+
+    try:
+        published = publish(port)
+    except PublishError as exc:
+        log.warning("the dashboard was not published: %s", exc)
+        print(f"  not published: {exc}")
+        return
+    if published.url:
+        log.info("published → %s/dashboard (tailnet only)", published.url)
+    else:
+        log.warning(
+            "published, but `tailscale serve status` named no URL — the route points at "
+            "port %d; check `tailscale serve status`",
+            port,
+        )
+
+
+def _stop_dashboard(rt: "Runtime", dashboard: "LocalServer | None") -> None:
+    """Take the route down and stop serving.
+
+    Order matters: the route goes first, so there is never a moment where the
+    tailnet points at a port that has already stopped answering.
+    """
+    if dashboard is None:
+        return
+    if rt.settings.publish_dashboard:
+        from .genui.publish import unpublish
+
+        if not unpublish(dashboard.port):
+            logging.getLogger("daedalus.genui.publish").warning(
+                "the published route may still be up; `tailscale serve status` will say"
+            )
+    dashboard.stop()
 
 
 def build_parser() -> argparse.ArgumentParser:

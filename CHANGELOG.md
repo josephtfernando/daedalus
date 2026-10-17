@@ -12,7 +12,7 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 867-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. The **dashboard now reaches the owner's phone again** — a fixed port, published on start, taken down on stop. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 876-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
 
@@ -260,6 +260,34 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   14 tests in `tests/test_publish.py`.
 
 ### Fixed
+
+- **The dashboard reaches the phone again, and the route stops outliving the daemon.** The phone path was
+  broken by two faults that each hid the other. First, the daemon bound the dashboard to port **0** — a
+  number chosen fresh every run — while `tailscale serve` had been told the *number* a previous run chose.
+  The owner's phone therefore dialled a port with nothing behind it and got a connection error, and nothing
+  in the log said so: the daemon logged "loopback only" and the route still existed, so both halves looked
+  healthy from inside. Second, the route outlived the process that made it, so the dangling pointing at a
+  dead port survived restarts, and the only place its wrongness showed was the one place the owner could
+  not read. Now:
+
+  - **The port is fixed** — `[ui] port` in `config.toml`, default `8787`, owner-editable. This makes the
+    route *reusable*: a restart republishes the same address instead of invalidating it. It also makes the
+    bind a lock: a second instance cannot quietly take the route, because it cannot take the port. A busy
+    port is reported (`something else answers on the number the route points at`) and the daemon runs
+    without a dashboard rather than publishing over the wrong process.
+  - **The daemon publishes on start and takes the route down on stop**, in that order — the route goes
+    first, so the tailnet never points at a port that has already stopped answering. Because publishing is
+    *replacing* the route, a start also **heals** the dangling route a killed run leaves behind, which is
+    the failure mode a clean shutdown cannot cover: the next start fixes it before the owner notices.
+  - **The command is still printed before it runs** and the URL logged, so an open gate is a gate the owner
+    can see; `[ui] publish = false` keeps the dashboard on the loopback for anyone who wants that. This
+    reverses the earlier stance that *the daemon* should never publish by itself — that stance protected
+    against a silent open gate, and the gate is not silent any more; `daedalus serve --publish` remains an
+    explicit flag for the viewer. Tailnet-only either way: Funnel is refused as before.
+  - 9 tests in `tests/test_daemon_ui.py` (new), covering the fixed port, publish-on-start,
+    unpublish-before-stop, a refused publish being reported rather than fatal, a busy port, and the
+    `[ui]` config round-trip. This is the leg of T27 that made the rest of the phone path untestable; the
+    lid/linger assertion that completes T27 is still open.
 
 - **The agent is told what day it is.** It was not — not in the prompt, not in a tool result, nowhere — so
   *every* relative date it was given was a guess it could not check. On 17 Oct the owner asked for a

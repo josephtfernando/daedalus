@@ -21,6 +21,12 @@ from typing import Any
 
 from .storage import paths
 
+#: The port the dashboard binds unless the owner moves it. It lives here, not in
+#: the server, because it is an owner setting first and a server default second:
+#: `tailscale serve` installs a route to a *number*, so this number is part of the
+#: owner's configuration, not an implementation detail of one process.
+DEFAULT_DASHBOARD_PORT = 8787
+
 # --- default provider chain (SPEC §4) -------------------------------------
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
@@ -118,6 +124,10 @@ def default_config_toml() -> str:
         "[surface]",
         'mode = "discord"           # discord | cli',
         "",
+        "[ui]",
+        "port = 8787                # fixed: the tailnet route points at this number",
+        "publish = true             # behind the tailnet, never the public internet",
+        "",
         "[proactive]",
         "enabled = true             # may the agent speak first, unprompted?",
         'quiet_start = "22:30"      # no wakes inside quiet hours; a capability alert still fires',
@@ -174,6 +184,15 @@ class Settings:
     quiet_start: str = "22:30"
     quiet_end: str = "07:30"
     proactive_max_per_day: int = 4
+    #: The port the dashboard binds, and the reason it is not ephemeral: the
+    #: tailnet route `tailscale serve` installs points at a *number*, so a port
+    #: chosen per run leaves the route pointing at the last run's port. Fixed
+    #: means a restart republishes the same route, and a second instance cannot
+    #: silently take the first one's place — the bind fails instead.
+    dashboard_port: int = DEFAULT_DASHBOARD_PORT
+    #: Whether the daemon puts the dashboard behind the tailnet (SPEC §3.5).
+    #: Tailnet-only either way: this is *whether*, never *how public*.
+    publish_dashboard: bool = True
 
     # -- lookups ----------------------------------------------------------
 
@@ -237,6 +256,7 @@ def load_settings(home: Path | None = None) -> Settings:
     loop = raw.get("loop", {})
     surface = raw.get("surface", {})
     proactive = raw.get("proactive", {})
+    ui = raw.get("ui", {})
 
     users = owner.get("discord_users", []) or []
     # env wins over config for the allowlist
@@ -263,4 +283,6 @@ def load_settings(home: Path | None = None) -> Settings:
         quiet_start=str(proactive.get("quiet_start", "22:30")),
         quiet_end=str(proactive.get("quiet_end", "07:30")),
         proactive_max_per_day=int(proactive.get("max_per_day", 4)),
+        dashboard_port=int(ui.get("port", DEFAULT_DASHBOARD_PORT)),
+        publish_dashboard=bool(ui.get("publish", True)),
     )

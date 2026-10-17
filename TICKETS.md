@@ -560,11 +560,14 @@ What T2 leaves: the dashboard over the tailnet, and the `push` output channel.
 **Acceptance:** the dashboard opens from the phone; the tailnet is the only way
 in; a `push` delivers a file over Taildrop.
 
-*Note (17 Oct, measured): the tailnet route is live but dangling — `tailscale serve
-status` proxies `127.0.0.1:43945`, where nothing is listening, while the daemon serving
-today's dashboard is on 40169. Publishing maps the port of the run that published it, so
-a restart moves the port and leaves the route pointing at nothing. The phone path is
-broken right now, and nothing reports it. That is T27.*
+*Note (17 Oct, measured): the tailnet route was live but dangling — `tailscale serve
+status` proxied `127.0.0.1:43945`, where nothing was listening, while the daemon serving
+today's dashboard was on 40169. Publishing mapped the port of the run that published it,
+so a restart moved the port and left the route pointing at nothing. The phone path was
+broken and nothing reported it. **The route half is fixed** (T27, 17 Oct): the daemon's
+dashboard binds a fixed port and publishes it on start, so the route now points at the
+live port or is down. What remains of T15 is the `push`/Taildrop leg and confirming the
+dashboard from the phone itself — which needs the owner's phone.*
 
 ### T25 — the agent's own `serve` · `open`
 *SPEC §3.5 (output channels: `serve`, `push`). §8.5 step 11.*
@@ -611,18 +614,26 @@ that set them up, and nothing notices when they stop working:
   closed because remote access and overnight work depend on it. The wizard prints the
   `/etc/systemd/logind.conf` lines for the owner to apply with sudo, and nothing checks
   whether they were applied.
-- **The dangling route.** Publishing maps the port of the publishing run; a restart
-  moves the port and leaves the tailnet route pointing at a dead one. Measured:
-  route → 43945, daemon → 40169, nothing listening. The phone shows a connection error
-  and no log says why.
+- **The dangling route.** *Fixed 17 Oct.* Publishing mapped the port of the publishing
+  run; a restart moved the port and left the tailnet route pointing at a dead one.
+  Measured: route → 43945, daemon → 40169, nothing listening. The phone showed a
+  connection error and no log said why. The daemon's dashboard now binds a **fixed
+  port** (`[ui] port`, default `8787`), **publishes it on start** — which also heals a
+  route a killed run left behind — and **takes it down before the server stops**;
+  a busy port or a refused publish is reported rather than published over. 9 tests in
+  `tests/test_daemon_ui.py`; falsified by putting the port back to `0` and dropping the
+  publish call (three red).
 - **The two that were already right.** Linger is on and Funnel is off — worth asserting
   so they stay that way.
 
 **Acceptance:** closing the lid does not end remote access, asserted against the
-*effective* logind configuration rather than a comment; after a restart the published
+*effective* logind configuration rather than a comment; ~~after a restart the published
 route points at the live port or is taken down, and a mismatch is reported instead of
-left; the selftest says plainly when the lid will suspend it (it cannot fix that itself —
-sudo — so it must not stay quiet about it).
+left~~ (✓ 17 Oct, above); the selftest says plainly when the lid will suspend it (it
+cannot fix that itself — sudo — so it must not stay quiet about it). **Still open:**
+the lid half — the effective logind check in the selftest, plus the linger/Funnel
+assertions that make "still there" a claim the machine makes about itself rather than a
+claim the ticket makes about it.
 
 #### P5 — OpenCode delegation
 

@@ -346,6 +346,17 @@ parameter, not a default) and serves the generated artifacts in
 a separate act (Tailscale Serve, **never Funnel**), because *open a port* and
 *open a port to the internet* must never be the same keystroke.
 
+**The daemon's own dashboard** (started by `daedalus run`, with the controls
+attached) is the exception to "publishing is a separate act", and deliberately so:
+it binds a **fixed port** from `[ui] port` and publishes that port on startup,
+taking the route down on shutdown. The fix is the reason — the port used to be
+chosen per run, so the route `tailscale serve` installed pointed at the *previous*
+run's number and the owner's phone reached nothing, silently. A fixed port makes a
+restart republish the same route; publishing on start also heals a route left
+dangling by a run that was killed before its shutdown path ran. The gate stays
+visible, not silent: the `tailscale serve` command is printed before it runs and
+the URL is logged, and `[ui] publish = false` turns it off entirely.
+
 Reads are open to whatever is already on the loopback — that is what loopback
 means. **Writes are not:** every control `POST` carries a per-install token from
 the owner-only secret store (`dashboard-token`), and a server whose token is unset
