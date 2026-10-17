@@ -509,7 +509,7 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 6. **The loop** — message → context assembly → model → multi-step tool calls → streamed response.
 7. **Capability substrate (Layer 2)** — registry + `capabilities/<name>/{run.py, manifest.toml, README.md, state/}`; per-capability uv venv; startup inventory injected into context; MCP seam noted (§3.5).
 8. **Memory v0** — file-first store (markdown + SQLite index); write a fact, recall a fact.
-9. **Scheduler v0** — cron-pumped wake to run authored capabilities (no model) and to let the agent speak first.
+9. **Scheduler v0** — cron-pumped wake to run authored capabilities (no model) and to let the agent speak first. A moment that falls while the laptop is asleep is not lost: the tick that follows catches it up — **once**, staggered, and only while it is still true (ARCHITECTURE §7.3.3).
 10. **Melinoë verification gate** — a newly authored capability is run once and checked before it is scheduled.
 11. **Proof-of-life** — the unseen free-text test.
 

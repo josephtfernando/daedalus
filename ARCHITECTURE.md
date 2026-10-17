@@ -124,7 +124,7 @@ daedalus/                      # code repo
     calendar/
       store.py index.py event.py ical.py recur.py occurrences.py zones.py reminders.py
     scheduler/
-      scheduler.py jobs.py wakes.py proactive.py
+      scheduler.py jobs.py wakes.py proactive.py catchup.py cron.py
     surface/
       discord/ bot.py approvals.py
       base.py cli.py
@@ -251,6 +251,39 @@ looks back over its own window for reminders that have come due, `state/reminder
 remembers what was delivered so a double tick cannot double-nudge, and a
 `local_only` event's reminder still fires — it goes to the owner, over the
 owner's surface, with no model in the loop.
+
+### 7.3.3 The catch-up queue — what fell due while the loop was down
+
+```
+dispatch_tick(when)
+  1. due jobs        cron.matches(when) — exactly this minute
+  2. reminders       the last 15 minutes
+  3. catch_up(when)  everything else that was missed, one at a time
+       plan():  floor = last_run | created_at
+                latest occurrence in (floor, when]  ▸ candidate
+       too late?  ▸ record "missed 08:00 — not caught up: 6h20m late, past its 1h window"
+                    last_run = now
+       worth it?  ▸ stagger_s ▸ run it  ▸ record "caught up the missed 08:00 run"
+```
+
+A tick is only ever *now*, so a job whose moment passed while the daemon was down
+was never asked about: not skipped, not recorded — from the scheduler's point of
+view the minute simply never was. The queue answers for it, and *"only the needed
+tasks"* is where the judgement lives:
+
+| Rule | Why |
+| --- | --- |
+| Only the **latest** missed occurrence is a candidate; the rest are counted | 288 missed ticks of a five-minute job is one thing to say, and the newest one says it |
+| A window decides whether even that one is worth it — `1h` for a capability, `12h` for a wake, `late_within` per job | a probe reports a *condition*: a disk check from six hours ago is a false report, not a late one. A wake is about a *day*, and it is still today at nine |
+| The missed moment decides **what** runs; the present moment decides whether it may **speak** | a briefing caught up at 23:40 waits for the morning — quiet hours did not lapse because the daemon was down |
+| A skip writes `last_run` exactly as a run does | the verdict is taken once, not re-litigated on every tick for the rest of the day |
+
+It runs *after* the due pass and looks strictly before the present minute, so the
+two can never claim the same minute — which is also why it can run on **every**
+tick, and why a tick that merely **overran** recovers, not only one after a
+restart. Staggering is the last word on the owner's ask: the runs were already
+sequential, but `stagger_s` (2 seconds) keeps three notifications out of the same
+second. A deep outage is one digest, not a queue of stale alerts.
 
 ### 7.4 Dashboard render, approve, tune
 

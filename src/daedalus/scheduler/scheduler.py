@@ -10,6 +10,7 @@ deterministic — quiet hours and a daily cap, decided in code.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..calendar.reminders import ReminderLedger, key_for, render
+from . import catchup
 from .cron import validate as validate_cron
 from .jobs import Job, JobStore
 from .proactive import ProactiveState
@@ -53,6 +55,10 @@ class TickResult:
 class Scheduler:
     state_dir: Path
     jobs_path: Path = field(default=None)  # type: ignore[assignment]
+    #: Seconds between catch-up runs, so a start-up after an outage does not
+    #: deliver the whole queue as one burst. The runs are already sequential; the
+    #: pause is what keeps three notifications out of the same second.
+    stagger_s: float = 2.0
     store: JobStore = field(init=False)
     log: WakeLog = field(init=False)
     proactive: ProactiveState = field(init=False)
@@ -74,12 +80,26 @@ class Scheduler:
     def get(self, name: str) -> Job | None:
         return self.store.get(name)
 
-    def add_job(self, *, name: str, cron_expr: str | None = None, cron: str | None = None, kind: str = "capability", target: str = "") -> Job:
+    def add_job(
+        self,
+        *,
+        name: str,
+        cron_expr: str | None = None,
+        cron: str | None = None,
+        kind: str = "capability",
+        target: str = "",
+        late_within: str = "",
+    ) -> Job:
         expr = (cron_expr or cron or "").strip()
         validate_cron(expr)  # raises CronError (a ValueError)
         if kind not in ("capability", "wake"):
             raise ValueError(f"unknown job kind {kind!r}")
-        return self.store.put(Job(name=name, cron=expr, kind=kind, target=target))
+        window = late_within.strip()
+        if window and catchup.parse_window(window) is None:
+            raise ValueError(f"late_within must read like 45m, 6h or 2d — got {window!r}")
+        return self.store.put(
+            Job(name=name, cron=expr, kind=kind, target=target, late_within=window)
+        )
 
     def remove_job(self, name: str) -> bool:
         return self.store.remove(name)
@@ -116,6 +136,69 @@ class Scheduler:
             self.store.put(job)
             results.append(result)
         results.extend(await self.fire_reminders(ctx, when))
+        # Last, so that a slow drain can never delay a reminder the owner set
+        # themselves. On a normal tick there is nothing here to do — a job whose
+        # moment is *now* was handled above and has already moved `last_run` out
+        # of this scan's range — which is what makes running it every tick
+        # affordable, and what makes a tick that merely *overran* recover too.
+        results.extend(await self.catch_up(ctx, wake_handler, when))
+        return results
+
+    async def catch_up(
+        self,
+        ctx: "Runtime",
+        wake_handler: WakeHandler | None,
+        when: datetime,
+    ) -> list[TickResult]:
+        """Run what fell due while the loop was down — one at a time, with a note.
+
+        Called *after* the ordinary due pass, and looking strictly before the
+        present minute, so the two passes cannot double up: a job whose moment is
+        now is handled there, and moves ``last_run`` out of this scan's range.
+
+        The missed moment decides *what* ran; the present moment decides *whether
+        it may speak*. A briefing caught up at 03:00 is still a briefing, and
+        quiet hours have not stopped applying just because the daemon was down.
+        """
+        results: list[TickResult] = []
+        ran = 0
+        for missed in catchup.plan(self.jobs(), when):
+            job = missed.job
+            key = job.idempotency_key(missed.when)
+            if self.log.seen(key):
+                # The wake log is the memory: a tick given this minute already ran
+                # it, or an earlier start-up did. A restart loop cannot replay the
+                # same missed morning.
+                continue
+            if not missed.worth_it:
+                detail = f"missed {missed.when:%a %d %b %H:%M} — not caught up: {missed.reason}"
+                log.info("job %s %s", job.name, detail)
+                self.log.record(Wake(key=key, job=job.name, ran_at=time.time(), ok=True, detail=detail))
+                # The decision is recorded *and* acted on, so it is taken once:
+                # `last_run` now, and the next tick has nothing to re-litigate.
+                job.last_run = when.timestamp()
+                self.store.put(job)
+                results.append(TickResult(job=job.name, ran=False, ok=True, detail=detail))
+                continue
+            if ran:
+                await asyncio.sleep(self.stagger_s)
+            ran += 1
+            log.info(
+                "catching up job %s: the %s run was missed (%s late, %d earlier folded in)",
+                job.name,
+                f"{missed.when:%H:%M}",
+                catchup.human(missed.late),
+                missed.superseded,
+            )
+            result = await self._run_job(job, ctx, wake_handler, when)
+            note = f"caught up the missed {missed.when:%H:%M} run ({catchup.human(missed.late)} late)"
+            if missed.superseded:
+                note += f", {missed.superseded} earlier run(s) folded in"
+            result.detail = f"{note}: {result.detail}" if result.detail else note
+            self.log.record(Wake(key=key, job=job.name, ran_at=time.time(), ok=result.ok, detail=result.detail))
+            job.last_run = when.timestamp()
+            self.store.put(job)
+            results.append(result)
         return results
 
     async def fire_reminders(self, ctx: "Runtime", when: datetime | None = None) -> list[TickResult]:

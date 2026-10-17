@@ -287,7 +287,7 @@ dedup** (never exactly-once), correlation and causation links.
 **Acceptance:** a message survives a restart; a redelivered message is deduped; a
 reply carries the id of the request it answers.
 
-### T18 — Missed jobs queue and stagger on startup · `open`
+### T18 — Missed jobs queue and stagger on startup · `done`
 *The owner's ask (16 Oct): "jobs are queued up when not run, and run when started
 up but like not all at the same time, run only the needed tasks."*
 
@@ -300,6 +300,19 @@ rather than fired late, while a morning briefing is still worth delivering late.
 **Acceptance:** a job missed while the daemon was down runs after startup; two
 missed jobs run one after the other, never simultaneously; a stale job is
 skipped with a visible note.
+**Done** — `scheduler/catchup.py` decides, and `Scheduler.catch_up` drains it
+after the ordinary due pass (which is what keeps the two from double-claiming a
+minute). Three rules, all explicit: only the **latest** missed occurrence is a
+candidate (the earlier ones are counted, never replayed); `late_within` decides
+whether even that one is worth it, defaulting per kind (`1h` for a capability,
+`12h` for a wake) because a probe reports a *condition* and a wake talks about a
+*day*; and a skip moves `last_run` too, so the verdict is taken once instead of
+on every tick. The missed moment decides *what* runs, the present moment decides
+whether it may speak — quiet hours still apply to a briefing caught up at 03:00.
+22 tests across `tests/test_catchup.py` and `tests/test_cron.py`
+(`cron.previous_run` / `count_occurrences`), plus a 14th selftest check that runs
+the queue in its own scratch home. Falsified: with `catch_up` returning early,
+the seven acceptance tests go red.
 
 ### T15 — P4: reach it from the phone · `open`
 *SPEC §10 (P4), §3.5 (`push` / Taildrop).*

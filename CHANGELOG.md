@@ -12,9 +12,41 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
-_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (13/13 offline; 14/14 with `--live`) and a 778-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
+_Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. Verified by `daedalus selftest` (14/14 offline; 15/15 with `--live`) and an 800-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
+
+- **A run whose moment fell while the daemon was down is caught up, not dropped — one at a time, and only
+  when it is still worth saying.** `cron.matches` only ever asks about *now*, so a job whose 08:00 tick
+  passed while the daemon was asleep was not skipped and not recorded: from the scheduler's point of view
+  08:00 never was. The owner saw the one thing they could see — a morning with no briefing — and then two
+  of them the next time the machine came up. `scheduler/catchup.py` is the queue's judgement, and it is
+  written out because *"only the needed tasks"* is exactly the call that goes wrong when it stays implicit:
+
+  - **Superseded.** Only the *latest* missed occurrence is a candidate; the earlier ones are counted, never
+    replayed. A daemon off overnight with a five-minute job has one thing to say, and the newest tick is
+    what says it — without this rule, a start-up would run that job 288 times, which is the pile the owner
+    asked us to avoid. `cron.count_occurrences` reports how much a single catch-up stood in for.
+  - **Stale.** Even the latest one has a moment, and some moments have plainly passed: a disk check from six
+    hours ago is not a late report, it is a *false* one — it would tell the owner the disk was low this
+    morning. A briefing is different, because it is about a day that is still today at nine. So the window
+    is per **kind** (`1h` for a capability, `12h` for a wake) and per **job** (`late_within`, settable
+    through the `schedule` tool as `"45m"`/`"6h"`/`"2d"`). A skip is recorded with the same visibility as a
+    run — `ran=False`, `ok=True`, a note naming both the lateness and the window — because declining a
+    stale alert is a decision, not a failure.
+  - **Spent once.** A skip moves `last_run` exactly as a run does, so the verdict is taken once instead of
+    being re-litigated — and re-noted — on every tick for the rest of the day.
+
+  The missed moment decides *what* runs and the present moment decides whether it may *speak*, so a briefing
+  caught up at 23:40 stays quiet: quiet hours and the daily cap did not lapse because the daemon was down.
+  Draining happens after the ordinary due pass and looks strictly before the present minute, which is what
+  keeps the two from claiming the same minute — and why it can run on **every** tick, so a tick that merely
+  *overran* recovers too, not only one after a restart. Two catch-up runs are separated by `stagger_s`
+  (2 seconds, an attribute): they were already sequential, but three notifications inside one second still
+  read as a pile. New `cron.previous_run` walks backwards from the present minute, bounded by the job's own
+  history and a horizon, sharing parsed fields with `next_run` so a scan is a set lookup rather than a
+  re-parse. 22 tests in `tests/test_catchup.py` and `tests/test_cron.py`, a 14th `selftest` check that
+  drains a real queue in a scratch home, and ARCHITECTURE §7.3.3. *New; nothing superseded.*
 
 - **`search` now has two backends, and the first one is yours: a local SearXNG, with DuckDuckGo behind it.**
   `search` broke on 17 Oct for two unrelated reasons that looked identical from the outside — both printed

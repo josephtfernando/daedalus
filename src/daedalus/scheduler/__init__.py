@@ -1,6 +1,7 @@
 """Scheduler: cron-pumped wakes and scheduled capability runs."""
 
 from .cron import CronError, matches, next_run, validate
+from .catchup import DEFAULT_LATE_WITHIN, Missed, human, plan, window_for
 from .jobs import Job, JobStore
 from .proactive import SILENT, ProactiveState, quiet_hours_cover
 from .scheduler import Scheduler, TickResult
@@ -11,6 +12,11 @@ __all__ = [
     "matches",
     "next_run",
     "validate",
+    "DEFAULT_LATE_WITHIN",
+    "Missed",
+    "human",
+    "plan",
+    "window_for",
     "Job",
     "JobStore",
     "ProactiveState",

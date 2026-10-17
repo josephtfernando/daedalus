@@ -22,6 +22,12 @@ class Job:
     enabled: bool = True
     last_run: float | None = None
     created_at: float = field(default_factory=time.time)
+    #: How late a missed occurrence is still worth running — ``"45m"``, ``"6h"``,
+    #: ``"2d"``. Empty means the default for the kind (see `catchup.py`): a probe
+    #: reports a *condition*, and a condition six hours stale is not a late report
+    #: but a false one, while a briefing is about a day that is still running. A
+    #: job that knows its own tolerance should say so.
+    late_within: str = ""
 
     def next_run(self) -> datetime | None:
         base = datetime.fromtimestamp(self.last_run) if self.last_run else datetime.now()
@@ -66,6 +72,7 @@ class JobStore:
                 enabled=bool(row.get("enabled", True)),
                 last_run=row.get("last_run"),
                 created_at=float(row.get("created_at", time.time())),
+                late_within=str(row.get("late_within", "")),
             )
             if job.name:
                 self._jobs[job.name] = job
@@ -82,6 +89,7 @@ class JobStore:
                     "enabled": j.enabled,
                     "created_at": j.created_at,
                     **({"last_run": j.last_run} if j.last_run is not None else {}),
+                    **({"late_within": j.late_within} if j.late_within else {}),
                 }
                 for j in self._jobs.values()
             ]

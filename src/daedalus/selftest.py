@@ -16,7 +16,7 @@ import stat
 import tempfile
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -26,6 +26,7 @@ from .loop.engine import Engine
 from .model.client import ModelClient
 from .model.providers import ChatResult, ScriptedProvider, ToolCall  # noqa: F401
 from .runtime import Runtime, build_runtime
+from .scheduler.jobs import Job
 from .security.provenance import DataClass, Labeled, Origin
 from .storage import paths
 from .surface.base import InboundEvent
@@ -107,6 +108,7 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
             report.checks.append(await _check_capability_gate(rt))
             report.checks.append(await _check_scheduler(rt))
             report.checks.append(await _check_proactive(rt))
+            report.checks.append(await _check_catchup(scratch))
             report.checks.append(await _check_loop(scratch, surface))
             report.checks.append(await _check_daemon(scratch))
         finally:
@@ -545,6 +547,68 @@ async def _check_proactive(rt: Runtime) -> Check:
     return Check(
         "proactive", True, "quiet hours held, the cap bit, silence stayed silent, the reminder fired"
     )
+
+
+async def _check_catchup(settings: Settings) -> Check:
+    """A run missed while the daemon was down is caught up — T18.
+
+    Probed on a pinned clock in its own throwaway home: the whole point is
+    arithmetic between three timestamps, and a queue that fired into the surface
+    the other probes are counting would make *them* flaky rather than this one red.
+    """
+    home = settings.home / "catchup-probe"
+    paths.ensure_tree(home)
+    surface = ScriptedSurface(approve=True)
+    rt = build_runtime(replace(settings, home=home), surface=surface)
+    try:
+        now = datetime(2026, 10, 17, 14, 20)
+        made = datetime(2026, 10, 14, 9, 0).timestamp()
+
+        def job(name: str, cron: str, kind: str, target: str, last_run: datetime) -> Job:
+            return rt.scheduler.store.put(
+                Job(
+                    name=name,
+                    cron=cron,
+                    kind=kind,
+                    target=target,
+                    last_run=last_run.timestamp(),
+                    created_at=made,
+                )
+            )
+
+        # Two wakes whose moment fell while the daemon was down — one is still
+        # worth saying — and one probe whose moment has plainly passed.
+        eight = job("probe-eight", "0 8 * * *", "wake", "the morning check-in", datetime(2026, 10, 16, 8, 0))
+        job("probe-nine", "0 9 * * *", "wake", "the nine-o'clock check-in", datetime(2026, 10, 16, 9, 0))
+        job("probe-disk", "0 8 * * *", "capability", "disk_free_check", datetime(2026, 10, 15, 8, 0))
+
+        live = peak = 0
+
+        async def handler(prompt: str) -> str:
+            nonlocal live, peak
+            live += 1
+            peak = max(peak, live)
+            await asyncio.sleep(0.05)
+            live -= 1
+            return f"report for {prompt}"
+
+        rt.scheduler.stagger_s = 0.0
+        results = await rt.scheduler.dispatch_tick(rt, wake_handler=handler, when=now)
+        if surface.sent != ["report for the morning check-in", "report for the nine-o'clock check-in"]:
+            return Check("catch-up", False, f"the missed runs did not arrive in order: {surface.sent}")
+        if peak != 1:
+            return Check("catch-up", False, "two catch-up runs overlapped")
+        disk = next((r for r in results if r.job == "probe-disk"), None)
+        if disk is None or disk.ran is not False or "not caught up" not in disk.detail:
+            return Check("catch-up", False, "a stale probe was not declined with a note")
+        if not rt.scheduler.log.seen(eight.idempotency_key(datetime(2026, 10, 17, 8, 0))):
+            return Check("catch-up", False, "the caught-up run left no record")
+        again = await rt.scheduler.dispatch_tick(rt, wake_handler=handler, when=now + timedelta(minutes=3))
+        if again:
+            return Check("catch-up", False, f"the queue was not spent: {[r.job for r in again]}")
+        return Check("catch-up", True, "missed runs arrived late, one at a time; the stale one was declined")
+    finally:
+        await rt.aclose()
 
 
 async def _check_loop(settings: Settings, surface: ScriptedSurface) -> Check:

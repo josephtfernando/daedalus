@@ -27,6 +27,16 @@ class ScheduleTool(Tool):
         cron=({"type": "string", "description": "5-field cron, e.g. '0 7 * * *'"}, False),
         kind=({"type": "string", "enum": ["capability", "wake"], "default": "capability"}, False),
         target=({"type": "string", "description": "capability name, or a wake prompt"}, False),
+        late_within=(
+            {
+                "type": "string",
+                "description": (
+                    "How late a run missed while the daemon was down is still worth running "
+                    "(e.g. '45m', '6h', '2d'). Defaults to 1h for a capability and 12h for a wake."
+                ),
+            },
+            False,
+        ),
     )
 
     def assess(self, args: dict[str, Any]) -> Assessment:
@@ -64,13 +74,18 @@ class ScheduleTool(Tool):
                     cron=cron,
                     kind=str(args.get("kind", "capability")),
                     target=str(args.get("target", "")),
+                    late_within=str(args.get("late_within", "")),
                 )
             except ValueError as exc:
                 return ToolResult.error(str(exc))
             return ToolResult(output=f"scheduled {job.name!r}: {job.cron} → {job.kind}:{job.target}")
         if op == "list":
             jobs = scheduler.jobs()
-            rows = [f"{j.name}\t{j.cron}\t{j.kind}:{j.target}\tnext={j.next_run_text()}" for j in jobs]
+            rows = [
+                f"{j.name}\t{j.cron}\t{j.kind}:{j.target}\tnext={j.next_run_text()}"
+                + (f"\tlate_within={j.late_within}" if j.late_within else "")
+                for j in jobs
+            ]
             return ToolResult(output="\n".join(rows) or "(no jobs)")
         if op == "remove":
             name = str(args.get("name", "")).strip()
