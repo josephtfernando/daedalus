@@ -114,6 +114,28 @@ def publish(
     return Published(url=url, command=command, ran=ran)
 
 
+def funnel_on(
+    *,
+    run: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] = _default_run,
+) -> bool | None:
+    """Whether the node currently has Funnel on — a public exposure exists.
+
+    `True` means anything published from this node must be refused, not
+    warned about: the token or the takedown is cheap theatre in front of a
+    gate that is already open to the internet. `None` means the tailnet state
+    could not be read — which a caller must treat as *unknown*, and unknown
+    is its own refusal for an act about to publish bytes.
+    """
+    try:
+        funnel = run([BIN, "serve", "status", "--json"])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.warning("could not run `%s serve status` (%s); Funnel state unknown", BIN, exc)
+        return None
+    if funnel.returncode != 0:
+        return None
+    return _funnel_enabled(funnel.stdout)
+
+
 def unpublish(
     port: int,
     *,

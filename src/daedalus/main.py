@@ -496,6 +496,7 @@ def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
     import asyncio as _asyncio
 
     from .genui.actions import Controls
+    from .genui.publications import Publications
     from .genui.server import LocalServer, control_token
     from .genui.tuners import Tuners
 
@@ -511,6 +512,7 @@ def _start_dashboard(rt: "Runtime") -> "LocalServer | None":
             calendar=rt.calendar,
             controls=Controls(rt, loop=_asyncio.get_running_loop()),
             tuners=Tuners(rt.settings.home),
+            publications=rt.publications,
         )
         url = server.start()
     except OSError as exc:

@@ -22,6 +22,7 @@ from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
 from .config import Settings
 from .delegate.runner import DelegateRunner
+from .genui.publications import Publications
 from .loop.context import history_key
 from .loop.transcript import MAX_MESSAGES as TRANSCRIPT_LIMIT
 from .loop.transcript import Transcript
@@ -101,12 +102,18 @@ class Runtime:
     #: against `settings` unless a caller supplies one (tests use a private
     #: root so real delegations never land in the owner's tree).
     delegate_runner: DelegateRunner | None = None
+    #: The publications registry (T25/T34) — the one-time links behind which
+    #: `push op=serve` publishes. Built against `settings.home` like everything
+    #: else the loop owns.
+    publications: Publications | None = None
 
     # -- turn bookkeeping -------------------------------------------------
 
     def __post_init__(self) -> None:
         if self.delegate_runner is None:
             self.delegate_runner = DelegateRunner(self.settings.home / "delegate" / "ws")
+        if self.publications is None:
+            self.publications = Publications(self.settings.home / "serve" / "published.json")
 
     @property
     def seat(self) -> Seat:

@@ -16,6 +16,30 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **Published artifacts: a named file, a one-time link, a lifetime, a takedown
+  (T15's push leg, T25, T34).** The `push` tool is both of SPEC §3.5's output
+  channels in one: **serve** publishes a named artifact behind a token —
+  `https://<tailnet>/pub/<name>?t=<token>` over the very route T2/T27 already
+  established (no second gate built; the Funnel clause is inherited from
+  `genui/publish.py`, and inherited as a *refusal*: Funnel on means refused,
+  unreadable tailnet state means refused — unknown is not good enough for an act
+  that moves bytes) — one-time by default (`fetches=1`, the first open spends it),
+  finite lifetime (24h), and a takedown that marks the record dead **and deletes
+  the bytes**. The bytes live in `serve/`, deliberately not `ui/` — a one-time
+  link the plain artifact route could also serve was never one-time. **push**
+  Taildrops a file to a *named* tailnet peer (op=peers lists who can receive; the
+  air is not a destination). Both are reads first: `guard.resolve` — the files
+  primitive's own containment — decides reachability, so private docs, the vault's
+  private tree and `.env` are never publishable; the root list is owner-owned
+  config, not a constant; a 64 MB cap bounds the copy. The registry is file-first
+  (`serve/published.json`, reloaded before every gate decision) because the CLI
+  that publishes and the daemon's route that gates are different processes — the
+  same answer `jobs.toml` already gave. 13 tests in `tests/test_push.py`
+  (registry gate, server route, tool containment, Taildrop to a named peer);
+  **live evidence**: published the overnight note from the CLI and fetched it
+  over the real tailnet URL — 200 with the bytes, 403 "that link needs its own
+  token" on a wrong one. 935 green, 0 failed.
+
 - **The OpenCode delegate: out to a workspace, back reviewable (T29, T30).** Icarus's
   headline job is real. A delegation is a task pinned to **one named workspace**
   under `delegate/ws/` — the personal tree is not a workspace the agent can declare,

@@ -183,6 +183,31 @@ the turn had moved on must not stay silent until someone asks). `delegate op=run
 returns immediately — the delegation is measured against the caps, never against the
 turn's patience.
 
+### Publication (P4/P5, T15/T25/T34)
+
+Section §3.5 files `serve` and `push` as **output channels** — things the agent uses,
+not things the owner runs. The `push` tool is both:
+
+- **`op=serve`** publishes a *named artifact* behind a token: the link
+  `https://<tailnet>/pub/<name>?t=<token>` rides the same loopback server and the same
+  `tailscale serve` route the dashboard already lives behind (no second gate is built,
+  and none may be — the Funnel clause is inherited: Funnel on is a *refusal*, and an
+  unreadable tailnet state is one too, because unknown is not good enough for an act
+  that moves bytes). The default is a **one-time link** (`fetches=1`: the first
+  successful open spends it) with a finite lifetime (24h default), and **takedown is
+  real** — the record is marked dead *and the bytes are deleted*. The published bytes
+  live in `serve/`, deliberately not `ui/`: `ui/` is served plain by the artifact
+  route, and a one-time link that the plain route can also serve was never one-time.
+- **`op=push`** copies a file to a *named* tailnet peer over Taildrop — a device,
+  never "into the air" — and never goes further than the peer's inbox.
+
+Both are **reads first**: the source path goes through the same `guard.resolve` the
+`files` primitive uses, so private docs, the vault's `private/` tree and `.env` are
+never publishable, and the root list is whatever config the owner owns — widening it
+is a change to that file, not to a constant. A size cap bounds the copy a serve owes.
+The read the owner does of the URL has no second copy: `Cache-Control: no-store`
+closes the browser-cache door on a one-time link.
+
 Daedalus audits capabilities the same way it audits projects: an authored capability that no longer earns its place is killed loudly.
 
 **Growth posture.** It notices a capability the owner would want and proposes it, authoring only on an explicit yes. Never autonomous authoring.

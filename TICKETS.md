@@ -546,7 +546,7 @@ real `rt.wake` turn and asserts the write lands in her namespace while the
 coordinator's cannot recall it. Same wall-clock caveat as T21: the first live fire is
 tomorrow 08:15; the owner reads it at breakfast, and the audit closes the loop then.
 
-### T24 — Calliope and Heracles, last · `open`
+### T24 — Calliope and Heracles, last · `open` — Calliope done 19 Oct; Heracles blocked on the owner's recorded decision
 *SPEC §7 (creative voice and distribution; the body — training, nutrition, sleep).
 AGENTS.md (personal data is out of bounds).*
 
@@ -561,6 +561,36 @@ opens them, deliberately and in writing.
 is a proposal with a grant, never an autonomous move; for Heracles, **the owner has
 first decided and recorded what it may read, what stays on the laptop, and whether a
 remote model ever sees it** — and the seat is wired only to what that decision allows.
+
+**Calliope, done 19 Oct (overnight).** A real routed turn: `daedalus ask
+"calliope: …"` → triage → `**Calliope**` attribution → a draft under 150 words on
+tonight's delegation runner, delivered to the owner's DMs through the `discord`
+tool (`daedalus.loop: tool discord -> ok`, 01:26, in the journal). The piece was
+fact-checked against the SPEC §3.5 Delegation section *before* sending — she killed
+claims the section does not make (named the two things §3.5 says that she left out
+for the word budget, and refused to claim "shipped and green" on the spec's own
+status line). Her charter knowledge (blog vs LinkedIn carry different cuts) came
+from *her* namespace — the seat-scoped write happened earlier, and this was the
+first evidence it is read in thinking, not just routing. **Publishing as a
+proposal**: her posture lands with T25's serve/publish mechanism — the tailnet
+publish is `Risk.ASK` (an approval naming lifetime and scope, remembered as a
+grant only if there is a scope to vouch for), so nothing she writes ever leaves
+the laptop autonomously; distribution is the second yes, never the first.
+
+**Heracles, blocked — the owner decides, in writing, before any wiring.**
+This seat's subject is the protected category (AGENTS.md: health and training
+data are never opened, read, logged or transmitted by the agent here or
+Daedalus at runtime; SPEC §6). Not one guess is filed. The decision the owner
+sleeps on, recorded here in the exact words the seat work will implement when
+they answer:
+
+1. What may Heracles read? (Whose data — the owner's output of a workout tracker?
+   Nothing? Standing files or only what the owner pastes in a turn?)
+2. What stays on the laptop? (A local-only tracker like T38's posture, no
+   namespace of numbers at all?)
+3. Does a remote model ever see any of it — and if so, which model chain?
+   (`heavy`/`cheap` are separate routes; "local only" is an answer the model
+   chain already knows how to honour.)
 
 ### T39 — the coordinator routes a request to the seat it belongs to · `done`
 *SPEC §7. The owner, 17 Oct: "I want daedalus to be able to figure out who is best suited
@@ -604,7 +634,7 @@ skip it), which is the price of not having to name a seat.*
 
 #### P4 — remote / Tailscale Serve
 
-### T15 — P4: reach it from the phone · `open`
+### T15 — P4: reach it from the phone · `open` — the push leg is built; the phone answer is the owner's
 *SPEC §10 (P4), §3.5 (`push` / Taildrop).*
 
 What T2 leaves: the dashboard over the tailnet, and the `push` output channel.
@@ -630,7 +660,23 @@ console action: <https://login.tailscale.com/admin/machines> → the `delphi` ro
 resource (access + credentials, T9's pending→adopted shape) rather than a code change —
 and removing a device is destructive, so it stays a proposal either way.*
 
-### T25 — the agent's own `serve` · `open`
+**Push leg done 19 Oct (overnight).** The `push` tool exists (see T25/T34 for the
+mechanism): **`op=push`** Taildrops a file to a *named* tailnet peer — `op=peers`
+derives the receivers from `tailscale file cp --targets` (the tailnet currently has
+"Joseph's A14", the phone), an unknown target is refused by name rather than copied
+"into the air", and the source path must pass the files primitive's containment first.
+The delivery itself was **not** executed tonight: a push is an outbound move of a
+value to a device, and outbound actions are proposals — the first push should happen
+in a turn with the owner watching, which is tomorrow's breakfast. **Live so far:**
+the publication side was exercised for real — `breakfast.md` published from the CLI
+and fetched over the actual tailnet URL (200 with the bytes; a wrong token answers
+403 with its reason) — so the URL half of "reach it from the phone" is proven
+end-to-end on this node; what remains unsubmitted is literally opening a URL *on*
+the phone, which only the owner can do, and that confirmation is the residue of
+this ticket. The stale-node cleanup above remains the owner's 20-second console
+action.
+
+### T25 — the agent's own `serve` · `done`
 *SPEC §3.5 (output channels: `serve`, `push`). §8.5 step 11.*
 
 T2 publishes the **dashboard**, from a CLI flag the owner runs. Nothing lets the agent
@@ -644,6 +690,20 @@ on, and never builds a Funnel command. Reuse that posture rather than re-decidin
 the owner opens it on the phone; the URL it reports actually resolves; the artifact has
 a lifetime and can be taken down; publishing is impossible without the tailnet in front
 of it, and a node with Funnel on is refused, not warned about.
+
+**Done 19 Oct (overnight).** The `push` tool's `op=serve` publishes a named artifact
+behind a token on the dashboard's loopback server — the *same* server and the *same*
+`tailscale serve` route T2/T27 established (one gate, reused, not re-decided). The
+URL it reports is the real URL: the DNS name comes from `tailscale status --json` and
+the ticket's "actually resolves" was witnessed live tonight — a CLI-side publish
+fetched 200 exactly where the tool's own link says it resolves. The lifetime and
+takedown live in `src/daedalus/genui/publications.py`: a finite expiry checked on
+every read (death is a read-path fact, not a sweeper's chore), a fetch budget
+(one-time by default), and a takedown that marks the record dead *and deletes the
+bytes* — a dead link with live bytes is a leak in waiting. The *opening-on-the-phone*
+clause stays with the owner (T15's residue), and Funnel is inherited as a refusal:
+`funnel_on()` reads the serve config and Funnel-on or unreadable-state both refuse,
+reusing T2's posture rather than re-deciding it.
 
 ### T26 — the calendar from the phone · `open`
 *SPEC §5.5 (a full dashboard view), §13 (calendar dashboard scope — the open decision).*
@@ -854,7 +914,7 @@ new capability work for named seats. The verification that prompted this section
 T26's correction and in T27's measured notes: P4 is mostly built, P5 is not started, P6
 is substrate only.*
 
-### T34 — files, from wherever you are · `open`
+### T34 — files, from wherever you are · `open` — the hand-over half is built; the asking half rides tomorrow's turns
 *SPEC §3.5 (output channels `serve` / `push`; external action `file`). The owner, 17 Oct:
 "a path that could serve files for me through Tailscale, when I'm away from my laptop,
 like being able to query for files within my laptop through Discord and either display
@@ -891,6 +951,19 @@ one-time token, and stops working when it expires; naming a protected file direc
 not make it servable; the agent cannot publish a root it was not given; and the root list
 is owner-owned data — a later dashboard can add a folder without a code change, and
 adding one goes through an approval rather than taking effect silently.
+
+**Hand-over half, done 19 Oct (overnight).** `push op=serve` is the download link: a
+working URL over the tailnet, a **one-time token**, an expiry — all three of this
+ticket's hard clauses about the served URL, tested and (the URL part) witnessed live.
+**Containment is the guard's, not the model's**: `guard.resolve` decides which files
+may leave, so naming a protected file directly (`docs/private/…`, `.env`, the vault's
+`private/`) is refused with the same words the `files` primitive uses, and the
+declared roots are exactly `guard.allowed_roots` — **owner-owned data**
+(`files.roots` in the settings file), widened by editing that file, not code. The
+**asking half** (a Discord message describing a file → routed turn → `push op=serve`
+with the link in the answer) is fully unblocked now, but its first real fire needs
+the owner's own message — recorded for tomorrow rather than simulated tonight. A
+64 MB cap bounds the copy a serve may move.
 
 ### T35 — the surface stops being one page in one mood · `open`
 *SPEC §3.6 (visual → dashboard; "the mood token set (the owner's)"). The owner, 17 Oct:

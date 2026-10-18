@@ -28,6 +28,7 @@ import json
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 from ..config import DEFAULT_DASHBOARD_PORT
 from ..resources.secrets import SecretStore
 from .actions import Controls
+from .publications import Publications
 from .renderer import CSP, FORM_CSP
 from .tuners import TuneError, Tuners
 
@@ -58,6 +60,10 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _VIEW_PATH = re.compile(r"^/(day|week|month)(?:/(\d{4}-\d{2}-\d{2}))?$")
 #: A pending tune's preview (T9): `/draft/<id>`.
 _DRAFT_PATH = re.compile(r"^/draft/([A-Za-z0-9-]+)$")
+#: A publication's route: `/pub/<name>?t=<token>` — the link the `push` tool
+#: hands back. Name-shaped by the registry's own rule; the regex is just the
+#: first gate.
+_PUB_PATH = re.compile(r"^/pub/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$")
 
 _TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -125,10 +131,15 @@ class LocalServer:
         calendar: "CalendarStore | None" = None,
         controls: Controls | None = None,
         tuners: Tuners | None = None,
+        publications: "Publications | None" = None,
     ) -> None:
         self.home = Path(home)
         self.artifacts = Path(artifacts) if artifacts is not None else self.home / "ui"
         self.artifacts.mkdir(parents=True, exist_ok=True)
+        #: Where published artifacts' bytes live — its own directory, deliberately
+        #: *not* `ui/`: a `ui/` file is served plain by the artifact fallthrough,
+        #: and a one-time link is only one-time if the plain route cannot serve
+        #: the same bytes without the token.
         self.token = token
         self.port = int(port)
         self.host = LOOPBACK
@@ -141,6 +152,12 @@ class LocalServer:
         #: The pending → approved path for the theme (T9). Absent means `/tune`,
         #: `/approve` and `/draft/` answer as not built.
         self.tuners = tuners
+        #: The publications registry (T25/T34). Absent (a standalone server) means
+        #: `/pub/` answers 404 — a gate with no registry answers as if nothing,
+        #: rather than as if closed.
+        self.publications = publications
+        self.serve_dir = self.home / "serve"
+        self.serve_dir.mkdir(parents=True, exist_ok=True)
         self._http: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -149,6 +166,13 @@ class LocalServer:
     def get(self, path: str, *, cookie: str = "") -> Response:
         route, query = _split_query(path)
         wanted = _query_token(query)
+        pub = _PUB_PATH.match(route)
+        if pub is not None:
+            # Before the control-token bootstrap, deliberately: a publication's
+            # own token rides `?t=` too, and it is not the install's control
+            # token — the bootstrap check would 403 it without this route
+            # getting a say.
+            return self._publication(pub.group(1), wanted)
         if wanted:
             # The one bootstrap: the owner opens the printed URL, the token is
             # verified, and the browser is handed a cookie. The token itself
@@ -361,6 +385,39 @@ class LocalServer:
         if not path.is_file():
             return Response(404, _PLAIN, f"nothing served at /{name}\n".encode("utf-8"))
         return Response(200, _content_type(name), path.read_bytes())
+
+    def _publication(self, name: str, token: str) -> Response:
+        """One fetch of one published artifact — the whole gate is this route."""
+        if self.publications is None:
+            return Response(404, _PLAIN, b"this server publishes nothing\n")
+        path = self.serve_dir / name
+        if not path.is_file():
+            # The bytes and the record should die together (takedown removes
+            # both); a record without bytes is a lie the 410 would keep up, so
+            # name it 404 — unless the record itself is dead, which is the
+            # truest sentence available.
+            pub = self.publications.get(name)
+            if pub is not None and pub.dead(now=time.time()):
+                return Response(
+                    410, _PLAIN, f"that link has died: {pub.dead(now=time.time())}\n".encode("utf-8")
+                )
+            return Response(404, _PLAIN, b"no such publication\n")
+        ok, reason, _spends = self.publications.admit(name, token)
+        if not ok:
+            if reason == "wrong token":
+                return Response(403, _PLAIN, b"that link needs its own token\n")
+            if reason == "no such publication":
+                return Response(404, _PLAIN, b"no such publication\n")
+            return Response(410, _PLAIN, f"{reason}\n".encode("utf-8"))
+        # `no-store`, because a one-time link served from the browser's cache
+        # was never one-time: the second open must be a real request, and the
+        # real request must find the gate closed.
+        return Response(
+            200,
+            _content_type(name),
+            path.read_bytes(),
+            headers=(("Cache-Control", "no-store"),),
+        )
 
     def _entry(self) -> Response:
         """The front page: the newest artifact, or a plain list of them."""
