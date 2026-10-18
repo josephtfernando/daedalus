@@ -547,6 +547,7 @@ stage as `local_cli`, `access = "local"`, `scopes = ["workspace", "net"]`.
 - `state/wakes.db` — `agent_wakes` + job state (idempotency keys).
 - `state/proactive.json` — the day's proactive ledger: how often the agent has spoken, and what it last said. Hand-editable, so "why did you ping me at 23:00" has an answer that is not a guess.
 - `state/reminders.json` — which calendar reminders have already been delivered, so a tick that runs twice in a minute does not nudge the owner twice about the same meeting. Pruned after a week.
+- `delegate/ws/<name>/…` — a delegation's workspace: the task and its edits, a `.delegation.json` run record (task, caps, exit, what it could not do), and the diff the owner reviews. Created fresh on first use with one baseline commit by the daemon (the delegate itself never commits), and the workspace *is* the delegation's declared reach — a task naming paths outside it is refused before the CLI spawns.
 - `state/ratelimit.db` — rolling-window provider accounting.
 - `state/processes.json` — every process the agent has started: name, command, pid **and its `/proc` start time**, when and with what code it ended. Hand-editable like the rest. The start time is the point — a pid is recycled, so the pair is what lets a registry row from a previous daemon say "that was me" without ever saying it about whatever holds the number now. Live processes are never evicted; the last 50 endings are kept.
 - `cabinet/messages.db` — typed seat messages.

@@ -154,6 +154,35 @@ Unbounded authoring without a lifecycle is sprawl. Every capability moves throug
 
 **born → Melinoë-verified → scheduled → monitored (still working?) → re-authored or killed.**
 
+### Delegation (P5, T29–T30)
+
+A delegation is a task, **one named workspace it may touch**, and a return the owner
+can review — never a jump into the personal tree. The workspace is created under
+`$DAEDALUS_HOME/delegate/ws/` (one plain name; the personal tree is not a workspace
+the agent can declare), given a **baseline commit by the daemon** (not the delegate),
+and the return is `diff HEAD` against that baseline plus a run record
+(`.delegation.json` in the workspace). Three bounds are enforced rather than asked:
+
+- **History stays with the owner** (SPEC §3.5 files `git` as its own egress action).
+  A task that asks for commit/push/merge/pull/rebase/reset is refused **before the CLI
+  is spawned**; a PATH shim (`delegate/ws/.shim/git`) refuses them again inside the
+  run — and it must be the shim, not a hook, because `--no-verify` bypasses hooks.
+- **The declared caps are caps**, through the same `limits` launcher a capability
+  runs under: `mem_mb` sampled on resident memory (the breach stops the tree and is
+  named as the reason), `cpu` as whole-core affinity set in the child, `time_s` as a
+  wall-clock ceiling.
+- **Containment is checked on the task text before anything runs** — paths outside
+  the declared workspace, `~` paths, `..` escapes; the machine is left untouched by
+  a refusal.
+
+A delegation runs as a subprocess in its own session and is **registered with the
+process registry before anyone waits on it** (T30): visible via `delegate op=status`
+from its first tick — not just its last — cancellable tree-wide via `op=cancel`, its
+ending announced with its exit code (failures included: a delegation that died while
+the turn had moved on must not stay silent until someone asks). `delegate op=run`
+returns immediately — the delegation is measured against the caps, never against the
+turn's patience.
+
 Daedalus audits capabilities the same way it audits projects: an authored capability that no longer earns its place is killed loudly.
 
 **Growth posture.** It notices a capability the owner would want and proposes it, authoring only on an explicit yes. Never autonomous authoring.

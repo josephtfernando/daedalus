@@ -13,6 +13,7 @@ def build_registry() -> ToolRegistry:
     from .calendar import CalendarTool
     from .capability import CapabilityTool
     from .code import CodeTool
+    from .delegate import DelegateTool
     from .discord import DiscordTool
     from .files import FilesTool
     from .http import HttpTool
@@ -41,6 +42,7 @@ def build_registry() -> ToolRegistry:
         AskTool(),
         SecretsTool(),
         CapabilityTool(),
+        DelegateTool(),
     ):
         registry.register(tool)
     return registry

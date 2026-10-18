@@ -711,7 +711,7 @@ Falsified: always reporting a local CLI as installed reddens the missing/absent/
 tests (three red). Docs: ARCHITECTURE §8.3, CHANGELOG. *Supersedes: `opencode` named in
 the spec and absent from the registry.*
 
-### T29 — a delegation goes out into a workspace and comes back reviewable · `open`
+### T29 — a delegation goes out into a workspace and comes back reviewable · `done`
 *SPEC §7 (Icarus owns the OpenCode delegate), §3.5 (`git` is its own egress action).
 ARCHITECTURE §698 (P5 → `resources`, `capabilities`).*
 
@@ -727,7 +727,24 @@ path outside its declared workspace is refused *before* the CLI is spawned, not 
 nothing the delegate does reaches the network without the egress grant the tools already
 require; and no path it takes results in a commit, a push or a merge.
 
-### T30 — a long delegation is visible, capped and cancellable · `open`
+**Done 19 Oct (overnight).** `src/daedalus/delegate/runner.py` + `delegate` tool. The
+driver-of-record for the return: default `cmd` is `opencode run <task>` in the
+workspace; tests drive stub commands instead because what is under test is the shape.
+The diff is against a baseline commit the daemon makes once at workspace creation
+(`prepare`), so first delegations are also reviewable; `add -N` makes new files
+visible to `diff HEAD`. The refusal-before-spawn clause is two checks in `check()`:
+banned-history words in the task text (refused with the phrasing fix: "phrase the
+task as work that leaves a diff") and `paths_outside()` — absolute/`~`/`..` tokens
+resolved against the workspace, with the personal tree named *as* the personal tree
+(`forbidden=(settings.home,)` wired from the tool). The no-commit clause is enforced
+twice: task-text refusal, and the `git` PATH shim — hooks were never the enforcement
+because `--no-verify` exists. This acceptance's network line rides on the machinery
+that already exists: the delegate child inherits `scrubbed()` (secrets out of its
+environment), and egress-scoped work remains the owner's grant — recorded in the
+ticket and the task text rather than re-implemented here. 7 tests
+(`tests/test_delegate.py`); suite 922 green.
+
+### T30 — a long delegation is visible, capped and cancellable · `done`
 *SPEC §9 (long tasks run in threads). T19 (capability caps), T20 (the process registry).*
 
 An OpenCode run is minutes, not seconds — longer than a turn's patience and exactly the
@@ -739,6 +756,27 @@ stop it. Its progress belongs in a thread (§9) rather than in the turn's reply.
 stops it and the stop is visible with the cap named; cancelling from the surface kills
 the whole tree, not just the process the daemon happens to hold a handle to; when it
 finishes, its exit and its output are still readable afterwards.
+
+**Done 19 Oct (overnight).** The delegation is adopted into the same registry T20
+keeps (`ProcessManager.adopt`) under `delegation <workspace>`: `ProcessManager._load`
+rows from previous runs still resolve (the fingerprint vouches for the pid, so
+`op=status` after a daemon restart says "ended with nobody watching" where true
+rather than "running" where hoped). Caps come through `limits.watch_caps` — the
+watcher the extraction finally made shareable: resident-memory breach stops the tree
+and the error *is* the sentence naming the cap ("hit its mem_mb=64 cap: resident
+memory reached 210 MB", tested); `time_s` is the wall ceiling (timeout named in the
+same place); `cpu` is set in the child by the launcher, caps intact. Cancelling is
+the registry's tree-wide stop (`asyncio.create_subprocess_exec` with
+`start_new_session=True`, so killpg takes helpers too) — tested: a live delegation
+shows `alive()`, `stop` reports `stopped (pid, rc=…)`, and the collect task then
+closes the row instead of leaving `rc=None`. `op=result` reads the run record from
+the workspace afterwards — exit and output are files beside the work, not state the
+turn held. The end is announced on the surface with the exit code and the diff size,
+failures same as successes (T41's lesson: a silent failure while the owner reads
+something else is a lost failure). *Progress-in-a-thread*: `op=run` returns in the
+turn, the ending arrives as its own surface message — the thread-parking of the
+progress ledger itself is the turn's existing machinery, and is recorded here as the
+one clause this feature does not own.
 
 #### P6 — the group chat
 

@@ -133,6 +133,10 @@ class Managed:
     #: the run that did), which is why liveness is asked of the pid and not of this.
     proc: asyncio.subprocess.Process | None = None
     _task: asyncio.Task | None = None
+    #: For an adopted child (a delegation): run when the registry records its
+    #: ending, so the completion is announced rather than only askable. Failures
+    #: in it are the caller's to log — never fatal.
+    on_end: Any = None
 
     def alive(self) -> bool:
         return self.ended_at is None and _is_alive(self.pid, self.ticks)
@@ -288,6 +292,33 @@ class ProcessManager:
 
     def get(self, name: str) -> Managed | None:
         return self._procs.get(name)
+
+    def adopt(self, managed: Managed) -> Managed:
+        """Register a child this manager did not **spawn** — a delegation (T30).
+
+        The caps launcher builds the pipes and the watcher itself; what it owes the
+        registry is the same thing a `start`ed process owes: findable while it
+        runs, stoppable as a tree, and an ending that is recorded. The draining of
+        its output belongs to the delegation, which needs the bytes for the
+        reviewable result — so `adopt` registers, and `record_end` closes.
+        """
+        existing = self._procs.get(managed.name)
+        if existing is not None and existing.alive():
+            raise AlreadyRunning(existing)
+        self._procs[managed.name] = managed
+        self._save()
+        return managed
+
+    def record_end(self, managed: Managed, code: int | None) -> None:
+        """The adopted child's ending, said in the registry the owner already reads."""
+        if managed.proc is None:
+            return
+        self._ended(managed, code)
+        if getattr(managed, "on_end", None) is not None:
+            try:
+                managed.on_end(managed)  # type: ignore[misc]
+            except Exception:  # noqa: BLE001 — a failed notification never re-rolls the process
+                pass
 
     def list(self) -> list[Managed]:
         return sorted(self._procs.values(), key=lambda m: m.started_at, reverse=True)

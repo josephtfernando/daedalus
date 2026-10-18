@@ -16,6 +16,30 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The OpenCode delegate: out to a workspace, back reviewable (T29, T30).** Icarus's
+  headline job is real. A delegation is a task pinned to **one named workspace**
+  under `delegate/ws/` — the personal tree is not a workspace the agent can declare,
+  and a task naming paths outside its workspace (`/etc`, `~`, `..` escapes) is
+  refused *before the CLI is spawned*, leaving the machine untouched. The return is
+  the reviewable thing: a diff against the workspace's baseline commit (made once by
+  the daemon — the delegate never commits) and a run record (`.delegation.json`:
+  task, caps, exit code, peak memory, what it could not do). History is refused
+  twice, on two different paths: `op=run` refuses a task that asks for
+  commit/push/merge/pull/rebase/reset before anything runs, and the PATH shim refuses
+  the same acts at exec time inside the run — the shim rather than a hook, because
+  `--no-verify` bypasses hooks, and refusing the subcommand is enforcement, not
+  advice. The caps are the ones SPEC §13 already prescribes — resident-memory
+  sampling with the breach named, whole-core cpu affinity, a wall-clock ceiling —
+  through the same `limits` launcher a capability uses, which is why the extraction
+  existed: one implementation, two callers. And T30's visible-with-caps-and-cancel:
+  the spawn is registered with the process registry *before anyone waits on it*, so
+  `delegate op=status` is truthful from the first tick, `op=cancel` stops the tree,
+  `op=result` reads the return, and the ending — successes and failures alike — is
+  announced with the exit code. 7 tests in `tests/test_delegate.py` driving stub
+  commands instead of the real CLI (the shape is what is under test); suite 922
+  green. The launcher's cap-watcher also finished its move into `limits.py`
+  (`watch_caps`), completing the extraction the 22-red baseline had left in flight.
+
 - **Melinoë keeps her verdicts (T22).** The verification gate always *acted* — scope
   posture, run-once, output shape — but its verdicts lived only in the turn's output: a
   capability refused on Tuesday met a Melinoë with no memory of having said no on

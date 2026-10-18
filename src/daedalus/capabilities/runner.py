@@ -30,9 +30,9 @@ from pathlib import Path
 from typing import Any
 
 from ..limits import LAUNCH as _LAUNCH
-from ..limits import SAMPLE_S as _SAMPLE_S
+from ..limits import Watch as Watch
+from ..limits import watch_caps as _watch_caps
 from ..limits import kill_tree as _kill
-from ..limits import rss_mb as _rss_mb
 from ..security.env import scrubbed
 from .manifest import Caps, Manifest
 
@@ -56,12 +56,9 @@ class RunResult:
     peak_mb: float = 0.0
 
 
-@dataclass(slots=True)
-class _Watch:
-    """What the sampler saw, so the run can report it once the child is gone."""
-
-    peak_mb: float = 0.0
-    breach: str = ""
+#: The sampler's report shape lives in `limits.Watch` now — one shape for the two
+#: callers (a capability, a delegation) that owe a child the same cap.
+_Watch = Watch
 
 
 def _last_line(text: str) -> str:
@@ -142,8 +139,10 @@ class CapabilityRunner:
             # rather than orphaning whatever the artifact spawned.
             start_new_session=True,
         )
-        watch = _Watch()
-        watcher = asyncio.create_task(self._watch(proc, manifest.caps, watch))
+        watch = Watch()
+        watcher = asyncio.create_task(
+            _watch_caps(proc, mem_mb=manifest.caps.mem_mb, watch=watch)
+        )
         try:
             try:
                 out, err = await asyncio.wait_for(
@@ -195,25 +194,6 @@ class CapabilityRunner:
         result.state_next = parsed.get("state_next")
         result.notifications = list(parsed.get("notifications", []) or [])
         return result
-
-    async def _watch(self, proc: asyncio.subprocess.Process, caps: Caps, watch: _Watch) -> None:
-        """Stop the artifact the moment its *resident* memory passes the cap.
-
-        What this cannot see, and does not pretend to: memory held by a helper the
-        artifact spawned (the cap is the artifact's), and an allocation big enough
-        to land between two samples — which is what the generous `RLIMIT_AS`
-        backstop is for.
-        """
-        while proc.returncode is None:
-            watch.peak_mb = max(watch.peak_mb, _rss_mb(proc.pid))
-            if watch.peak_mb > caps.mem_mb:
-                watch.breach = (
-                    f"hit its mem_mb={caps.mem_mb} cap: resident memory reached "
-                    f"{watch.peak_mb:.0f} MB"
-                )
-                await _kill(proc)
-                return
-            await asyncio.sleep(_SAMPLE_S)
 
     def read_state(self, manifest: Manifest) -> dict[str, Any]:
         path = self.cap_dir(manifest) / "state" / "state.json"

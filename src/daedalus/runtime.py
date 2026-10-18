@@ -21,6 +21,7 @@ from .calendar.store import CalendarStore
 from .capabilities.registry import CapabilityRegistry
 from .capabilities.runner import CapabilityRunner
 from .config import Settings
+from .delegate.runner import DelegateRunner
 from .loop.context import history_key
 from .loop.transcript import MAX_MESSAGES as TRANSCRIPT_LIMIT
 from .loop.transcript import Transcript
@@ -95,8 +96,17 @@ class Runtime:
     #: loses the thread, and the next message is routed fresh, which is the
     #: honest outcome rather than a wrong continuity.
     last_seat: dict[str, str] = field(default_factory=dict)
+    #: The delegation runner (T29/T30). Owns the workspaces under
+    #: `delegate/ws` and the caps every delegate child runs under. Built
+    #: against `settings` unless a caller supplies one (tests use a private
+    #: root so real delegations never land in the owner's tree).
+    delegate_runner: DelegateRunner | None = None
 
     # -- turn bookkeeping -------------------------------------------------
+
+    def __post_init__(self) -> None:
+        if self.delegate_runner is None:
+            self.delegate_runner = DelegateRunner(self.settings.home / "delegate" / "ws")
 
     @property
     def seat(self) -> Seat:

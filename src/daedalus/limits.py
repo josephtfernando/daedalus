@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 
 #: How often the sampler looks at a child's resident memory. Far below the time it
@@ -65,6 +66,36 @@ except OSError as exc:
     sys.stderr.write("limits: cannot start %s: %s\\n" % (argv[0], exc))
     raise SystemExit(127)
 """
+
+
+@dataclass(slots=True)
+class Watch:
+    """What the sampler saw, so a run can report it once the child is gone."""
+
+    peak_mb: float = 0.0
+    breach: str = ""
+
+
+async def watch_caps(proc: asyncio.subprocess.Process, *, mem_mb: int, watch: Watch | None = None) -> Watch:
+    """Stop the child the moment its *resident* memory passes ``mem_mb``.
+
+    Shared by every caller that owes a child the same cap (the extraction's
+    point): a capability, a delegation. What this cannot see, and does not
+    pretend to: memory held by a helper whose pages the parent's ``/proc`` entry
+    does not carry, and an allocation big enough to land between two samples —
+    which is what the generous ``RLIMIT_AS`` backstop is for.
+    """
+    watch = watch or Watch()
+    while proc.returncode is None:
+        watch.peak_mb = max(watch.peak_mb, rss_mb(proc.pid))
+        if watch.peak_mb > mem_mb:
+            watch.breach = (
+                f"hit its mem_mb={mem_mb} cap: resident memory reached {watch.peak_mb:.0f} MB"
+            )
+            await kill_tree(proc)
+            return watch
+        await asyncio.sleep(SAMPLE_S)
+    return watch
 
 
 def rss_mb(pid: int) -> float:
