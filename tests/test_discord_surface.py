@@ -281,3 +281,75 @@ async def test_a_turn_without_a_channel_keeps_no_trace_state() -> None:
         s.progress("shell ✓")
 
     assert s._trace == [] and s._trace_msg is None
+
+
+# -- the held ledger: a stopped turn's trace stays for the owner -------------
+
+
+async def test_a_turn_the_engine_stopped_leaves_its_ledger_behind() -> None:
+    """hold_trace() is the engine's mark that it stopped the turn.
+
+    On 18 Oct 22:52 the owner was told "I got stuck…schedule kept coming back
+    with add needs cron" after watching a ledger delete itself — the one turn
+    whose record he needed, and the one turn that had none. A stopped turn's
+    ledger is now the channel's record; the reply summarizes it above.
+    """
+    s = surface()
+    s._TRACE_EDIT_EVERY = 0.0
+    channel = TraceChannel()
+    s.client.get_channel = lambda _id: channel  # type: ignore[method-assign]
+
+    async with s.working("12345"):
+        s.progress("▸ schedule op=add")
+        await s._edit_task
+        s.progress("schedule op=add ✗ add needs cron — name… cron…")
+        s.hold_trace()
+
+    assert channel.sent, "the ledger was never shown"
+    sent = channel.sent[0]
+    assert not sent.deleted, "a stopped turn's ledger is the channel's record"
+    assert "schedule op=add ✗" in sent.content, (
+        "the final edit carries the whole ledger, last failing line included"
+    )
+    assert s._trace == [], "the turn's lines are spent; the message is what remains"
+    assert s._hold is False, "the mark is spent with the turn"
+
+
+async def test_an_answered_turn_still_clears_the_ledger() -> None:
+    """The hold is a mark, not a standing behaviour: nothing marks it, nothing keeps."""
+    s = surface()
+    s._TRACE_EDIT_EVERY = 0.0
+    channel = TraceChannel()
+    s.client.get_channel = lambda _id: channel  # type: ignore[method-assign]
+
+    async with s.working("12345"):
+        s.progress("▸ calendar op=list")
+        await s._edit_task
+
+    assert channel.sent[0].deleted, "the trace is a courtesy, not channel clutter"
+
+
+async def test_a_line_landing_inside_the_edit_interval_survives_the_hold() -> None:
+    """The last line before a stopped turn is the one the owner most needs.
+
+    At the default interval (2.5 s) a tool that fails right before the engine
+    stops the turn would otherwise vanish — the ordinary flush is still asleep.
+    The held path flushes once more as it closes, so the ledger ends complete
+    rather than exactly one finding short. (The *deleted* contract is different:
+    there the reply already carries the story, and a lost tail line is a lost
+    courtesy, not a lost finding.)
+    """
+    s = surface()
+    channel = TraceChannel()
+    s.client.get_channel = lambda _id: channel  # type: ignore[method-assign]
+
+    async with s.working("12345"):
+        s.progress("▸ memory op=recall")
+        await s._edit_task  # early flush; the next line lands inside the interval
+        s.progress("memory op=recall ✗ (nothing found)")
+        s.hold_trace()
+
+    sent = channel.sent[0]
+    assert "memory op=recall ✗" in sent.edits[-1], (
+        "the held flush must include the line the throttled edit would have dropped"
+    )

@@ -49,12 +49,17 @@ class ScriptedSurface:
         self.asked: list[str] = []
         self.approvals: list[ApprovalRequest] = []
         self.progressed: list[str] = []
+        self.held: int = 0
         self._answers = list(answers or [])
         self.approve_all = approve
 
     def progress(self, text: str) -> None:
         """Record one line of the work trace, the way a live surface would show it."""
         self.progressed.append(text)
+
+    def hold_trace(self) -> None:
+        """Record that the engine asked for this turn's ledger to be kept."""
+        self.held += 1
 
     async def send(self, text: str, *, thread: str | None = None) -> None:
         self.sent.append(text)

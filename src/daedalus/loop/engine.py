@@ -142,6 +142,12 @@ class Engine:
             gave up is still a turn the owner was part of, and the next one has
             to remember the question even when the answer was "I got stuck".
             """
+            if error:
+                # A turn the loop stopped is the one turn whose running ledger
+                # the owner needs whole: the reply summarizes one failing call,
+                # the trace shows every one of them. An answered turn keeps the
+                # clean-channel contract — the ledger is deleted, not kept.
+                self._hold_trace(ctx)
             ctx.remember(event, event.text, text)
             return TurnResult(
                 text=text,
@@ -237,7 +243,8 @@ class Engine:
                     return finish(
                         (
                             f"I got stuck repeating the same failing step — `{call.name}` kept "
-                            f"coming back with: {detail[:400]}\n\n"
+                            "coming back with the same answer:\n\n"
+                            f"{_fenced(detail[:400])}\n\n"
                             f"The call was {_arguments(call.arguments)}.\n\n"
                             "I stopped rather than burn the rest of the turn on it. Tell me what to "
                             "try instead, and I'll pick it up from there."
@@ -283,7 +290,7 @@ class Engine:
             # The owner watches the same trace Discord-side: what ran, and
             # whether it worked. Never the arguments — those can carry the
             # owner's words, and the trace is a public-looking status line.
-            self._trace(ctx, f"{label} {'✓' if ok else '✗ ' + output[:80]}")
+            self._trace(ctx, f"{label} {'✓' if ok else '✗ ' + output[:200]}")
             return _payload(ok=ok, output=output, note=note), ok, output, question
 
         self._trace(ctx, f"▸ {label}")
@@ -370,6 +377,25 @@ class Engine:
         except Exception:  # noqa: BLE001 — cosmetic, never fatal
             log.debug("could not surface a progress line", exc_info=True)
 
+    def _hold_trace(self, ctx: "Runtime") -> None:
+        """Mark the work trace as one worth leaving in the channel.
+
+        Duck-typed like `_trace` above: a surface that has not heard of this
+        simply loses nothing. The mark must be set *before* the surface's
+        `working()` context closes, because the trace's fate is decided there.
+        """
+        if ctx.surface is None:
+            return
+        hold = getattr(ctx.surface, "hold_trace", None)
+        if not callable(hold):
+            return
+        try:
+            outcome = hold()
+            if asyncio.iscoroutine(outcome):
+                asyncio.ensure_future(outcome)
+        except Exception:  # noqa: BLE001 — cosmetic, never fatal
+            log.debug("could not hold the work trace", exc_info=True)
+
     async def _report_refusal(self, ctx: "Runtime", assessment: Assessment) -> None:
         """Tell the owner the agent tried something it is not allowed to do.
 
@@ -425,6 +451,17 @@ def _call_signature(call: ToolCall) -> str:
     denial is meant to stop.
     """
     return f"{call.name}:{json.dumps(call.arguments or {}, sort_keys=True, default=str)}"
+
+
+def _fenced(text: str) -> str:
+    """Wrap an error in a code fence, so markdown cannot rewrite it.
+
+    The 22:52 turn's pasted error read `"0 7 * * "` where a five-field cron had
+    been: Discord italicises pairs of `*` and ate the trailing one on the way
+    out. A fence stops that — and a fence the *text* contains is broken up with
+    a zero-width space rather than trusted not to exist.
+    """
+    return "```\n" + text.replace("```", "`\u200b``") + "\n```"
 
 
 def _arguments(arguments: Any, *, limit: int = 140) -> str:

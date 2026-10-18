@@ -48,6 +48,10 @@ class DiscordSurface:
         self._edit_task: asyncio.Task | None = None
         self._last_edit = 0.0
         self._dirty = False
+        #: Whether the trace of the current turn survives the turn — set by the
+        #: engine when the turn stopped early (T42's 22:52 turn), unset again
+        #: when the trace's fate is decided.
+        self._hold = False
         self.client.event(self.on_ready)
         self.client.event(self.on_message)
 
@@ -124,8 +128,8 @@ class DiscordSurface:
         try:
             yield
         finally:
-            self._trace_channel = None
             await self._end_trace()
+            self._trace_channel = None
             if typing is not None:
                 with contextlib.suppress(Exception):
                     await typing.__aexit__(None, None, None)
@@ -175,8 +179,49 @@ class DiscordSurface:
             if self._dirty and self._trace_channel is not None:
                 self._edit_task = asyncio.create_task(self._push_trace())
 
+    def hold_trace(self) -> None:
+        """Keep the current turn's ledger when the turn ends.
+
+        The engine asks for this when it stopped the turn itself — a repeated
+        failure, the step limit — because that is the one ledger the owner needs
+        whole: the reply summarizes one failing call, the trace shows all of
+        them (the 22:52 turn pasted "I got stuck…" with nothing left to scroll
+        but a deleted trace). A turn that answered keeps the clean-channel
+        contract: the ledger is deleted, the reply stands alone.
+        """
+        self._hold = True
+
     async def _end_trace(self) -> None:
+        """Decide the ledger's fate: deleted when the turn answered, held when
+        the engine stopped the turn.
+
+        The held path takes one final edit first, so the ledger ends complete —
+        a line that landed inside the edit interval is the one line the owner
+        most needs to read, and dropping it because `working()` closed would be
+        the ordinary flush losing exactly the evidence this exists to keep.
+        """
+        hold = self._hold
+        self._hold = False
+        if hold and self._trace_msg is not None:
+            shown = self._trace[-self._TRACE_LINES :]
+            self._trace.clear()
+            self._dirty = False
+            pending, self._edit_task = self._edit_task, None
+            if pending is not None and not pending.done():
+                pending.cancel()
+            body = "working…" + "\n".join(f"\n`· {line}`" for line in shown)
+            try:
+                self._trace_msg = await self._trace_msg.edit(content=body[: self._TRACE_MAX])
+            except Exception:  # noqa: BLE001 — cosmetic, never fatal
+                log.debug("could not leave the work trace in place", exc_info=True)
+            self._trace_msg = None
+            return
         self._trace.clear()
+        self._dirty = False
+        message, self._trace_msg, self._edit_task = self._trace_msg, None, None
+        if message is not None:
+            with contextlib.suppress(Exception):
+                await message.delete()
         self._dirty = False
         message, self._trace_msg, self._edit_task = self._trace_msg, None, None
         if message is not None:

@@ -1039,6 +1039,30 @@ decision and adds `people`/`contacts` to the modeled facets.
 and the suggested facets — the assembled prompt, which is what the model reads,
 not the helper. **Done.**
 
+### T44 — a stopped turn keeps its ledger, and errors travel fenced · `loop/engine.py`, `surface/discord/bot.py` · `done`
+
+**What was missing.** The 22:52 turn lost its evidence twice: the live work trace
+deleted itself at every turn's end, so "I got stuck repeating the same
+failing step" stood alone above a channel the owner had already watched answer
+itself; and the canned reply interpolated the raw tool error, which Discord's
+markdown italicised — the pasted error read `"0 7 * * "` where a five-field cron
+had been.
+
+**Done.** A turn the engine stops (`finish(error=…)` — repeated failure, step
+limit, denial) asks the surface to hold its ledger: `hold_trace()` on
+`DiscordSurface`, duck-typed by the engine exactly as `progress` is. The held
+ledger takes one final complete edit (a line landing inside the 2.5 s edit interval
+is flushed, not dropped — that is the line the owner most needs) and stays. An
+answered turn keeps the clean-channel contract: ledger deleted, reply alone. The ✗
+trace line's error excerpt widened 80 → 200 characters. The canned reply now
+carries the error fenced, with any fence inside the text broken by a zero-width
+space.
+
+**Acceptance:** three surface tests — the held ledger stays and ends complete, an
+answered turn still clears, a line inside the edit interval survives the hold; two
+engine tests — a stopped turn's reply is fenced and the surface was asked (`held
+== 1`), an answered one never asks (`held == 0`). **Done.**
+
 **Symptom.** `codeforces_contest_alert` failed with `[Errno 13] Permission denied` on
 `run.py`, exit code 127. `disk_free_check` had the identical defect and had not fired yet
 (it runs Mon–Fri 07:41, so it would have failed on its next weekday run).

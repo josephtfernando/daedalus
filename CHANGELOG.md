@@ -35,307 +35,37 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   prompt carries the rule, the call and the facets. *Supersedes: capture happening
   only when the model chose to write nothing in particular.*
 
-### Fixed- **The wizard provisions the tailnet path instead of narrating it** (`scripts/setup.sh`,
-  stage 8, re-runnable like every resource stage). The spec's stage 8 has named tailscale
-  since the P0 draft; the wizard honoured it with an advisory `command -v` and a Hardening
-  line that read *"a P4 posture, nothing to assert"*. Meanwhile the phone path became real
-  — a fixed port, published on start, taken down on stop — and the stale `delphi` node
-  turned out to need a console action no CLI could take. Now:
-
-  - **Install and login are asserted, not narrated** — present/logged-in are checked and
-    said; otherwise the exact commands are printed and the skip is recorded as a skip.
-  - **Funnel is asserted off**, twice (the resource stage and Hardening), read the same
-    way `genui/publish.py` reads it — a shared `_funnel_state` helper: the JSON's `Funnel`
-    map, non-empty = on; unreadable = *unknown*, warned about, never a pass. The publisher
-    refuses to publish onto a Funnel-on node; the wizard now makes the posture true before
-    that refusal is ever needed.
-  - **A Tailscale API key is capturable as a resource**: pasted through hidden entry,
-    sealed into the credential store through a 0600 temp file that is then deleted, the
-    variable unset the line after its last use, and noted in `resources/registry.toml` as
-    `remote_api` / `apikey` scoped `devices.read,devices.remove` — a commented placeholder,
-    the same proposal shape gcal gets. With it, tailnet hygiene — removing a stale
-    duplicate node — becomes something Daedalus can *propose* (T9's pending→adopted shape)
-    instead of a console action. Removing a device is destructive, so it is never
-    autonomous.
-  - 4 tests in `tests/test_setup_wizard.py` (new), reading the wizard the way its own
-    Hardening stage reads config: no line of the script can turn Funnel on; the key
-    variable has exactly its four uses and only the store as a destination; the registry
-    note is commented-only; and the wizard's Funnel reading agrees with the publisher's on
-    the same inputs (falsified with a `funnel on` line and an always-`off` reader — both
-    red, both restored).
-
-- **`opencode` is a provisioned resource, and the model is told whether it is there.** SPEC §5 names
-  `opencode` as a local CLI and `Resource.class_` already carried `local_cli`, so this was
-  *provisioning* — but a local CLI is the one resource whose presence cannot be taken for granted:
-  it has no credential to prove it exists, only a binary on `PATH`. So the registry learned two
-  things and the wizard gained one step:
-
-  - **`provision_local_cli(registry, name, scopes=…)`** writes an **active** `[[resource]]` entry
-    (`class = "local_cli"`, `access = "local"`, no `cred_ref`) — there is nothing to comment out
-    and nothing to encrypt, because the entry *is* the grant. Idempotent: a re-run returns what is
-    there rather than widening scopes the owner may have narrowed by hand.
-  - **The inventory checks `PATH`.** `ResourceRegistry.inventory()` now asks a resolver (default
-    `shutil.which`, injectable for tests) whether each `local_cli` is installed and says
-    `— installed at /usr/bin/opencode` or `— NOT INSTALLED (not on PATH)`. This is the whole point
-    of listing resources at startup (SPEC §3.5): a delegation is minutes of work, and finding out
-    its CLI is missing at the end of it is exactly the failure the listing exists to prevent.
-  - **The wizard's optional resources stage provisions it** (`scripts/setup.sh` stage 8): it reports
-    whether `opencode` is on `PATH`, records the resource either way (via the product's own
-    environment with `uv run`, so the file written is the file the runtime reads), and adds the
-    install to the to-do list when the binary is missing.
-  - **Reading a registry can no longer stop a startup.** `added_at` is accepted as a TOML datetime,
-    an ISO string, or a number, and anything unreadable reads as "now" — the field is a note about
-    when access was granted, not an identity, and a hand-edit must not be what breaks boot.
-
-  *Supersedes:* `opencode` being named in the spec and absent from the registry. *Cost, stated
-  plainly:* one `PATH` lookup per `local_cli` each time the inventory is built (startup and each
-  turn's context), which is a `stat` per resource.
-
-- **A message is routed to the seat it belongs to, so the owner never has to name one.** The cabinet
-  existed and was reachable only by naming a seat or editing `active = true`, which is a switchboard
-  rather than a chief of staff. Now the ingress asks *who takes this*, before the turn starts, in
-  `cabinet/triage.py`:
-
-  - **An address the owner wrote wins, and no model is asked.** `athena: …`, `@athena …`, `to athena: …`
-    — resolved against the cabinet, so a leading word that is not a seat stays an ordinary sentence
-    ("Right, so…") instead of becoming a failed address (SPEC §7).
-  - **Otherwise one question, over the charters themselves.** The menu is the cabinet: a second list
-    of responsibilities living in code would drift the day a charter was edited, and it would be the
-    copy the model believed. The question goes to the cheap route first, with the heavy chain behind
-    it. A hand-written ninth charter is routable the moment it exists.
-  - **The answer is validated and read strictly.** It must *lead* with a seat — before a separator, or
-    as the whole line — because prose that merely mentions one is not a choice: "not Athena, this is
-    Odysseus's" contains both names. `resolve()` checks it against the real charters, so routing
-    cannot invent an identity.
-  - **Everything unreadable falls back rather than guessing** — no answer, an unknown name, a provider
-    that is down, a message under four characters. The seat already handling this conversation
-    (`Runtime.last_seat`, keyed by channel, in memory only: a restart loses the thread and the next
-    message is routed fresh) takes it, else the active seat. A classifier's bad day must not cost the
-    owner their request, so `triage()` catches rather than propagates.
-  - **The reply says who answered** — `**Athena** · <why>` — whenever the seat is not the active one.
-    A route nobody can see is a route nobody can correct. Applied in `main.deliver()`, so every
-    surface gets it from one place.
-
-  The turn itself is unchanged: routing is decided at the ingress and passed in as `seat=`, so a caller
-  that already knows the identity (a wake, the self-test) is unaffected, and the engine resolves the
-  seat once exactly as before. *Supersedes:* a seat being reachable only by `daedalus activate` or by
-  naming it. *Cost, stated plainly:* one cheap-route model call per owner message.
-
-- **`daedalus ask` prints its answer.** It ran the turn and dropped the text on the floor — printing
-  only `(no reply)`, and only to stderr when the turn was empty. Silent on success and vaguely worded
-  on failure is the one shape a CLI request must not have. It now routes, runs as the seat that took
-  it, and delivers through the same path as the daemon, attribution line included.
-
-
-- **The proof-of-life holds, and the status lines that said otherwise no longer do.** SPEC §11 defines
-  P0's acceptance as the owner sending a free-text request it has never seen and watching it complete
-  end-to-end with no code touched — and §11's own gate on the cabinet ("the loop ships and does one real
-  thing before any seat is wired") hangs off it. It was being treated as outstanding because one turn
-  (`tools=none`) had been read as the whole story; the journal says otherwise: on 17 Oct a free-text
-  request at 08:24 walked `capability op=list` → `capability` → `schedule` and came back with the work
-  authored and scheduled, and later turns answered calendar questions through the `calendar` tool
-  (`op=agenda -> ok`, and `op=create -> ok` on the back of plain text). No hardcoded flow anywhere in it.
-  SPEC's status header (which still claimed "190 tests green; `0.1.0` pending Discord proof-of-life") and
-  §2's non-goals line are corrected to match, and T13's parenthetical no longer claims a missing
-  precondition. *Nothing in the code changed — this is the record catching up with the machine, which is
-  the whole reason the §11 gate was written down instead of assumed.*
-
-- **A process that dies now says so, and the record of it outlives the daemon that started it.**
-  `process start` left something running and `process list` showed `rc=` — the *same* value for "still
-  running" and "died at 04:00", so the one question worth asking could not be answered from the output.
-  And the registry was a dict on the manager: a restart did not just lose the history, it lost the
-  processes, which kept running as orphans that nothing could list, read, or stop. The registry is now
-  `state/processes.json` — file-first and hand-readable like the rest of the state — holding the
-  command, the pid, **the pid's `/proc` start time**, and when and with what code it ended:
-
-  - **The start time is the load-bearing part.** A pid is not an identity, it is a number that gets
-    recycled, so the pair is what lets a row written by a previous daemon say "that was me" without ever
-    saying it about whatever holds the number now — the difference between stopping an orphan and killing
-    a stranger. A row with no fingerprint is never called alive and never signalled: not killing a
-    stranger outranks reaching a process.
-  - **Three states that used to look alike now read alike no more:** running · `exited at 09:12:01
-    (rc=3)` · *ended with nobody watching*, where the exit code was never ours to collect and an invented
-    number would be worse than the gap. A process from before the restart reports `output not kept`
-    rather than `0 lines`.
-  - **`stop` reports what happened, not consent.** An entry that is already gone is not "stopped" — it
-    says when it went. A process started by an earlier run *is* stoppable, and the reply says its exit
-    code is not ours to collect. Stopping also actually stops now: the process leads its own session, so
-    the signal goes to the whole tree, because a killed shell does not take the command it was running
-    with it.
-  - **A second `start` under a live name is refused.** It used to replace the registry row, which left
-    the first process running with nothing able to list, read or stop it — an orphan made by the very
-    call that was supposed to manage it.
-
-  Deliberately **no restart policy**: a process that exits may be exiting for a reason, and a supervisor
-  that silently restarts it is how one crash becomes a loop. The ending is recorded and reported; the
-  decision is the owner's. 11 tests in `tests/test_process.py`. *Supersedes a deferral recorded in SPEC
-  §13; the survival policy itself is still an open call, now written down as one.*
-
-- **A declared resource cap is now a cap.** Every capability manifest declares `caps = { cpu, mem_mb, time_s }`,
-  the values were written down, persisted, shown to the model that authored them and shown to the owner —
-  and only `time_s` was ever applied. Nothing stopped an artifact from taking every core or allocating
-  until the kernel picked a victim, and the victim is usually the daemon or whatever the owner is doing.
-  A boundary that is recorded and not enforced is worse than no boundary, because the model reasoning
-  about its own resource use and the owner reading the manifest both act as though it is there. All three
-  bite now:
-
-  - **`mem_mb` is enforced on resident memory**, not address space. The runner samples `/proc/<pid>/status`
-    while the artifact runs and stops it the moment it passes the cap, naming the number
-    (`hit its mem_mb=64 cap: resident memory reached 116 MB`). A tight `RLIMIT_AS` was the obvious
-    implementation and the wrong one — address space is not memory, a healthy CPython reserves far more
-    than it ever touches, and SPEC §13 had already flagged that a rushed limit kills working capabilities.
-    Resident is also what "512 MB" means. A generous `RLIMIT_AS` stays as a **backstop only**, four times
-    the declared cap and never below 2 GiB, for an allocation big enough to land between two samples.
-  - **`cpu` is a share of the machine**, applied as CPU affinity over whole cores and rounded **down**.
-    Rounding up would hand out more than the manifest declared, and a cap that is exceeded is not a cap. A
-    sub-core share cannot be expressed by affinity at all, so `cpu < 1` is **refused** with that reason
-    instead of being silently rounded up to one core; the cgroup quota that would express it stays
-    recorded in SPEC §13 as the upgrade path.
-  - **All three live in the child.** A stdlib launcher sets them and then `exec`s the artifact, so they
-    survive the exec and are inherited by anything it spawns — and the child is now its own session
-    leader, so a timeout or a breach kills the whole tree instead of orphaning helpers that keep the caps
-    they were started with.
-
-  Two smaller consequences, both about not hiding things: a cap of zero is refused where it is read (a
-  zero cap is a kill switch, not a boundary), and the `capability` authoring tool now takes `cpu` and
-  `mem_mb`, because a cap the model cannot declare is a hidden default rather than a contract. A failed
-  run also reports its cause — the last stderr line, or the signal — instead of blaming its own absent
-  JSON. 10 tests in `tests/test_caps.py` and a 15th selftest check. *Supersedes a deferral recorded in
-  SPEC §13.*
-
-- **Seats can leave each other messages, and a message outlives the daemon that carried it.** SPEC §7
-  has always said a seat is *identity + charter + memory namespace, never a process* — so there is no
-  socket between them to lose a message on, and no in-memory list to keep one in either.
-  `cabinet/protocol.py` is the typed message (`request / ack / partial / result / verify / failure /
-  cancel`, with correlation and causation), and `cabinet/broker.py` is the durable queue over
-  `cabinet/messages.db`. ARCHITECTURE §9.2 promised at-least-once **with dedup**; the two halves are two
-  different promises, and each is made where it can actually be kept:
-
-  - **Dedup is the sender's id, chosen before the first attempt.** A retry is the same message when it
-    carries the same id, so the second write stores nothing, leaves the row's place in the queue alone,
-    and reports `duplicate=True`. An id minted inside the retry loop would be a brand-new message every
-    time and nothing downstream could tell — which is why the id is minted at construction, not at send.
-  - **Delivery is an offer, and it is counted.** A message is offered until it is *resolved*, so a seat
-    can be handed the same message twice; it is told (`attempts=2`) rather than left to guess whether the
-    earlier attempt finished. The broker cannot know that, and inventing the certainty is the
-    exactly-once lie §9.2 rules out. What it *can* do is make the repeat visible and make every side
-    effect dedupable by giving it a stable id.
-  - **Resolution happens once.** The second `resolve` of the same id is the duplicate of the first and
-    never rewrites it; `reopen` puts a *wrong* answer back on the queue and moves the count with it,
-    because a rejected answer was still an attempt.
-  - **A reply inherits the exchange.** `reply()` sets `causation_id` to the message it answers and
-    `correlation_id` to that message's correlation, so `thread(any id in it)` replays the whole exchange
-    in order and the route back cannot be passed in wrong. A correlation id nobody queries is a field,
-    not a link.
-
-  Refused, because each is silent otherwise: an unknown `type` (a seat that reads `restult` answers
-  nothing), a payload that is not a mapping, a message from a seat to itself (the routing slip — a
-  seat's notes to itself are memory or a scheduled job), and a **display name** as a recipient: `Melinoë`
-  is what the owner reads, `melinoe` is the only thing addressable, and a message sent to the former
-  would sit in the queue forever looking exactly like a seat that never answers. 24 tests in
-  `tests/test_broker.py`, including the whole `Icarus → Melinoë (verify) → Icarus (result)` exchange
-  across three brokers on one path. *New; nothing superseded. Nothing consumes the queue yet* — wiring a
-  seat to read its inbox is the collaboration ticket, and keeping that out of this one is deliberate.
-
-- **A run whose moment fell while the daemon was down is caught up, not dropped — one at a time, and only
-  when it is still worth saying.** `cron.matches` only ever asks about *now*, so a job whose 08:00 tick
-  passed while the daemon was asleep was not skipped and not recorded: from the scheduler's point of view
-  08:00 never was. The owner saw the one thing they could see — a morning with no briefing — and then two
-  of them the next time the machine came up. `scheduler/catchup.py` is the queue's judgement, and it is
-  written out because *"only the needed tasks"* is exactly the call that goes wrong when it stays implicit:
-
-  - **Superseded.** Only the *latest* missed occurrence is a candidate; the earlier ones are counted, never
-    replayed. A daemon off overnight with a five-minute job has one thing to say, and the newest tick is
-    what says it — without this rule, a start-up would run that job 288 times, which is the pile the owner
-    asked us to avoid. `cron.count_occurrences` reports how much a single catch-up stood in for.
-  - **Stale.** Even the latest one has a moment, and some moments have plainly passed: a disk check from six
-    hours ago is not a late report, it is a *false* one — it would tell the owner the disk was low this
-    morning. A briefing is different, because it is about a day that is still today at nine. So the window
-    is per **kind** (`1h` for a capability, `12h` for a wake) and per **job** (`late_within`, settable
-    through the `schedule` tool as `"45m"`/`"6h"`/`"2d"`). A skip is recorded with the same visibility as a
-    run — `ran=False`, `ok=True`, a note naming both the lateness and the window — because declining a
-    stale alert is a decision, not a failure.
-  - **Spent once.** A skip moves `last_run` exactly as a run does, so the verdict is taken once instead of
-    being re-litigated — and re-noted — on every tick for the rest of the day.
-
-  The missed moment decides *what* runs and the present moment decides whether it may *speak*, so a briefing
-  caught up at 23:40 stays quiet: quiet hours and the daily cap did not lapse because the daemon was down.
-  Draining happens after the ordinary due pass and looks strictly before the present minute, which is what
-  keeps the two from claiming the same minute — and why it can run on **every** tick, so a tick that merely
-  *overran* recovers too, not only one after a restart. Two catch-up runs are separated by `stagger_s`
-  (2 seconds, an attribute): they were already sequential, but three notifications inside one second still
-  read as a pile. New `cron.previous_run` walks backwards from the present minute, bounded by the job's own
-  history and a horizon, sharing parsed fields with `next_run` so a scan is a set lookup rather than a
-  re-parse. 22 tests in `tests/test_catchup.py` and `tests/test_cron.py`, a 14th `selftest` check that
-  drains a real queue in a scratch home, and ARCHITECTURE §7.3.3. *New; nothing superseded.*
-
-- **`search` now has two backends, and the first one is yours: a local SearXNG, with DuckDuckGo behind it.**
-  `search` broke on 17 Oct for two unrelated reasons that looked identical from the outside — both printed
-  *"(no results)"*. One was a parser that could not see results that were there; the other was DuckDuckGo
-  serving a **bot challenge** to the bare `httpx` User-Agent, and the tool calling a refusal an empty web.
-  Patching selectors again is a treadmill, so the primary backend is now a **service the owner runs**:
-  SearXNG answers in **JSON**, so nothing in the tool depends on another site's HTML staying still and no
-  challenge page can masquerade as an answer. DuckDuckGo stays as the fallback, so an owner with no SearXNG
-  keeps search, a SearXNG that is down costs nothing but a refused connection on loopback, and a first
-  backend that comes back **empty** gets a second opinion instead of the turn ending on it. Falls back
-  silently when it succeeds — the choice of backend is in the tool's `data` and the journal, not in the
-  owner's face. Configured by `DAEDALUS_SEARCH_URL` (default `http://127.0.0.1:8888`; `off` disables the
-  backend). The approval prompt was corrected to match: the query still leaves the machine, but via the
-  owner's own SearXNG when one is up, and the declared `net` scope now names both. The instance itself is
-  the `daedalus-searxng` container, published to **loopback only**, config at `~/.daedalus/searxng/settings.yml`
-  (`limiter: false`, since the rate limiter is for public instances and answers a scripted caller with a
-  block page — the same failure mode this backend exists to remove; and `formats: [html, json]`, without
-  which `?format=json` is a 403). 11 tests in `tests/test_search.py`.
-
-- **A repeated failure earns a correction before the turn ends.** Three identical failures used to end the
-  turn on the spot: the owner was told *"I got stuck repeating the same failing step"* and the **model was
-  told nothing at all** — so the one party holding the failing call was the party that never learned it was
-  repeating, and a model that could have changed course had no reason to. It is now told: which call, with
-  which arguments, the tool's own error **whole** (the stuck message cut it at 160 characters, which is how
-  a refusal naming the exact fix stayed unread), and an instruction to change approach or stop. A call
-  repeated *after* that correction still ends the turn at once — the correction is a chance, not a licence —
-  and the budget is two dead ends per turn, so a third ends there. *Supersedes:* the immediate return at
-  `MAX_IDENTICAL_FAILURES`. 4 tests in `tests/test_engine.py`.
-
-- **A restart is not amnesia: the conversation is kept, and kept for every way a turn can end.** The prompt
-  already replayed a window of the exchange, but only from `Runtime.history` — a dict **in the process** —
-  and only for turns that ended in prose. A turn the repeat guard cut short, a turn the step limit cut
-  short, a turn the owner denied: none were recorded, so the next turn read a conversation that had never
-  contained the owner's last message and the same request could be made four times with no sign it had been
-  heard. Every terminal path now records the turn, and the window is written to
-  `state/history/<conversation>.json` — owner-only (`0600`), bounded to the last 24 messages, moved into
-  place atomically — so a restart no longer wipes it. It is a *transcript*, not memory: facts still belong
-  in the facets, where they can be superseded, classified and searched. New
-  `src/daedalus/loop/transcript.py`; 8 tests in `tests/test_transcript.py`, 3 in `tests/test_engine.py`.
-
-- **`daedalus serve --publish` — the dashboard reaches the phone, over the tailnet and never past
-  it.** SPEC §3.5 has always said the dashboard is *"published privately via Tailscale Serve
-  (loopback-bound, no public Funnel)"*, and T1 stopped at the loopback: nothing reached the phone.
-  `--publish` runs `tailscale serve --bg http://127.0.0.1:<port>` — and the reason it is a separate
-  flag rather than a default is that publishing is a second gate being opened, and a gate opened
-  silently is a gate the owner cannot be said to have opened. The tailnet's own authentication
-  becomes the outer gate; the loopback bind and the write token stay exactly as they were. Four
-  properties, each worth its words:
-
-  - **The command is printed before it runs** (`+ tailscale serve --bg …`), because an owner about
-    to publish something is entitled to read the exact line first; a command that appears only in
-    shell history after the fact was never really shown.
-  - **Funnel is refused by name.** `tailscale funnel` is the outer gate removed entirely — the
-    dashboard reachable from the internet behind a TLS certificate and nothing else. The module
-    never constructs that command (a test asserts every command it builds is a `serve` or a
-    `status`), and it refuses to publish onto a node whose `serve status --json` shows Funnel on,
-    with the one-liner to take it down first.
-  - **A subprocess never reads the owner's terminal.** The CLI is run with stdin cut off: an
-    unauthenticated `tailscale` that stops to ask a question would otherwise hang the publish
-    silently — which is exactly what the first real run of this did on this laptop, and why the
-    fix exists.
-  - **ctrl-c takes the route back down.** `--bg` outlives the process, and a published route
-    pointing at a dead port is a broken dashboard on the phone rather than an error anywhere.
-
-  14 tests in `tests/test_publish.py`.
-
 ### Fixed
 
+- **A stopped turn leaves its ledger behind, and errors travel fenced (T44).** The
+  18 Oct 22:52 turn — four identical `schedule op=add` failures inside a minute —
+  lost its evidence twice on the way out. First, the live work trace (one
+  "working…" message, edited in place, the owner entitled to see what runs in their
+  name — §9) deleted itself at the turn's end on **every** outcome, so the reply
+  "I got stuck repeating the same failing step — schedule kept coming back with…"
+  stood alone with nothing beneath it to scroll; the one turn whose record the
+  owner needed was the one turn that kept none. Second, the reply interpolated the
+  tool's raw error, and Discord's markdown italicises pairs of `*` on the way to
+  the owner: the pasted error read `"0 7 * * "` where a five-field cron had been —
+  precisely the punctuation the error was about. Now:
+
+  - **A turn the engine stopped holds its ledger.** `finish(error=…)` asks the
+    surface (`hold_trace()`, duck-typed like `progress`) to keep it; the surface
+    takes one final complete edit — the line that landed inside the 2.5 s edit
+    interval is flushed rather than dropped, because that last failing line is
+    exactly the finding the ledger exists to keep — and the message stays. A turn
+    that answered keeps the clean-channel contract unchanged: ledger deleted, the
+    reply stands alone. The escaping of the tool output on the ✗ trace line also
+    widened from 80 to 200 characters, because an error whose fix sits at the end
+    (T42's signpost, once it exists) arrived clipped.
+  - **Errors leave fenced.** The canned "stuck" reply now carries the tool's error
+    in a code block, with a zero-width space breaking up any fence the text itself
+    contains, so markdown cannot rewrite the punctuation a diagnosis may turn on.
+
+  Three surface tests (held ledger, answered turn unchanged, interval-line
+  survival) and two engine tests (the fenced whole error + `held == 1` on a stopped
+  turn; `held == 0` on an answered one). *Supersedes: every stopped turn asking the
+  owner to scroll a channel that had already deleted the one thing worth reading.*
 - **The dashboard reaches the phone again, and the route stops outliving the daemon.** The phone path was
   broken by two faults that each hid the other. First, the daemon bound the dashboard to port **0** — a
   number chosen fresh every run — while `tailscale serve` had been told the *number* a previous run chose.

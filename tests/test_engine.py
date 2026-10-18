@@ -117,6 +117,43 @@ async def test_a_repeated_identical_failure_stops_the_turn(runtime: Runtime) -> 
     assert "stuck repeating" in result.text
 
 
+async def test_a_stuck_turn_names_its_error_whole_and_asks_for_the_ledger(runtime: Runtime) -> None:
+    """The 22:52 turn lost its evidence twice on the way out.
+
+    The reply interpolated the tool's raw error, and Discord italicised pairs
+    of `*` on the way to the owner — the pasted answer read `"0 7 * * "` where a
+    five-field cron had been. And the running ledger the owner had watched
+    disappear at the turn's end, leaving "I got stuck" with nothing beneath it
+    to scroll. The error now travels fenced, and a turn the loop stopped asks
+    the surface to hold its ledger — both already fixed where they were seen.
+    """
+    runtime.settings.max_steps = 16
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
+
+    fences = result.text.count("```")
+    assert fences >= 2, f"the tool's error must travel fenced, or markdown rewrites it:\n{result.text}"
+
+    assert runtime.surface.held == 1, (
+        "a turn the loop stopped must ask the surface to keep its ledger — "
+        "the reply summarizes one failing call, the trace shows all of them"
+    )
+
+
+async def test_an_answered_turn_leaves_the_channel_clean(runtime: Runtime) -> None:
+    """The hold is for stopped turns, not a new standing behaviour."""
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([ChatResult(content="done.")])]
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
+
+    assert result.error == ""
+    assert runtime.surface.held == 0
+
+
 async def test_the_model_is_told_it_is_repeating_before_the_turn_ends(runtime: Runtime) -> None:
     """A dead end the model never hears about is a dead end it cannot leave.
 

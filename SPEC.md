@@ -507,6 +507,18 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Long tasks run in threads.
 - The "daily message" is **not a template** — it is the agent *choosing* to speak, composed fresh each time. The scheduler triggers; the model writes.
 - **Whether it may speak is decided in code, not by the model** (§6). *Quiet hours* silence a wake outright, and a *daily cap* bounds how often it may open its mouth, so a cadence job cannot become a drip. Within those bounds the model still owns *substance*: it may look at the day and reply `[silent]`. A notification from an authored capability is **not** a wake and is **not** gated — the owner defined that capability and asked it to speak up, and silencing an alert at 03:00 would defeat the thing it was built for.
+- **The turn's work is visible while it happens** — one live status message per turn
+  (tool, op, outcome; never the owner's words, never the arguments), edited in place
+  under Discord's edit limit, and deleted when the turn ends so the answer stands
+  alone. The one exception is a turn the **engine stopped** — a repeated failure or
+  the step limit — whose ledger is held by the surface, because the reply summarizes
+  one failing call and the ledger shows all of them (T44).
+- Errors travel to the owner **fenced** (T44): raw tool error text goes out in a code
+  block, because Discord's markdown italicises pairs of `*` and rewrites things like
+  a five-field cron example on the way out.
+
+---
+
 ## 10. Phases
 
 - **P0 — the loop** *(delivered: loop, primitives, capability substrate, memory v0, scheduler v0, Melinoë gate, Discord surface, setup wizard)*
