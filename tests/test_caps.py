@@ -90,7 +90,12 @@ def _cap(
     root = tmp_path / "capabilities"
     manifest = Manifest(name=name, caps=Caps(cpu=cpu, mem_mb=mem_mb, time_s=time_s))
     manifest.save(root / name)
-    (root / name / "run.py").write_text(run_py, encoding="utf-8")
+    entry = root / name / "run.py"
+    entry.write_text(run_py, encoding="utf-8")
+    # The launcher execs the entry directly, caps surviving the exec — the
+    # artifact contract is "an executable file", and authoring.py delivers it
+    # (T41). A test writing its own artifact owes the same contract.
+    entry.chmod(0o755)
     return CapabilityRunner(root, use_venv=False), manifest
 
 

@@ -52,6 +52,16 @@ argv = sys.argv[3:]
 try:
     os.execvp(argv[0], argv)
 except OSError as exc:
+    # A .py entry the kernel refuses to exec is a *Python source file* — no
+    # exec bit (a capability written as 0644 before authoring chmods, T41) or
+    # no shebang (plain Python). Both are normal shapes for the artifact
+    # contract, so it runs as Python through the interpreter, limits intact;
+    # anything else reports the real error and exits 127.
+    if argv[0].endswith(".py"):
+        try:
+            os.execv(sys.executable, [sys.executable, *argv])
+        finally:
+            pass
     sys.stderr.write("limits: cannot start %s: %s\\n" % (argv[0], exc))
     raise SystemExit(127)
 """

@@ -16,6 +16,18 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **Melinoë keeps her verdicts (T22).** The verification gate always *acted* — scope
+  posture, run-once, output shape — but its verdicts lived only in the turn's output: a
+  capability refused on Tuesday met a Melinoë with no memory of having said no on
+  Thursday. Every gate verdict (from `capability op=author` and `op=verify`) is now
+  written to **her namespace** — `memory/namespaces/melinoe/verdicts.md` — with the
+  check names and the reason ("run_once — exit 3"), and nothing in the coordinator's
+  namespace inherits it: whose verdicts these are is exactly what a namespace is for.
+  Activating her means answering *from* her bench, and the refusal's standing rule is
+  on the same line: a refused shape is re-litigated on the next authoring, the gate
+  runs again, and only a fresh pass verifies. A bench that cannot take a note (say, a
+  full disk) logs a warning and the verdict still stands — the gate does not fail
+  because its memory did.
 - **A scheduled job can belong to a seat (T21).** Icarus and Odysseus were a charter,
   a namespace, and an activation — three nouns and not one verb. Now a scheduler job
   may name its seat, and a seated wake is the seat's work end to end: it composes
@@ -97,6 +109,18 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   only when the model chose to write nothing in particular.*
 
 ### Fixed
+
+- **Capabilities are born executable, and the launcher is honest about what it execs
+  (T41, fix 1).** The limits launcher `execvp`s the entry file directly — which needs
+  the executable bit the authoring tool never set — so every capability authored
+  through the tool was born with a `127` waiting for its first scheduled run: a
+  failure indistinguishable from success, the exact sin T41 records. Two halves:
+  `authoring` now `chmod 0o755` after `write_text` (the hand-fix of 18 Oct, now in
+  source), and the launcher falls back to the interpreter for a `.py` entry the
+  kernel refuses to exec — no bit, or no shebang, both normal shapes of a Python
+  artifact — while keeping direct `execvp` for genuine executables (what the
+  delegations share this launcher for). The suite runs 916 green; the 22 reds of the
+  in-flight extraction baseline are gone.
 
 - **A stopped turn leaves its ledger behind, and errors travel fenced (T44).** The
   18 Oct 22:52 turn — four identical `schedule op=add` failures inside a minute —

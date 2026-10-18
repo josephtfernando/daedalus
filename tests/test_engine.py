@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 from typing import Any
 
 from daedalus.config import Settings
@@ -551,7 +552,7 @@ async def test_a_call_sent_twice_in_one_step_runs_once(runtime: Runtime) -> None
                         "calendar",
                         op="create",
                         summary="LeetCode Weekly Contest 524",
-                        start="2026-10-18T08:00",
+                        start=(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT08:00"),
                     ),
                     ChatResult(content="One reminder set."),
                 ]

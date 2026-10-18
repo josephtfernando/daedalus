@@ -74,7 +74,13 @@ def materialize(
     """Write ``capabilities/<name>/{run.py, manifest.toml, README.md, state/}``."""
     cap_dir = root / manifest.name
     (cap_dir / "state").mkdir(parents=True, exist_ok=True)
-    (cap_dir / manifest.entry).write_text(run_py, encoding="utf-8")
+    entry = cap_dir / manifest.entry
+    entry.write_text(run_py, encoding="utf-8")
+    # Executable at birth (T41). The limits launcher `execvp`s the entry file
+    # directly — the launcher's caps survive the exec — and a file `write_text`
+    # creates is 0644, so every capability was born with a 127 waiting for its
+    # first scheduled run: a failure indistinguishable from success.
+    entry.chmod(0o755)
     manifest.save(cap_dir)
     (cap_dir / "README.md").write_text(
         readme
