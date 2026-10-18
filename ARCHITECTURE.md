@@ -592,6 +592,8 @@ type ∈ request | ack | partial | result | verify | failure | cancel
 - **Resolution happens once.** The second `resolve` of the same id is the duplicate of the first and never rewrites it. `reopen` puts a *wrong* answer back on the queue and moves the count, because a rejected answer was still an attempt.
 - **`correlation_id` names the exchange, `causation_id` one hop back.** A reply inherits the correlation and points its causation at the message it answers, so a thread is one query and "why did you say this" is a hop.
 
+**The wiring (T31).** The offer is the *turn*: `engine.run_turn` asks the broker for the seat's unanswered messages exactly once, before the prompt is built, and puts them in an `## Inbox` section — which is also where the attempt count lives, because a prompt that was built was a delivery. A wake *preview* composes the same prompt without this line and therefore counts nothing. The seat's acts are the `message` tool: `op=answer` resolves the inbound message and sends the reply *as a message* routed by `Message.reply()` (correlation inherited, causation pointed at what it answers); `op=send` opens or continues an exchange without closing anything; `op=thread` reads one back. A second answer to a resolved message is refused with "the first answer stands" — dedup, said aloud. If the queue write fails after the resolution succeeded, `reopen` puts the message back rather than letting the answer be lost between two acts — at-least-once must survive even the tool's own crash. Recipients are validated against the live cabinet: a message to a non-seat is refused by name, because a queue that cannot drain is a queue that lies.
+
 ### 9.3 Capability run protocol
 
 Process boundary, JSON in / JSON out:

@@ -68,6 +68,8 @@ owner's laptop. You are reached over Discord by one person.
 
 {now}
 
+{inbox}
+
 ## How you work
 
 - The owner writes free text. There are no commands and no fixed flows. Compose the behaviour
@@ -164,6 +166,7 @@ def build_system_prompt(
     *,
     seat: str | None = None,
     include_local_only: bool | None = None,
+    inbox: str = "",
 ) -> str:
     chosen = pick(ctx.seats, seat)
     # Resolved from the seat this prompt is *for*, not from the ambient session: a
@@ -184,7 +187,41 @@ def build_system_prompt(
         memory=memory.inventory(allow_local_only=include_local_only),
         tools="\n".join(f"- {t.name}: {t.description.splitlines()[0]}" for t in ctx.tools.all()),
         grants=grant_text,
+        inbox=inbox or "",
     )
+
+
+def inbox_block(ctx: "Runtime", seat_key_name: str) -> str:
+    """The section that hands a seat its unanswered messages — the offer (T31).
+
+    Called exactly where a turn is built, and nowhere else: calling it *is* the
+    delivery, so the broker counts the attempt there. A prompt preview that
+    merely renders what a turn would say must not count one, which is why the
+    wake preview goes through `build_messages` (no inbox) and the engine goes
+    through the parameter.
+    """
+    from ..cabinet.broker import broker_for
+
+    deliveries = broker_for(ctx.settings.home).inbox(seat_key_name)
+    if not deliveries:
+        return ""
+    lines = ["## Inbox (seat-to-seat)", ""]
+    lines.append(
+        "Unanswered messages from other seats. Answer each with"
+        " `message op=answer id=<the id> type=<result | failure | cancel>` and put the substance"
+        " in `text` — the tool call is the answer, not prose beside it (an answer closes the"
+        " exchange). An `ack` or `partial` that only reports progress is"
+        " `message op=send` instead, with `causation_id` of the message it follows."
+    )
+    lines.append("")
+    for d in deliveries:
+        count = f"offered {d.attempts} times" if d.attempts > 1 else "offered once"
+        lines.append(f"- id={d.message.id} · from {d.message.sender} · {d.message.type} · {count}")
+        text = str(d.message.payload.get("text", "")).strip()
+        if text:
+            lines.append(f"  {text[:600]}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_messages(
@@ -193,9 +230,10 @@ def build_messages(
     *,
     seat: str | None = None,
     max_history: int = 12,
+    inbox: str = "",
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(ctx, event, seat=seat)}
+        {"role": "system", "content": build_system_prompt(ctx, event, seat=seat, inbox=inbox)}
     ]
     key = event.thread_id or event.channel_id or event.user_id
     messages.extend(ctx.recent(key, max_history))

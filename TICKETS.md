@@ -888,7 +888,7 @@ one clause this feature does not own.
 
 #### P6 — the group chat
 
-### T31 — a seat reads its inbox · `open`
+### T31 — a seat reads its inbox · `done`
 *SPEC §7 ("seats do not call each other — they leave messages"). T14 (`broker.py`, done
 and unwired). ARCHITECTURE §9.2.*
 
@@ -904,6 +904,31 @@ resolved one is recognisably the duplicate.
 resolved by its answer; an unanswered message is offered again later; a repeated offer
 is *reported* as another attempt, not hidden; reading a message never deletes it, and a
 reply carries the exchange it answers.
+
+**Done 19 Oct (overnight).** The offer is the turn: `engine.run_turn` asks the broker
+for the chosen seat's unanswered queue exactly once (before `build_messages`) and puts
+it in the prompt's `## Inbox` section — with the substance, the sender, the type, and
+the running offer count ("offered 2 times" = an earlier turn held it and did not
+finish). Because the offer *is* the prompt build, a wake preview composes its prompt
+without this line and counts no attempt it did not make. The seat's acts live in a new
+`message` primitive: **`op=answer`** resolves the inbound message *and* sends the
+answer back as a real message — routed by `Message.reply()` (correlation inherited,
+causation pointed at the mail it answers) — so `thread()` reads the exchange whole
+from either side; a second answer to a resolved one is refused with "the first answer
+stands", and the refused answer is not in the thread (asserted). **`op=send`** opens
+an exchange (`request`) or continues one (`ack`/`partial`/`verify` with
+`correlation_id`+`causation_id`), and a **retry is a chosen id**: the same id sent
+twice is one queue row reported as a duplicate — asserted, including that the queue
+does not grow. `op=list`/`op=thread` keep reading without deleting, and recipients are
+the live cabinet's seat keys — `to=nobody` is refused by name with the keys spelled
+out, because a message to nobody is a queue that never drains. One failure mode is
+handled rather than hoped over: if the answer's *send* fails after its *resolve*
+succeeded, `reopen` puts the message back on the queue (attempt count moving with it)
+instead of letting the answer be lost between the two acts. 4 tests in
+`tests/test_inbox.py` (offer + resolve + thread; the repeat offer visible in attempts
+and in the turn; the second-answer refusal; open/continue/retry/refuse). Suite 942
+green. What is *not* here is the room itself — hops, budgets, convening (T32) — which
+is an owner decision SPEC has not had.
 
 ### T32 — a room is a bounded exchange · `open`
 *SPEC §7 (the typed vocabulary, including `verify`). **The decision this needs is the

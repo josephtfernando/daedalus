@@ -16,6 +16,25 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The inbox is wired: a seat's mail meets it on the seat's own turn (T31, P6's
+  first step).** T14's durable queue stopped at substrate; now `engine.run_turn`
+  asks the broker for the seat's unanswered messages exactly once per turn and the
+  prompt carries an `## Inbox` section — substance, sender, type, and the running
+  offer count, so "offered 2 times" says an earlier turn held it and did not finish
+  (a wake *preview* composes the same prompt without the line, and counts no
+  attempt it did not make). The seat's acts are the new `message` primitive:
+  **answer** resolves the inbound message and sends the reply as a real message —
+  routed by `Message.reply()`, correlation inherited, causation pointed at the mail
+  it answers — with a second answer refused ("the first answer stands"); **send**
+  opens or continues an exchange, and a retry is a *chosen id*: same id, same
+  message, one queue row, duplicate reported; **thread** reads an exchange back in
+  the order it happened. Reading never deletes; recipients are validated against
+  the live cabinet (`to=nobody` is refused by name — a queue that cannot drain is a
+  queue that lies); and a send that fails *after* its resolve succeeded puts the
+  message back with `reopen` rather than dropping the answer between two acts.
+  4 tests; suite 942 green. The room's own bounds (hops, budget, convening, T32)
+  stay with the owner's decision.
+
 - **"Still there in the morning" is now the machine's claim, not a ticket's promise
   (T27).** `daedalus selftest --live` gained three read-only checks that state facts
   about *this laptop*: **lid** — the effective `logind.conf` resolution (vendor

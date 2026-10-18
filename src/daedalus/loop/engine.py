@@ -13,6 +13,7 @@ from ..cabinet.seat import pick
 from ..model.providers import NoProviderAvailable, ToolCall
 from ..surface.base import ApprovalRequest, InboundEvent
 from . import context as ctx_mod
+from .context import inbox_block
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
@@ -127,7 +128,11 @@ class Engine:
             event=event,
             local_only_ok=ctx.model.chain_is_local(event.text),
         )
-        messages = ctx_mod.build_messages(ctx, event, seat=chosen.key)
+        # The inbox offer (T31): the turn *is* the delivery, so this is the one
+        # place the broker is asked. A wake preview composes the same prompt
+        # without this line and therefore counts no attempt.
+        inbox = inbox_block(ctx, chosen.key)
+        messages = ctx_mod.build_messages(ctx, event, seat=chosen.key, inbox=inbox)
         schemas = ctx.tools.schemas()
         used: list[str] = []
         failures: dict[str, int] = {}

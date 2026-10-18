@@ -18,6 +18,7 @@ def build_registry() -> ToolRegistry:
     from .files import FilesTool
     from .http import HttpTool
     from .memory import MemoryTool
+    from .message import MessageTool
     from .process import ProcessTool
     from .publish import PushTool
     from .remind import RemindTool
@@ -36,6 +37,7 @@ def build_registry() -> ToolRegistry:
         BrowserTool(),
         ProcessTool(),
         MemoryTool(),
+        MessageTool(),
         CalendarTool(),
         ScheduleTool(),
         RemindTool(),
