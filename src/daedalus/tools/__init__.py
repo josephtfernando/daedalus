@@ -18,6 +18,7 @@ def build_registry() -> ToolRegistry:
     from .http import HttpTool
     from .memory import MemoryTool
     from .process import ProcessTool
+    from .remind import RemindTool
     from .schedule import ScheduleTool
     from .search import SearchTool
     from .secrets import SecretsTool
@@ -35,6 +36,7 @@ def build_registry() -> ToolRegistry:
         MemoryTool(),
         CalendarTool(),
         ScheduleTool(),
+        RemindTool(),
         DiscordTool(),
         AskTool(),
         SecretsTool(),

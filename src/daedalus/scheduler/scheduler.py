@@ -104,6 +104,43 @@ class Scheduler:
     def remove_job(self, name: str) -> bool:
         return self.store.remove(name)
 
+    def add_reminder(
+        self,
+        *,
+        name: str,
+        when: datetime,
+        note: str = "",
+        late_within: str = "",
+    ) -> Job:
+        """One one-shot wake, for one named moment (T42).
+
+        `cron` could never say this: no expression means "2 hours from now,
+        once", and the recurring shape of an absolute-date one would fire
+        yearly forever. A reminder has its own kind — it composes through the
+        wake handler like a wake (fresh, as the active seat), but the
+        proactive gate has no say, because **the owner named the time**: the
+        gate bounds the agent's choice to speak, not the owner's (the same
+        rule `fire_reminders` states for calendar alarms). It fires once and
+        then retires.
+        """
+        if not name or not name.strip():
+            raise ValueError("a reminder needs a name — its handle in the list")
+        if not note or not note.strip():
+            raise ValueError("a reminder needs a note — what it wakes the agent to say")
+        if when.tzinfo is not None:
+            when = when.astimezone().replace(tzinfo=None)
+        if when <= datetime.now():
+            raise ValueError(
+                f"the reminder's moment is already past — it resolved to {when:%Y-%m-%d %H:%M}, "
+                "and a reminder that cannot be kept is refused, not quietly fired late"
+            )
+        window = late_within.strip()
+        if window and catchup.parse_window(window) is None:
+            raise ValueError(f"late_within must read like 45m, 6h or 2d — got {window!r}")
+        return self.store.put(
+            Job(name=name, kind="remind", target=note, late_within=window, run_at=when.timestamp())
+        )
+
     # -- the tick ---------------------------------------------------------
 
     def due(self, when: datetime | None = None) -> list[Job]:
@@ -123,6 +160,12 @@ class Scheduler:
             key = job.idempotency_key(when)
             if self.log.seen(key):
                 results.append(TickResult(job=job.name, ran=False, detail="already ran this minute"))
+                if job.kind == "remind" and job.run_at is not None:
+                    # A one-shot recorded by the log and still in the store is
+                    # the crash-between-fire-and-retire case: it already ran,
+                    # so it retires here — that is what "fires once" means.
+                    self.remove_job(job.name)
+                    results[-1].detail = "already fired (recovered after a crash); retired"
                 continue
             result = await self._run_job(job, ctx, wake_handler, when)
             self.log.record(Wake(key=key, job=job.name, ran_at=time.time(), ok=result.ok, detail=result.detail))
@@ -132,6 +175,18 @@ class Scheduler:
             # ticked a silent 03:00 and then a noon that had to speak, passed all
             # morning, and went red at 12:01 because noon was suddenly "already
             # run". A tick given a time must be governed by that time.
+            if job.kind == "remind":
+                if result.ok:
+                    # Fires once. `last_run` is never moved past the moment,
+                    # because `due()` for a one-shot reads `last_run is None`,
+                    # and a reminder that has fired is gone, not dormant. A
+                    # *failed* compose keeps the job: an owner-named reminder
+                    # lost to a transient model outage is silent loss — the
+                    # one failure this store must not pretend to succeed at
+                    # (the lesson of the executable bit, T41).
+                    self.remove_job(job.name)
+                results.append(result)
+                continue
             job.last_run = when.timestamp()
             self.store.put(job)
             results.append(result)
@@ -251,6 +306,39 @@ class Scheduler:
                 detail=run.error or f"exit {run.exit_code}",
                 output=run.result,
             )
+        if job.kind == "remind":
+            if wake_handler is None:
+                return TickResult(job=job.name, ran=True, ok=False, detail="no wake handler wired")
+            # **No proactive gate.** The owner named this moment; the gate
+            # bounds the agent's own choice to speak, not the owner's — the
+            # same rule `fire_reminders` states for calendar alarms.
+            text = await wake_handler(job.target or job.name)
+            if not text:
+                # The model looked at the named moment and said nothing — the
+                # same judgment a wake exercises. It costs the reminder its one
+                # firing, and that is right: retrying an owner alarm forever is
+                # worse than one quiet miss, and silence is the outcome here as
+                # it is for a wake.
+                return TickResult(job=job.name, ran=True, ok=True, detail="nothing worth saying")
+            if job.run_at is not None:
+                moment = datetime.fromtimestamp(job.run_at)
+                late: timedelta = when - moment
+                if late > catchup.window_for(job):
+                    text = (
+                        f"(this reminder was set for {moment:%a %d %b %H:%M} — delivered "
+                        f"{catchup.human(late)} late) {text}"
+                    )
+                    detail = (
+                        f"reminded {catchup.human(late)} late (set for {moment:%a %d %b %H:%M})"
+                    )
+                else:
+                    detail = "reminded"
+            else:  # pragma: no cover — a remind job always carries a run_at
+                detail = "reminded"
+            if ctx.surface is not None:
+                await ctx.surface.send(text)
+            self.proactive.note_spoken(when, text)
+            return TickResult(job=job.name, ran=True, ok=True, detail=detail, output=text)
         if job.kind == "wake":
             if wake_handler is None:
                 return TickResult(job=job.name, ran=True, ok=False, detail="no wake handler wired")

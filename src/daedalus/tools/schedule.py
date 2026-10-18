@@ -16,23 +16,45 @@ class ScheduleTool(Tool):
     name = "schedule"
     title = "Schedule a job"
     description = (
-        "Add, list, or remove scheduled jobs. A job either runs an authored capability "
-        "(no model) or wakes the agent to compose a message."
+        "Add, list, or remove scheduled jobs. `op=add` always needs `name` and `cron`: "
+        "a job here is something that *recurs* — cron is the only way to say when. A job "
+        "either runs an authored capability (no model) or wakes the agent to compose a "
+        "message. For a one-shot reminder — a single moment, not a pattern — use the "
+        "`remind` tool instead; no cron expression can say '2 hours from now, once', and "
+        "an absolute-date one would recur yearly forever."
     )
     risk = Risk.AUTO
     scopes = {"fs": ["state"]}
     parameters = params(
         op=({"type": "string", "enum": ["add", "list", "remove"]}, True),
-        name=({"type": "string"}, False),
-        cron=({"type": "string", "description": "5-field cron, e.g. '0 7 * * *'"}, False),
+        name=({"type": "string", "description": "the job's handle — required for op=add and op=remove"}, False),
+        cron=(
+            {
+                "type": "string",
+                "description": (
+                    "5-field cron, e.g. '0 7 * * *' — required for op=add; omit for list/remove. "
+                    "A wakeup that should happen once, not on a pattern, belongs to `remind`."
+                ),
+            },
+            False,
+        ),
         kind=({"type": "string", "enum": ["capability", "wake"], "default": "capability"}, False),
-        target=({"type": "string", "description": "capability name, or a wake prompt"}, False),
+        target=(
+            {
+                "type": "string",
+                "description": (
+                    "capability name, or a wake prompt — required for op=add"
+                ),
+            },
+            False,
+        ),
         late_within=(
             {
                 "type": "string",
                 "description": (
-                    "How late a run missed while the daemon was down is still worth running "
-                    "(e.g. '45m', '6h', '2d'). Defaults to 1h for a capability and 12h for a wake."
+                    "The grace window for a run missed while the daemon was down, still worth "
+                    "catching up (e.g. '45m', '6h', '2d'). This is not when the job runs — cron "
+                    "is. Defaults to 1h for a capability and 12h for a wake."
                 ),
             },
             False,
@@ -66,6 +88,9 @@ class ScheduleTool(Tool):
                     f"add needs {missing} — `name` is the job's handle in this list, and `cron` "
                     'is when it runs ("0 7 * * *" is daily at 07:00; "0 8,20 * * *" is twice a '
                     f"day). Kind defaults to `capability`, so give `target` too. "
+                    "A one-shot reminder is not this tool: if the moment should happen "
+                    "once, use `remind op=add` with `within` ('2h') or `at` ('2026-10-19T14:00') "
+                    "and a `note` — no cron expression can say '2 hours from now, once'. "
                     f"You sent: {sent_args(args)}"
                 )
             try:

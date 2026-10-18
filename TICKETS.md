@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct) · T40 · **T41 (found 18 Oct, live-fixed, needs source)** · **T42 (found 18 Oct, the one-shot reminder contract)** · T43 · T44
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct) · T40 · **T41 (found 18 Oct, live-fixed, needs source)** · **T42 (found 18 Oct, the one-shot reminder contract — done)** · T43 · T44
 
 ---
 
@@ -944,7 +944,7 @@ reading agrees with the publisher's on the same inputs.
 system kept working, so nothing surfaced. The first is fixed on the running instance; the
 second is the reason it happened and needs a source change.*
 
-### T42 — a wake that is not a cron cannot be said · `tools/schedule.py`, `scheduler/` · `open`
+### T42 — a wake that is not a cron cannot be said · `tools/schedule.py`, `tools/remind.py`, `scheduler/` · `done`
 
 **Symptom.** 18 Oct 22:51, routed to Calliope: the owner asked for a reminder to send
 a piece of his own writing. The turn tried `schedule op=add` four times in four steps
@@ -1009,13 +1009,35 @@ line.)
    wanted, do that" branch *followable* instead of a dead end. This is the
    difference between the 22:52 turn succeeding and failing.
 
-**Acceptance:** `remind op=add in="2h"` produces one wake near the named moment as
-the active seat and is gone afterwards — no second firing, nothing left to remove;
-`late_within` on a reminder still covers a missed wake after a daemon-down window
-without the job recurring; `schedule op=add` without `cron` is refused with the
+                  schedule op=add` without `cron` is refused with the
 `remind` path named in the refusal; the schema the model sees states the per-op
 requirements; and the canned "stuck" message renders the tool's error un-mangled
 (the trailing `*` of a cron example survives Discord).
+
+**Done 19 Oct.** The verb is **`remind op=add`** — `within` ("2h") or `at`
+("2026-10-19T14:00"), exactly one, plus `name` and `note` — on a `Job` carrying
+`run_at`, mutually exclusive with `cron`. The reachable pieces were built as designed;
+two semantics were **decided better than the ticket first said**:
+
+- **Missed-late reminders deliver; they never skip and never silently forgive.** The
+  first acceptance wording ("past its window, the missed wake is skipped") would have
+  meant an owner-named alarm dying quietly in a log the owner does not read — the
+  T41 sin. So a delivery far past its moment is caught up by the next tick, **prefixed
+  with how late**, and retired. Delivery itself is never gated: the reminder bypasses
+  the proactive gate exactly as calendar alarms do, because the owner named the time.
+- **A failed compose keeps the reminder and retries**, so a transient model outage
+  cannot eat it. A crash between fire and retire cannot redeliver — the one-shot's
+  idempotency key is anchored to the named moment, not to the tick's minute.
+
+`catchup.plan` skips one-shots (the cron scan has nothing to say about them). Schema
+honesty: the `schedule` description states `add` is recurring-only, the parameter
+descriptions name their per-op requirements, `late_within` says outright it is *not*
+the delay, and the `add needs cron` error signs the way out. The system prompt names
+the verb next to the speak-first paragraph. SPEC §3.5 lists `remind` among the
+primitives and §5.5 records the gate-exemption rule beside the calendar-alarm one.
+11 tests in `tests/test_remind.py`; the whole suite red-set is unchanged from the
+in-flight T29/T30 baseline (22, identical), 883 passing. T44's part — the error
+travelling fenced — landed the day before.
 
 ### T43 — memory capture is named as a habit, not left to personality · `loop/context.py` · `done`
 

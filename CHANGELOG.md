@@ -16,6 +16,48 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The `remind` verb — one-shot wakes, so a reminder can finally be said (T42).** The
+  18 Oct 22:52 turn — four identical `schedule op=add` failures in a minute, ended
+  "I got stuck repeating the same failing step" — was a contract failure three layers
+  deep: the schema promised `cron` optional, the intent (a one-shot reminder) is
+  inexpressible in cron — no expression means "2 hours from now, once", and the
+  recurring shape of an absolute-date one would fire *yearly forever* — and the trap
+  dates to the P0 commit. Now:
+
+  - **`remind op=add`** takes `within` ('2h') or `at` ('2026-10-19T14:00') — exactly
+    one — plus `name` and `note` (the wake prompt). `list`/`remove` mirror `schedule`.
+    Underneath, a `Job` carries `run_at`, mutually exclusive with `cron`; the job
+    composes through the ordinary wake path (fresh, as the active seat) but **bypasses
+    the proactive gate** — the owner named the time, the same rule calendar alarms
+    already state. After it fires it **retires itself** out of the store: `last_run`
+    is never moved, because a one-shot that has fired is gone, not dormant.
+  - **Delivery beats silence, with honesty enforced.** A moment missed while the
+    daemon was down is caught up by the very next tick; a delivery far past its
+    moment (past its `late_within` window, default 1h) is **prefixed with how late**
+    ("set for Mon 19 Oct 10:00 — delivered 3h late") rather than quietly pretending it
+    was on time, and never dropped into the wake log unread. A compose that *fails*
+    keeps the job and retries — an owner's reminder lost to a transient model outage
+    is precise silent loss, the exact T41 sin. A crash between fire and retire cannot
+    redeliver: the one-shot's idempotency key is anchored to the named moment, not to
+    the tick's minute.
+  - **The wall got a door, in three places the model can reach.** The `schedule`
+    error for `add` without `cron` now ends with the signpost ("A one-shot reminder is
+    not this tool: ... use `remind op=add` ..."), the tool descriptions state their
+    per-op contracts (`name`/`cron`/`target` required for `add`; `late_within`
+    described as a grace window, not a delay), the tool description says plainly that
+    `schedule` is for what recurs, and the system prompt names the verb next to the
+    speak-first paragraph. The correction's "if the error says what it wanted, do
+    that" branch is followable now: on 22:52, its every rung was empty.
+  - `catchup.plan` skips one-shots — the cron scan cannot read a `run_at`, and a
+    reminder's lateness is judged where it fires.
+
+  11 tests in `tests/test_remind.py`: fires once and retires; cannot refire; caught
+  up when missed; lateness announced; failed compose kept and retried; crash-recovery
+  cannot redeliver; `add_reminder` refusal shapes (past, unnamed, noteless, bogus
+  `late_within`); the file round-trip; the tool's validation; the `schedule` signpost;
+  the prompt naming the verb. *Supersedes: every one-shot intention since P0 meeting
+  "add needs cron" and having nowhere else to go.*
+
 - **The prompt names the habit of capturing durable facts (T43).** The owner tells the
   agent a person, a contact, a date, a commitment, a preference — and the turn keeps
   none of it unless the model *happens* to decide to. The store was never the missing

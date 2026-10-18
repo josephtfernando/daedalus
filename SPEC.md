@@ -67,6 +67,7 @@ The system is **not** a fixed toolbox. It **authors its own tools** on demand, k
 | `browser` | headless Chromium — JS-heavy sites, DOM extraction, screenshots |
 | `search` | web search |
 | `schedule` | cron-like: run *anything* on a period |
+| `remind` | a one-shot wake: a reminder for one named moment, kept once (T42) |
 | `process` | start / stop / monitor long-running processes (servers, demos) |
 | `memory` | read / write facts |
 | `calendar` | the internal Daedalus calendar: agenda, add / change / delete (§5.5) |
@@ -304,7 +305,13 @@ tick looks back over its own window for reminders that have come due, so one the
 arrives on time and is not repeated (`state/reminders.json`). A reminder is the owner's
 instruction rather than the agent's choice to speak, so it does **not** pass through the
 proactive gate (§9): a 03:00 reminder they asked for fires at 03:00, where a *wake* would be
-silenced.
+silenced. The `remind` verb (T42) extends the same principle to the agent's own wake path: a
+reminder for **one named moment** — `within` ('2h') or `at` (a timestamp) plus a note —
+composes fresh as a wake, does not pass through the proactive gate (the owner named the
+time), fires once, and then retires out of the job store, so no absolute-date cron can turn
+"send your writing tomorrow" into a yearly event. A delivery far past its moment **announces
+the lateness** rather than pretending it was on time, and a compose that fails keeps the
+reminder and retries rather than retiring an owner's alarm into silence.
 
 **A change can reach a whole set.** `update` and `delete` take one event by `uid`, or every
 event whose **name** matches `match` — "move all my standups to 10" is one call, not a loop
@@ -549,7 +556,7 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 
 1. **Scaffold** — uv project, Python 3.14, package layout, config, `.env` (reuse existing creds: `NVIDIA_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS`), journald logging.
 2. **Model client** — one OpenAI-compatible client behind a single `base_url`; NIM chain + fallback; Bonsai 8B local; cross-process rate-limit ledger.
-3. **Primitives (Layer 1 + capability tool)** — `shell`, `code`, `files`, `http`, `browser`, `search`, `schedule`, `process`, `memory`, `discord`, `ask`, `secrets`, plus `capability` (Layer 2 author/run/verify/schedule/remove).
+3. **Primitives (Layer 1 + capability tool)** — `shell`, `code`, `files`, `http`, `browser`, `search`, `schedule`, `remind`, `process`, `memory`, `discord`, `ask`, `secrets`, plus `capability` (Layer 2 author/run/verify/schedule/remove).
 4. **Approval middleware** — trust tiers; egress needs one-time approval → standing grant; buttons.
 5. **Discord surface** — one bot, DM allowlist (owner only), free-text handler, approval buttons.
 6. **The loop** — message → context assembly → model → multi-step tool calls → streamed response.

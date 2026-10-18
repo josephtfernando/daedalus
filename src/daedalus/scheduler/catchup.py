@@ -36,7 +36,10 @@ from .jobs import Job
 #: How late a missed occurrence of each kind is still worth running. See the
 #: module docstring: the difference is not severity but *tense*. A capability
 #: probes a condition and reports it in the present; a wake talks about a day.
-DEFAULT_LATE_WITHIN = {"capability": "1h", "wake": "12h"}
+#: A reminder is never *scanned* here (the due pass owns one-shots — `plan`
+#: skips them), but `window_for` is the announce-rule it shares: past the
+#: window, a late delivery says so, and never silently pretends it was on time.
+DEFAULT_LATE_WITHIN = {"capability": "1h", "wake": "12h", "remind": "1h"}
 
 #: A gap smaller than this cannot hide a missed occurrence, and every check costs
 #: a backwards cron scan — so it is not worth making. One minute plus a second of
@@ -115,6 +118,12 @@ def plan(jobs: list[Job], now: datetime, *, horizon_days: int = 8) -> list[Misse
     out: list[Missed] = []
     for job in jobs:
         if not job.enabled:
+            continue
+        if not job.cron:
+            # A one-shot (`run_at`) has no cron to scan backwards with, and its
+            # lateness is judged where it fires — the ordinary due pass delivers
+            # it whenever it finds it, with the lateness announced, so the
+            # catch-up scan has nothing to say about it.
             continue
         floor = job.last_run if job.last_run is not None else job.created_at
         floor_at = datetime.fromtimestamp(floor)
