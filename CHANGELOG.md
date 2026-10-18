@@ -16,6 +16,18 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **"Still there in the morning" is now the machine's claim, not a ticket's promise
+  (T27).** `daedalus selftest --live` gained three read-only checks that state facts
+  about *this laptop*: **lid** — the effective `logind.conf` resolution (vendor
+  defaults → `/etc` → drop-ins, last assignment wins, comments never count as
+  values) — fails loudly and names the exact sudo lines when `HandleLidSwitch` will
+  suspend the machine, as it in fact still does on this laptop until the owner runs
+  them (tonight's live run: 18/19, lid ✗ with the fix in the sentence, linger ✓,
+  funnel ✓); **linger** — the desktop's processes outlive the desktop; **funnel** —
+  the outer gate stays shut, inherited from `genui/publish.py`'s own Funnel read so
+  the two cannot disagree. Machine-claims live behind `--live` because a scratch
+  home invents no laptop to claim anything about.
+
 - **Published artifacts: a named file, a one-time link, a lifetime, a takedown
   (T15's push leg, T25, T34).** The `push` tool is both of SPEC §3.5's output
   channels in one: **serve** publishes a named artifact behind a token —

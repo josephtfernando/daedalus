@@ -634,7 +634,7 @@ skip it), which is the price of not having to name a seat.*
 
 #### P4 — remote / Tailscale Serve
 
-### T15 — P4: reach it from the phone · `open` — the push leg is built; the phone answer is the owner's
+### T15 — P4: reach it from the phone · `open` — the push leg is built; the phone answer is the owner's; the route liveness is now a machine claim
 *SPEC §10 (P4), §3.5 (`push` / Taildrop).*
 
 What T2 leaves: the dashboard over the tailnet, and the `push` output channel.
@@ -724,6 +724,25 @@ the phone is refused without the authorization the `calendar` tool requires (T8'
 comparison test extended to the remote path); nothing on the small screen can act on a
 *series* while naming one instance (the failure T8's own work exposed).
 
+**What the laptop now says about itself, 19 Oct.** The route-to-server half does not
+need the phone to assert the machine's side: the dashboard's fixed port is bound by
+the daemon at start and published then (`tests/test_daemon_ui.py`, T27's work), the
+tailnet route was proven live tonight by fetching a published artifact over the *real*
+URL (200 with bytes; a wrong token answers 403 with its reason) — the calendar views
+are served by the very same server the route reaches, so "each view opens from the
+phone" is now bounded only by the owner's thumb, not by any remaining route question.
+The *edit* acceptance is T8's comparison, and the remote path is the same server: a
+write through `/tune` (the published route) without the control token answers 401 —
+exactly what the `calendar` tool's authorization requires remotely. **What is left of
+this ticket is one owner decision**, recorded here verbatim for when they wake:
+
+> Which calendar edits, if any, are worth offering on the small screen? (§13 left
+> this open deliberately. T8's writes ride `calendar`-tool authorization either way;
+> this is a scope question, not a security one.)
+
+Everything else in T26 was corrected 17 Oct by checking instead of remembering, and
+now the remaining mechanism is live.
+
 ### T27 — still there in the morning · `open`
 *SPEC §8 (the laptop stays awake with the lid closed; `enable-linger`). §3.5.*
 
@@ -755,6 +774,20 @@ cannot fix that itself — sudo — so it must not stay quiet about it). **Still
 the lid half — the effective logind check in the selftest, plus the linger/Funnel
 assertions that make "still there" a claim the machine makes about itself rather than a
 claim the ticket makes about it.
+
+**The claims exist now, 19 Oct.** `daedalus selftest --live` carries three machine
+checks — `lid`, `linger`, `funnel` — and tonight's live run is the witness: 18/19 with
+**✗ lid — "closing the lid will suspend the laptop, ending remote access (SPEC §8 says
+otherwise). Fix with sudo, then re-run the selftest: in /etc/systemd/logind.conf
+[Login] set `HandleLidSwitch=ignore` and `LidSwitchIgnoreInhibited=no`, then
+`sudo systemctl restart systemd-logind`"**, ✓ linger (session processes outlive the
+desktop), ✓ funnel (the tailnet is still the only way in). The read is of the
+*effective* config — vendor defaults, /etc, drop-ins, last wins — so a comment in the
+vendored file can never be mistaken for the machine's word (`tests/test_selftest.py`
+covers the resolution order and the check's two states). Nothing remains buildable
+here: the two sudo lines are an action only the owner can take, and the selftest now
+names them in its failure sentence — the check's refusal to stay quiet is done; the
+lid itself is theirs.
 
 #### P5 — OpenCode delegation
 

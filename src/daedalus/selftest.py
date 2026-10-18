@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .approvals.risk import Risk
 from .config import Settings
+from .genui.publish import funnel_on
 from .loop.engine import Engine
 from .model.client import ModelClient
 from .model.providers import ChatResult, ScriptedProvider, ToolCall  # noqa: F401
@@ -117,6 +118,12 @@ async def run_selftest(settings: Settings, *, live: bool = False) -> Report:
 
         if live:
             report.checks.append(await _check_providers(settings))
+            # The machine's own claims about itself (T27): a scratch-home
+            # selftest invents no laptop, so these belong to the run that
+            # verifies *this* one.
+            report.checks.extend(
+                [_check_lid(settings), _check_linger(settings), _check_funnel(settings)]
+            )
     finally:
         shutil.rmtree(scratch_home, ignore_errors=True)
     return report
@@ -702,6 +709,95 @@ class _DaemonSurface:
 
     def stop(self) -> None:
         self._running.set()
+
+
+def _effective_logind(*, key: str, default: str, files: list[Path] | None = None) -> str:
+    """The *effective* value of a logind key — the last file's word wins.
+
+    systemd resolves `logind.conf` as vendor defaults then `/etc/`, then the
+    drop-ins; a selftest that read only `/etc/` would call an applied override
+    "unused" and comment out an ignored one the way a comment in the source
+    conf does. Read in systemd's order, last assignment wins.
+    """
+    import configparser
+
+    if files is None:
+        files = [
+            Path("/usr/lib/systemd/logind.conf"),
+            Path("/etc/systemd/logind.conf"),
+            *sorted(Path("/etc/systemd/logind.conf.d").glob("*.conf")),
+            *sorted(Path("/usr/lib/systemd/logind.conf.d").glob("*.conf")),
+        ]
+    value = default
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str  # keep systemd's key case
+    for path in files:
+        if not path.exists():
+            continue
+        try:
+            parser.read_file(path.open(encoding="utf-8"))
+        except (configparser.Error, OSError, UnicodeDecodeError):
+            continue
+        table = dict(parser["Login"]) if parser.has_section("Login") else {}
+        if (raw := table.get(key, "")).strip():
+            value = raw.strip()
+    return value
+
+
+def _check_lid(settings: Settings, *, value: str | None = None) -> Check:
+    """The lid must not end the session (SPEC §8) — asserted against the effective config.
+
+    This check cannot *fix* the common failure (`HandleLidSwitch=suspend` needs
+    sudo): what it must not do is stay quiet about it — SPEC's own phrasing. So
+    an open-but-suspending machine fails this check with the two lines that
+    close it. `value` is injectable for tests; None reads the real effective
+    config.
+    """
+    value = value if value is not None else _effective_logind(key="HandleLidSwitch", default="suspend")
+    seen: list[str] = []
+    lid_map = {"ignore": "ignore", "lock": "lock, still awake"}
+    if value in lid_map:
+        return Check("lid", True, f"HandleLidSwitch={lid_map[value]}")
+    if value == "suspend":
+        seen.append(
+            "closing the lid will suspend the laptop, ending remote access "
+            "(SPEC §8 says otherwise). Fix with sudo, then re-run the selftest: "
+            "in /etc/systemd/logind.conf [Login] set `HandleLidSwitch=ignore` "
+            "and `LidSwitchIgnoreInhibited=no`, then `sudo systemctl restart systemd-logind`"
+        )
+        return Check("lid", False, "; ".join(seen))
+    return Check("lid", False, f"HandleLidSwitch={value!r} — read it and decide")
+
+
+def _check_linger(settings: Settings) -> Check:
+    """The desktop's processes must outlive the desktop."""
+    import getpass
+    import subprocess
+
+    user = getpass.getuser()
+    try:
+        proc = subprocess.run(
+            ["loginctl", "show-user", user, "--property", "Linger"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return Check("linger", False, f"loginctl did not answer for {user!r}; linger is unverified")
+    value = proc.stdout.strip().partition("=")[2].lower()
+    if value == "yes":
+        return Check("linger", True, "the user session's processes outlive the desktop (SPEC §8)")
+    return Check("linger", False, f"linger is {value or 'not set'} — overnight jobs die with logout")
+
+
+def _check_funnel(settings: Settings) -> Check:
+    """Funnel must still be off — the outer gate stays shut (SPEC §3.5, T2)."""
+    state = funnel_on()
+    if state is False:
+        return Check("funnel", True, "Funnel is off; the tailnet is still the only way in")
+    if state is True:
+        return Check("funnel", False, "Funnel is ON — something public is exposed; take it down")
+    return Check("funnel", False, "`tailscale serve status` unreadable — Funnel state unknown")
 
 
 def _check_serve(settings: Settings) -> Check:
