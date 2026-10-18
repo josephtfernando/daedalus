@@ -134,6 +134,8 @@ Nothing in P0 depends on this — it is a seam, not a build.
 
 Every **newly authored** capability is **run once and checked by Melinoë before it is scheduled** — output shape, side effects, scope compliance. No unverified automation runs unattended. Re-authoring re-triggers the gate.
 
+**Melinoë keeps her verdicts (T22).** A verdict the gate reaches — passed or refused — is written to *her* namespace (`memory/namespaces/melinoe/verdicts.md`: the capability, `PASSED` or `REFUSED`, the check names, and the reason), not the coordinator's: whose verdicts these are is exactly what a namespace is for, and activating her means answering from that record. A refusal does not close a door — it sets a rule on the record — and closing it again takes a fresh pass: re-authoring the same shape runs the gate again end to end. A verdict that cannot be written logs a warning and still stands; the gate must not fail because its memory did, but the gap is never silent.
+
 ### Layer 3 — Resource registry
 
 External access is a **declarative registry** (parallel to the capability registry), provisioned *per tier* and **added by talking to the agent**, not by coding. A resource = access + credentials, provisioned once, listed to the model at startup. Three classes:

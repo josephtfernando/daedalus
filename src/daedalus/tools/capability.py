@@ -16,7 +16,7 @@ from ..approvals.grants import Grant
 from ..approvals.risk import Risk
 from ..capabilities.authoring import materialize
 from ..capabilities.manifest import Caps, Manifest, Scopes
-from ..capabilities.verify import verify_capability
+from ..capabilities.verify import VerifyReport, verify_capability
 from ..calendar.event import normalise_when, parse_iso
 from ..security.provenance import DataClass
 from ..surface.base import ApprovalRequest
@@ -214,6 +214,7 @@ class CapabilityTool(Tool):
             )
         else:
             report = await verify_capability(manifest, ctx.runner, sample_args=args.get("args") or {})
+        self.record_verdict(manifest, report, ctx)
 
         ctx.capabilities.register(manifest)  # registered either way; verified flag decides scheduling
         lines = [report.summary()]
@@ -232,6 +233,54 @@ class CapabilityTool(Tool):
         else:
             lines.append(f"{name!r} registered but NOT verified — it will not be scheduled unattended")
         return ToolResult(ok=report.ok, output="\n".join(lines), data={"verified": report.ok, "name": name})
+
+    def record_verdict(self, manifest: Manifest, report: VerifyReport, ctx: "Runtime") -> None:
+        """Melinoë remembers her own verdicts — in her namespace, with reasons (T22).
+
+        Before this, what the gate verified and what it refused lived only in the
+        turn's output: the next authoring of the same capability met a Melinoë
+        with no memory of having said no, and the owner asking "why did you
+        refuse this" got whatever the coordinator could reconstruct. The record
+        is written where she answers from, so activating her means answering
+        *from her record*, with the check names intact — and the coordinator's
+        namespace does not inherit it, because whose verdicts these are is
+        exactly what a namespace is for. A bookkeeping failure is logged at
+        warning and the verdict still stands: the gate must not fail because its
+        memory failed, but the failure must not be silent either.
+        """
+        from datetime import datetime
+
+        from ..cabinet.namespace import memory_for
+        from ..security.provenance import DataClass, Origin
+
+        bench = memory_for(ctx.memory_root, ctx.seats["melinoe"])
+        verdict = "PASSED the gate" if report.ok else "REFUSED at the gate"
+        checked = report.summary().replace("\n", "; ")
+        what = (
+            f"capability {manifest.name!r} (v{manifest.version}) {verdict} on "
+            f"{datetime.now():%Y-%m-%d %H:%M} — {checked}"
+        )
+        why = (
+            "refused: the capability author must fix the failed checks and re-author or re-verify, "
+            "which runs the gate again — a refusal is never slid past"
+            if not report.ok
+            else "verified: registered; scheduling refused anything unverified, so the pass is what lets it run unattended"
+        )
+        try:
+            bench.write(
+                facet="verdicts",
+                content=f"{what}. {why}.",
+                origin=Origin.LOCAL_DERIVED,
+                data_class=DataClass.PRIVATE,
+                confidence=0.95,
+                source_ref=f"capabilities/gate/{manifest.name}",
+            )
+        except Exception:  # noqa: BLE001 — see the docstring: logged, never fatal
+            import logging
+
+            logging.getLogger("daedalus.capabilities").warning(
+                "Melinoë's verdict on %r could not be written to her namespace", manifest.name
+            )
 
     async def _egress_approved(self, manifest: Manifest, ctx: "Runtime") -> tuple[bool, str]:
         """Whether this capability may reach the network — asking the owner **once**.
@@ -309,6 +358,7 @@ class CapabilityTool(Tool):
         if manifest.scopes.needs_egress():
             allowed, note = await self._egress_approved(manifest, ctx)
         report = await verify_capability(manifest, ctx.runner, sample_args=args.get("args") or {}, allow_egress=bool(allowed))
+        self.record_verdict(manifest, report, ctx)
         if report.ok:
             manifest.mark_verified()
             ctx.capabilities.register(manifest)

@@ -493,7 +493,7 @@ turn proving a seat's writes land only in its own namespace). The owner reads th
 cohort's output at breakfast — "the owner saw it" is then witnessed in the journal
 (`journalctl --user -u daedalus.service`), same standard as §11's acceptance.
 
-### T22 — Melinoë, next · `open`
+### T22 — Melinoë, next · `done`
 *SPEC §7 (verification, privacy, approvals), §3.5 (the Melinoë gate).*
 
 Melinoë already *acts* — the gate runs every authored capability before it may be
@@ -505,6 +505,20 @@ so that the next capability in the same shape meets the same answer.
 **Acceptance:** her namespace holds what she verified and what she refused, with
 reasons; activating her answers from it; re-authoring a capability she refused
 re-triggers the gate rather than sliding past it; a nameless turn is still Daedalus.
+
+**Done 19 Oct (overnight).** Both gate call sites — `capability op=author` and
+`op=verify` — now write every verdict to `memory_for(seats["melinoe"])`, facet
+`verdicts`, origin `local_derived`, with the capability, the verdict, the check
+summary (`run_once — exit 3`) and the standing rule on one line ("refused: ... re-author
+or re-verify ...; a refusal is never slid past"). Activating her, her prompt carries
+the bench — the second test drives `build_system_prompt(ctx, event, seat="melinoe")`
+and asserts the refusal is in it, and that the coordinator's *own* prompt is not. The
+re-authoring clause is a test: refuse a broken artifact, re-author the same name with
+a passing one, the gate runs again end to end and only the fresh pass verifies. A
+bench that cannot take a note logs a warning (`record_verdict` never raises into the
+gate). SPEC §3.5 carries the paragraph. 4 tests in `tests/test_melinoe.py`; suite
+916 green. *The re-author path needed no code — the gate already ran on every
+authoring; the memory makes the verdict *hers* instead of the turn's exhaust.*
 
 ### T23 — Athena · `open`
 *SPEC §7 (knowledge and coding mastery — DSA, aptitude, competitive programming,
