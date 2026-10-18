@@ -64,43 +64,6 @@ class _Watch:
     breach: str = ""
 
 
-def _rss_mb(pid: int) -> float:
-    """One process's resident memory in MB — 0.0 once it is gone."""
-    try:
-        with open(f"/proc/{pid}/status", "rb") as handle:
-            for line in handle:
-                if line.startswith(b"VmRSS:"):
-                    return int(line.split()[1]) / 1024  # kB -> MB
-    except (OSError, ValueError, IndexError):
-        return 0.0
-    return 0.0
-
-
-async def _kill(proc: asyncio.subprocess.Process) -> None:
-    """Stop the child **and anything it started**.
-
-    The child is launched in its own session, so it leads a process group and its
-    helpers are in it. Killing only the pid leaves them running, still carrying the
-    caps they inherited — a timed-out capability with a live child is the whole
-    failure the cap exists to prevent, one level down.
-
-    The guard is about pid reuse, not politeness: once the child has been reaped its
-    pid is free, and `killpg` on a recycled number would signal a group that has
-    nothing to do with us.
-    """
-    if proc.returncode is None and Path(f"/proc/{proc.pid}").exists():
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-    if proc.returncode is None:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-    await proc.wait()
-
-
 def _last_line(text: str) -> str:
     for line in reversed(text.strip().splitlines()):
         if line.strip():
