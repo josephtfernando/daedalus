@@ -520,7 +520,7 @@ gate). SPEC §3.5 carries the paragraph. 4 tests in `tests/test_melinoe.py`; sui
 916 green. *The re-author path needed no code — the gate already ran on every
 authoring; the memory makes the verdict *hers* instead of the turn's exhaust.*
 
-### T23 — Athena · `open`
+### T23 — Athena · `done` — cadence set 19 Oct; first live fire tomorrow 08:15
 *SPEC §7 (knowledge and coding mastery — DSA, aptitude, competitive programming,
 interview prep; pairs with Odysseus).*
 
@@ -530,6 +530,21 @@ rather than on a conversation: practice and strategy need a cadence, not a reply
 **Acceptance:** her charter is current and her namespace holds her own progress; one
 scheduled thing she owns runs on its cadence and reports to the owner; what she
 remembers is invisible to the other seats and to the coordinator's namespace.
+
+**Done 19 Oct (overnight).** The mechanism landed with T21 (`Job.seat`); this ticket
+is its first *daily* citizen. Her charter is the rewritten file seat work (17 Oct) —
+and it is current: "sets the practice cadence instead of waiting to be asked" is what
+the new job does. Her namespace already holds her own progress, recorded 17 Oct (the
+standing week plan: graphs, DP, heaps-and-intervals, ~6 problems per topic) — that is
+recall-able input, not seeded decoration. The scheduled thing: `athena_practice`,
+daily 08:15 (inside the wake window, before the owner is deep in the day), seated —
+she composes from her charter, recalls the standing plan and the contest calendar,
+picks the day's 2–3 problems favouring weak or gone-cold topics, writes one compact
+`practice-log` line back into **her** namespace, and tells the owner in two lines.
+Namespace invisibility is proven, not asserted: `tests/test_seat_jobs.py` drives a
+real `rt.wake` turn and asserts the write lands in her namespace while the
+coordinator's cannot recall it. Same wall-clock caveat as T21: the first live fire is
+tomorrow 08:15; the owner reads it at breakfast, and the audit closes the loop then.
 
 ### T24 — Calliope and Heracles, last · `open`
 *SPEC §7 (creative voice and distribution; the body — training, nutrition, sleep).
