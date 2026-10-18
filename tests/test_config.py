@@ -44,3 +44,22 @@ def test_the_local_route_needs_no_credential(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     assert settings.cheap is not None
     assert settings.cheap.api_key_env == ""
+
+
+# -- the servable root list (T35/T34): owner-owned data, file-first -----------
+
+
+def test_roots_toml_is_the_editor_s_file_and_wins(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    paths.ensure_tree(home)
+    (home / "roots.toml").write_text('roots = ["/srv/web"]\n', encoding="utf-8")
+
+    settings = load_settings(home)
+
+    assert settings.raw["files"]["roots"] == ["/srv/web"]
+
+
+def test_without_roots_toml_the_list_starts_empty(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+
+    assert settings.raw["files"]["roots"] == []

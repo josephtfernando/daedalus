@@ -214,3 +214,55 @@ def test_no_mood_sheet_can_reach_out_to_the_network() -> None:
         css = sheet(tokens_for(mood))
         assert "url(" not in css, f"{mood} fetches something"
         assert "@import" not in css, f"{mood} imports something"
+
+
+# -- the scale: one vocabulary of numbers per mood (T35, shadcn's lesson) -----
+
+
+def test_every_sheet_carries_the_scale() -> None:
+    for mood in MOOD_NAMES:
+        css = sheet(tokens_for(mood))
+        for primitive in (
+            "--d-space-3: var(--d-gap);",
+            "--d-radius-lg: calc(var(--d-radius) * 1.5);",
+            "--d-type-lg: calc(var(--d-size) * 1.25);",
+            "--d-ring: 0 0 0 3px color-mix(",
+        ):
+            assert primitive in css, f"{mood}'s sheet lost {primitive.split(':')[0]}"
+
+
+def test_a_shadow_is_scheme_composed_not_one_size_for_all_moods() -> None:
+    """Dark and light are first-class, and a shadow means something different."""
+    for dark_mood in ("midnight-focus", "celebration"):
+        dark = sheet(tokens_for(dark_mood))
+        for light_mood in ("calm", "low-energy"):
+            light = sheet(tokens_for(light_mood))
+            dark_1 = next(line for line in dark.splitlines() if "--d-shadow-1:" in line)
+            light_1 = next(line for line in light.splitlines() if "--d-shadow-1:" in line)
+            assert dark_1 != light_1, (
+                f"{dark_mood} and {light_mood} share a shadow — a shadow is "
+                "composed from the scheme, not one number for every mood"
+            )
+
+
+def test_the_scales_numbers_are_derived_from_declared_tokens() -> None:
+    """The owner's mood still rules every scale value — the scale binds, not decides."""
+    calm_gap = tokens_for("calm").gap
+    dense_gap = tokens_for("dense-ops").gap
+    if calm_gap != dense_gap:
+        calm_sheet = [line for line in sheet(tokens_for("calm")).splitlines() if "--d-space-4:" in line]
+        dense_sheet = [line for line in sheet(tokens_for("dense-ops")).splitlines() if "--d-space-4:" in line]
+        assert calm_sheet == dense_sheet, (
+            "the scale is one formula, no per-mood code — the gap token differs, "
+            "and the scale's calc() reads it, so the result differs with it"
+        )
+
+
+def test_the_scale_is_not_free_form_style() -> None:
+    """calc() in the *sheet* is composition; a calc() in a *token value* stays refused."""
+    MOODS["__test__"] = {**MOODS[DEFAULT_MOOD], "radius": "calc(4px + 1px)"}
+    try:
+        with pytest.raises(TokenError):
+            tokens_for("__test__")
+    finally:
+        del MOODS["__test__"]

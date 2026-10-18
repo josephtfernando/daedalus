@@ -358,3 +358,50 @@ def test_an_empty_anchor_means_today(week: CalendarStore) -> None:
     page = calendar_page(week, view="day", anchor="", now=NOW)
 
     assert page.anchor.isoformat() == FRIDAY
+
+
+# -- the mood of the moment, and the roots editor (T35) ----------------------
+
+
+def test_a_gt_a_night_hour_renders_the_dark_mood_without_anyone_choosing_it(
+    week: CalendarStore,
+) -> None:
+    """The standing dashboard composes by the hour — midnight is dark, noon is not."""
+    night = calendar_page(week, view="day", anchor=FRIDAY, now=datetime(2026, 10, 16, 22, 30))
+    noon = page_of(week)
+
+    assert night.mood == "midnight-focus" and noon.mood == "calm"
+    assert "--d-scheme: dark;" in night.html(), "the page itself goes dark at 22:30"
+    assert "--d-scheme: light;" in noon.html()
+
+
+def test_a_crowded_anchor_day_reads_as_dense_ops(week: CalendarStore) -> None:
+    for i in range(4):
+        week.add(summary=f"call {i}", start=f"{FRIDAY}T1{i}:00", end=f"{FRIDAY}T1{i}:30")
+
+    page = calendar_page(week, view="day", anchor=FRIDAY, now=datetime(2026, 10, 16, 11, 0))
+
+    assert page.mood == "dense-ops"
+
+
+def test_the_roots_editor_rides_the_authenticated_strip(week: CalendarStore) -> None:
+    page = calendar_page(
+        week,
+        view="day",
+        anchor=FRIDAY,
+        now=NOW,
+        with_controls=True,
+        roots=[str(Path.home() / "vault"), "/srv/web"],
+    )
+
+    assert 'value="settings.roots-add"' in page.controls
+    assert 'value="settings.roots-remove"' in page.controls
+    assert "/srv/web" in page.controls
+    assert "asks on Discord before it stands" in page.controls
+    assert page_of(week).controls == "", "an unauthenticated page proposes nothing"
+
+
+def test_a_page_without_roots_says_there_are_none_beyond_the_always(week: CalendarStore) -> None:
+    page = calendar_page(week, view="day", anchor=FRIDAY, now=NOW, with_controls=True)
+
+    assert "No folders beyond the always-allowed ones" in page.controls

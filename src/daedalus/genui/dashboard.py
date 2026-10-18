@@ -37,7 +37,7 @@ from ..calendar.store import CalendarStore
 from .components import VOCABULARY
 from .renderer import CSP, FORM_CSP, render_page
 from .spec import Spec
-from .theming import Tokens
+from .theming import Tokens, infer
 
 __all__ = ["VIEWS", "Page", "calendar_page", "draft_strip", "write_page"]
 
@@ -102,6 +102,7 @@ def calendar_page(
     with_controls: bool = False,
     overrides: Mapping[str, str] | None = None,
     tokens: Tokens | None = None,
+    roots: list[tuple[str, str]] | None = None,
 ) -> Page:
     """One view of the calendar, as a page ready to render.
 
@@ -110,11 +111,19 @@ def calendar_page(
     rather than read, so a test can pin the clock. `with_controls` adds the
     control strip, which only an authenticated view is served with. `overrides`
     are the owner's adopted theme values; `tokens` given outright renders a
-    **draft preview** (T9) — the page as a pending tune would look.
+    **draft preview** (T9) — the page as a pending tune would look. `roots` is
+    the declared servable root list, for the editor section of the strip.
+
+    The mood is `infer`red from the same local signals the page is built from —
+    the hour, and how crowded today is — unless the caller names one. That is
+    the ticket's "dynamic for what I asked for in the moment", done the honest
+    way: no model in the loop, nothing remote, and the owner's adopted
+    overrides still sit on top of whatever is inferred.
     """
     if view not in VIEWS:
         raise ValueError(f"view is one of: {' | '.join(VIEWS)}; it is {view!r}")
-    today = (now or datetime.now()).date()
+    moment = now or datetime.now()
+    today = moment.date()
     day = _as_date(anchor) or today
     days = _window_days(view, day)
     on_day = {when: calendar.occurrences_on(when.isoformat(), limit=DAY_LIMIT) for when in days}
@@ -155,12 +164,16 @@ def calendar_page(
     # model-composed page is. `page.spec.to_dict()` is therefore safe to show,
     # log or hand back.
     spec = Spec.parse({"title": _long_date(day), "blocks": blocks}, vocabulary=VOCABULARY)
-    controls = _control_strip(view, day, on_day[days[0]]) if with_controls else ""
+    chosen_mood = infer(hour=moment.hour, busy_blocks=len(on_day[day]))
+    controls = (
+        _control_strip(view, day, on_day[days[0]], roots=roots) if with_controls else ""
+    )
     return Page(
         view=view,
         anchor=day,
         spec=spec,
         values=values,
+        mood=chosen_mood,
         controls=controls,
         csp=FORM_CSP if controls else CSP,
         overrides=overrides,
@@ -274,29 +287,52 @@ def _long_date(when: date) -> str:
 # same approval middleware the loop's own calls get.
 
 _CONTROL_CSS = (
-    ".controls{margin-top:2.5rem;border-top:1px solid #2a2a2e;padding-top:1.25rem}"
-    ".controls h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;"
-    "color:#8a8a92;margin:0 0 .75rem}"
-    ".controls form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;"
-    "margin:0 0 .75rem}"
-    ".controls input,.controls select{background:#1d1d21;color:#e8e8ea;"
-    "border:1px solid #34343a;border-radius:6px;padding:.4rem .5rem;font:inherit}"
-    ".controls button{background:#2d4a86;color:#fff;border:0;border-radius:6px;"
-    "padding:.4rem .8rem;font:inherit;cursor:pointer}"
-    ".controls .danger{background:#7a2e2e}"
-    ".controls label{font-size:.8rem;color:#8a8a92}"
+    # Composed from the token set plus its derived scales (T35), so the
+    # controls stop being a fixed dark island inside whatever mood the page is
+    # in — they are made of the same materials, and focus is visible in all of
+    # them.
+    ".controls{margin-top:var(--d-space-5);border-top:1px solid var(--d-border);"
+    "padding-top:var(--d-space-3);display:grid;gap:var(--d-space-2)}"
+    ".controls h2{font-size:var(--d-type-xs);letter-spacing:.08em;text-transform:uppercase;"
+    "color:var(--d-muted);margin:0}"
+    ".controls form{display:flex;flex-wrap:wrap;gap:var(--d-space-2);align-items:center;"
+    "margin:0}"
+    ".controls input,.controls select{background:var(--d-bg);color:var(--d-text);"
+    "border:1px solid var(--d-border);border-radius:var(--d-radius-sm);"
+    "padding:var(--d-space-2);font:inherit}"
+    ".controls button{background:var(--d-accent);color:var(--d-accent_text);border:0;"
+    "border-radius:var(--d-radius-sm);padding:var(--d-space-2) var(--d-space-3);"
+    "font:inherit;cursor:pointer;transition:filter var(--d-motion) ease,"
+    "box-shadow var(--d-motion) ease}"
+    ".controls button:hover{filter:brightness(1.12)}"
+    ".controls button:focus-visible,.controls input:focus-visible,"
+    ".controls select:focus-visible{outline:none;box-shadow:var(--d-ring)}"
+    ".controls .danger{background:var(--d-alert)}"
+    ".controls label{font-size:var(--d-type-xs);color:var(--d-muted)}"
+    ".controls .roots__row{display:flex;gap:var(--d-space-2);align-items:center;"
+    "margin:0}"
+    ".controls code{font-family:var(--d-font-mono);font-size:var(--d-type-xs)}"
+    ".controls .controls--note{font-size:var(--d-type-xs);color:var(--d-muted);margin:0}"
 )
 
 
-def _control_strip(view: str, day: date, events: list[Event]) -> str:
+def _control_strip(
+    view: str,
+    day: date,
+    events: list[Event],
+    roots: list[str] | None = None,
+) -> str:
     """The forms a page carries, as one strip under the view.
 
     Every form POSTs to `/action` with a closed control name and flat fields.
     The day is pre-filled with the day the view is about, so "add something"
     needs two fields and nothing else. Only the day view offers a picker for
     move and remove — its list *is* that day's events; a week or a month is a
-    grid of summaries, and a picker over a month of instances is a trap.
+    grid of summaries, and a picker over a month of instances is a trap. The
+    roots editor (T35) is on every view that carries an authenticated session:
+    reach is global, not per-view.
     """
+    strip: list[str] = []
     day_value = day.isoformat()
     add = (
         '<form method="post" action="/action">'
@@ -308,35 +344,69 @@ def _control_strip(view: str, day: date, events: list[Event]) -> str:
         "</form>"
     )
     if view != "day":
-        return (
-            '<section class="controls">\n<h2>Add an event</h2>\n'
-            f"{add}\n"
-            "<p>Open a day to move or remove one of its events.</p>\n</section>"
+        strip += ["<h2>Add an event</h2>", add, "<p>Open a day to move or remove one of its events.</p>"]
+    else:
+        move = (
+            '<form method="post" action="/action">'
+            '<input type="hidden" name="control" value="calendar.update">'
+            f"{_uid_picker(events)}"
+            '<input type="datetime-local" name="start" aria-label="new time" required>'
+            '<button type="submit">Move</button>'
+            "</form>"
         )
-    move = (
-        '<form method="post" action="/action">'
-        '<input type="hidden" name="control" value="calendar.update">'
-        f"{_uid_picker(events)}"
-        '<input type="datetime-local" name="start" aria-label="new time" required>'
-        '<button type="submit">Move</button>'
-        "</form>"
-    )
-    remove = (
-        '<form method="post" action="/action">'
-        '<input type="hidden" name="control" value="calendar.delete">'
-        f"{_uid_picker(events)}"
-        '<button type="submit" class="danger">Remove</button>'
-        "</form>"
+        remove = (
+            '<form method="post" action="/action">'
+            '<input type="hidden" name="control" value="calendar.delete">'
+            f"{_uid_picker(events)}"
+            '<button type="submit" class="danger">Remove</button>'
+            "</form>"
+        )
+        strip += [
+            "<h2>Add to this day</h2>",
+            add,
+            "<h2>Move an event</h2>",
+            move,
+            "<h2>Remove an event</h2>",
+            remove,
+        ]
+    strip.append(_roots_section(roots or []))
+    body = "\n".join(strip)
+    return f'<section class="controls">\n{body}\n</section>'
+
+
+def _roots_section(roots: list[str]) -> str:
+    """The servable-root editor (T35, carried from T34).
+
+    The list is shown as the owner typed it, one row per folder with its own
+    remove form, and an add row at the end. Both verbs are ASKs at the tool,
+    so a submit returns "waiting" and the buttons land on Discord — the strip
+    says so, rather than implying a click is all it takes.
+    """
+    rows = []
+    for root in roots:
+        rows.append(
+            '<div class="roots__row">'
+            f"<code>{html.escape(root)}</code>"
+            '<form method="post" action="/action">'
+            '<input type="hidden" name="control" value="settings.roots-remove">'
+            f'<input type="hidden" name="path" value="{html.escape(root)}">'
+            '<button type="submit" class="danger">Remove</button>'
+            "</form>"
+            "</div>"
+        )
+    listing = (
+        "\n".join(rows)
+        or '<p class="controls--note">No folders beyond the always-allowed ones.</p>'
     )
     return (
-        '<section class="controls">\n'
-        "<h2>Add to this day</h2>\n"
-        f"{add}\n"
-        "<h2>Move an event</h2>\n"
-        f"{move}\n"
-        "<h2>Remove an event</h2>\n"
-        f"{remove}\n"
-        "</section>"
+        "<h2>Servable roots</h2>\n"
+        f"{listing}\n"
+        '<form method="post" action="/action">'
+        '<input type="hidden" name="control" value="settings.roots-add">'
+        '<input name="path" placeholder="absolute folder to allow" required aria-label="folder">'
+        '<button type="submit">Add root</button>'
+        "</form>\n"
+        '<p class="controls--note">Adding or removing one asks on Discord before it stands.</p>'
     )
 
 

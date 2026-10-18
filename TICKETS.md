@@ -1057,7 +1057,7 @@ with the link in the answer) is fully unblocked now, but its first real fire nee
 the owner's own message — recorded for tomorrow rather than simulated tonight. A
 64 MB cap bounds the copy a serve may move.
 
-### T35 — the surface stops being one page in one mood · `open`
+### T35 — the surface stops being one page in one mood · `done`
 *SPEC §3.6 (visual → dashboard; "the mood token set (the owner's)"). The owner, 17 Oct:
 "the dashboard surface is too static and not very aesthetic … dynamic for what I asked
 for in that moment, or just an overall aesthetic dashboard with a custom theming engine."*
@@ -1112,6 +1112,49 @@ property rather than quietly eroding it.
 here. T34 made the roots owner-owned data rather than code, so that a folder can be added
 without a code change; this is the ticket that gives the owner the screen to do it, with
 T9's adopt-before-it-counts shape behind it.*
+
+**Done 19 Oct (overnight).** The fork was taken as written — the *design language*, not
+the toolchain; CSP stays `default-src 'none'` and a page still fetches nothing and runs
+no script. What landed:
+
+- **Scales, derived not hardcoded (shadcn's lesson).** `theming.sheet()` is now three
+  layers — the owner's validated tokens; a **derived-scales layer** (spacing from
+  `gap`, radius and type from `radius`/`size`, scheme-composed shadows — a dark theme's
+  shadow deepens rather than dropping grey — and an accent focus ring); the components.
+  Every scale value is `calc()` over a *declared* token, so the owner's mood still rules
+  every number and the same formula renders all five moods (a dedicated test pins the
+  invariant that the sheet's component CSS reads declared tokens only — the scale lives
+  in its own layer). The control strip was re-composed from the same materials instead
+  of its fixed dark island: token-driven colours, padded from the scale, hover and
+  `:focus-visible` rings that work in every mood.
+- **Dark and light first-class, and the standing dashboard is now dynamic.** Five moods
+  existed in the engine but `infer()` had no standing caller: `calendar_page` now
+  infers the mood from the same local signals it builds the page from — the passed-in
+  clock and how crowded the anchor day is — so the page is dark at 22:30 (`midnight-focus`),
+  calm at noon, `dense-ops` on a busy one, with no model in the loop and nothing remote.
+  The owner's one-word override and adopted token values still outrank everything
+  (`resolve()` unchanged, tested).
+- **The roots editor (carried from T34) — the owner's screen, the tool's approval.** The
+  servable root list moved to `roots.toml` (`load_settings` loads it at startup; it wins
+  for `files.roots` so `config.toml`'s comments survive, since a TOML round-trip would
+  not). A new `settings` primitive: `op=roots-list` (auto), `op=roots-add` /
+  `op=roots-remove` (CAUTION, `risk_for → Risk.ASK` — widening or shrinking what may be
+  read and published is an approval, and the existing folder stays on disk when a root
+  leaves). A change is persisted *and* made true immediately — `_live` writes the same
+  dict `guard.allowed_roots` reads — so "the owner said yes" and "it took effect without
+  a restart" are true in the same breath. The authenticated dashboard strip carries the
+  editor (`settings.roots-add` / `settings.roots-remove` joined the closed `CONTROLS`
+  vocabulary), so a submit lands in `actions._ask` — "waiting", buttons on Discord, and
+  a *no* leaves nothing standing. Reads are not controls; the page already shows the list.
+
+Tests: 8 new in `test_genui_theming.py` + `test_dashboard.py` (every mood carries the
+scale; shadows differ by scheme; the scale is one formula; calc-in-values still refused;
+night/noon renders dark/light; a busy day reads dense-ops; the editor rides only the
+authenticated strip) and 12 in `tests/test_settings_tool.py` (persist + live truth,
+idempotence, a real file that stays after a root removal, the ASK posture, and the
+control seam's deny-then-allow through Discord). Suite 974 green. Not adopted: the
+shadcn *toolchain* — recorded as the standing recommendation, and §3.6's no-script
+property stays intact.
 
 ### T36 — the habit tracker · `open` — the capability is built and verified; the seat is the owner's
 *SPEC §3.5 (capabilities are local scripts first). SPEC §7 (the seats it belongs to).*

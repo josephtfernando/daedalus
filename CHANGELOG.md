@@ -16,6 +16,26 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The dashboard grew a design language, a mood of the moment, and a roots editor
+  (T35).** The sheet is now three layers: the owner's validated tokens; **derived
+  scales** — spacing from `gap`, radius and type from `radius`/`size`, scheme-composed
+  shadows (a dark theme's shadow deepens rather than dropping grey), an accent focus
+  ring — every value `calc()` over a *declared* token so the owner's mood still rules
+  every number; and the components. The control strip is composed from the same
+  materials instead of its fixed dark island: token colours, scale paddings, hover and
+  `:focus-visible` that work in all five moods, dark and light first-class. The
+  standing dashboard is **dynamic for the moment, honestly**: `calendar_page` infers
+  the mood from the clock it was built with and how crowded the day is — dark at
+  22:30, calm at noon, `dense-ops` on a busy one — no model in the loop, nothing
+  remote, and the owner's override and adopted values still outrank everything.
+  Carried from T34: the **servable roots editor** — the list is now `roots.toml`,
+  owner-owned data loaded at startup; a `settings` primitive (`roots-list` auto;
+  `roots-add`/`roots-remove` CAUTION and Risk.ASK) persists the change *and* makes it
+  true immediately (the same dict the guard reads), and the authenticated dashboard
+  strip carries the editor through the closed `CONTROLS` vocabulary — a submit waits,
+  the buttons land on Discord, and a no leaves nothing standing. A page still fetches
+  nothing and runs no script. Suite 974 green.
+
 - **The habit tracker exists up to its one open question (T36).** A verified
   capability (`habit_tracker`, stdlib-only, no network, no schedule — seat wiring
   awaits the owner): `record {habit, mark, date?}` marks a day done or missed —

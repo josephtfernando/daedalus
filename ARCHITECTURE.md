@@ -415,6 +415,38 @@ mood is chosen. Every value is checked when tuned and again when adopted — the
 approved file is the owner's, and a hand edit gets the same door. Unlike the
 controls, this needs no surface, so both `serve` and the daemon attach it.
 
+**The scales (T35).** What was thin was never the engine — it was the design
+language it carried: two moods and five components reading raw numbers. Now the
+sheet is three layers: the owner's tokens (validated), then **derived scales**
+(`theming.py:_scale_css`) — a spacing scale off `gap`, a radius and type scale
+off `radius`/`size`, scheme-composed shadows (dark themes deepen instead of
+dropping grey), and a focus ring — then the components. Every scale value is
+`calc()` over a *declared* token, so the owner's mood still rules every number;
+the scale makes its uses consistent across every mood and page. The control
+strip was re-composed from the same materials (token-driven colours, radius,
+motion, focus-visible rings) instead of its fixed dark island, and dark/light
+are both first-class across all five moods.
+
+**The mood of the moment.** `theming.infer(hour, busy_blocks, …)` existed but
+nothing standing called it. `dashboard.calendar_page` now infers from the same
+signals it built the page from — the passed-in clock (a test pins it) and how
+crowded the anchor day is — so the standing dashboard is dark at 22:30 and calm
+at noon with no model in the loop and nothing remote; the owner's one-word
+override and adopted token values still outrank everything.
+
+**The roots editor (T35, carried from T34).** The servable root list is
+owner-owned data in `roots.toml` (loaded at startup by `load_settings`, winning
+for the `files.roots` key, whose comments in `config.toml` would not survive a
+TOML round-trip). The `settings` tool (`tools/settings.py`) reads and changes
+it: `roots-list` is auto, `roots-add`/`roots-remove` are CAUTION and
+`risk_for → Risk.ASK` — widening or shrinking reach is an approval, never an
+action. A change is persisted **and** made true immediately (`_live` writes the
+same dict `guard.allowed_roots` reads), so "went through the owner" and "took
+effect without a restart" are true in the same breath. The dashboard's
+authenticated strip carries the editor (`settings.roots-add` /
+`settings.roots-remove`, added to the closed `CONTROLS` vocabulary), so a
+submit lands in the same `_ask` path — "waiting" with the buttons on Discord.
+
 ### 7.5 Seat-to-seat collaboration
 
 Seats communicate over the **typed durable protocol** (§9.2) via the broker; messages persist in `cabinet/messages.db`. Example: `Icarus → Melinoë (verify) → Icarus (result) → Daedalus (summary)`. Deterministic code owns correlation, dedup, and delivery.

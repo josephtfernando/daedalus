@@ -72,7 +72,13 @@ def _add(runtime: Runtime, summary: str, start: str = f"{FRIDAY}T09:00") -> str:
 
 def test_the_controls_are_the_three_writes_and_nothing_else() -> None:
     assert CONTROLS == frozenset(
-        {"calendar.create", "calendar.update", "calendar.delete"}
+        {
+            "calendar.create",
+            "calendar.update",
+            "calendar.delete",
+            "settings.roots-add",
+            "settings.roots-remove",
+        }
     )
 
 

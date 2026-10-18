@@ -258,6 +258,23 @@ def load_settings(home: Path | None = None) -> Settings:
     proactive = raw.get("proactive", {})
     ui = raw.get("ui", {})
 
+    # Servable roots (T34/T35): owner-owned data in its own file, so a folder
+    # can be added by editing one file and the dashboard's editor writes THIS
+    # file rather than config.toml — whose comments would not survive a TOML
+    # round-trip. Its presence wins for the `files.roots` key; its absence
+    # leaves whatever config.toml declared.
+    roots_path = home / "roots.toml"
+    if roots_path.exists():
+        try:
+            table = tomllib.loads(roots_path.read_text(encoding="utf-8"))
+            files = dict(raw.get("files", {}) or {})
+            files["roots"] = [str(p) for p in (table.get("roots") or [])]
+            raw["files"] = files
+        except (tomllib.TOMLDecodeError, OSError):
+            raw.setdefault("files", {}).setdefault("roots", [])
+    else:
+        raw.setdefault("files", {"roots": list((raw.get("files", {}) or {}).get("roots", []))})
+
     users = owner.get("discord_users", []) or []
     # env wins over config for the allowlist
     env_users = env.get("DISCORD_ALLOWED_USERS") or os.environ.get("DISCORD_ALLOWED_USERS", "")

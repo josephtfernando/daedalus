@@ -259,6 +259,7 @@ class LocalServer:
                 anchor=anchor or None,
                 with_controls=session,
                 overrides=self.tuners.approved() if self.tuners is not None else None,
+                roots=self._declared_roots(),
             )
         except ValueError as exc:
             return Response(400, _PLAIN, f"{exc}\n".encode("utf-8"))
@@ -277,6 +278,17 @@ class LocalServer:
         )
 
     # -- the control route -------------------------------------------------
+
+    def _declared_roots(self) -> list[str]:
+        """The servable root list, as the owner declared it — the editor's rows.
+
+        Read straight from the settings dict, same place the guard reads it,
+        so what the strip shows can never disagree with what is allowed.
+        """
+        if self.controls is None:
+            return []
+        files = self.controls.ctx.settings.raw.get("files", {}) or {}
+        return [str(p) for p in files.get("roots") or []]
 
     def _action(self, body: bytes, content_type: str) -> Response:
         """`POST /action` — one control, through the approval split (SPEC §3.6)."""

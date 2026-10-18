@@ -403,8 +403,57 @@ body {
 
 
 def sheet(tokens: Tokens) -> str:
-    """The complete stylesheet: the token set, then the components that read it."""
-    return tokens.css() + "\n\n" + BASE_CSS
+    """The complete stylesheet: the token set, the derived scales, the components."""
+    return tokens.css() + "\n\n" + _scale_css(tokens) + "\n\n" + BASE_CSS
+
+
+def _scale_css(t: Tokens) -> str:
+    """The fixed scales the design language composes from (T35, shadcn's lesson).
+
+    Spacing, radius, type and shadow stop being one-off numbers in component
+    CSS and become **derived primitives**: each is computed from a *declared*
+    token, so the owner's mood still rules every number — the scale only makes
+    its uses consistent across every mood and every page. Shadows are
+    scheme-aware because a shadow's job differs by darkness (light themes read
+    a soft grey drop; dark themes barely show one at all, so it deepens).
+
+    This layer is separate from ``BASE_CSS`` on purpose: the sheet's own rule
+    is that component CSS reads *declared* tokens only, and these primitives
+    are the compositions — names the engine owns, bound to the mood at render.
+    """
+    dark = t.scheme == "dark"
+    shadow_1 = "0 1px 2px rgb(0 0 0 / 0.42)" if dark else "0 1px 2px rgb(0 0 0 / 0.06)"
+    shadow_2 = (
+        "0 2px 6px rgb(0 0 0 / 0.5), 0 12px 28px rgb(0 0 0 / 0.55)"
+        if dark
+        else "0 2px 6px rgb(0 0 0 / 0.08), 0 10px 24px rgb(0 0 0 / 0.10)"
+    )
+    return f"""\
+:root {{
+  --d-space-1: calc(var(--d-gap) * 0.25);
+  --d-space-2: calc(var(--d-gap) * 0.5);
+  --d-space-3: var(--d-gap);
+  --d-space-4: calc(var(--d-gap) * 1.5);
+  --d-space-5: calc(var(--d-gap) * 2);
+  --d-radius-sm: calc(var(--d-radius) * 0.5);
+  --d-radius-base: var(--d-radius);
+  --d-radius-lg: calc(var(--d-radius) * 1.5);
+  --d-radius-full: 999px;
+  --d-type-xs: calc(var(--d-size) * 0.75);
+  --d-type-sm: calc(var(--d-size) * 0.86);
+  --d-type-base: var(--d-size);
+  --d-type-lg: calc(var(--d-size) * 1.25);
+  --d-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --d-shadow-1: {shadow_1};
+  --d-shadow-2: {shadow_2};
+  --d-ring: 0 0 0 3px color-mix(in oklab, var(--d-accent) 38%, transparent);
+}}
+
+/* Surfaces pick up one step of elevation; the today-cell keeps its ring and
+   gains the same, so emphasis reads the same way everywhere the eye lands. */
+.stat-card, .prose, .timeline, .table, .calendar {{ box-shadow: var(--d-shadow-1); }}
+.calendar__day--today {{ box-shadow: inset 0 0 0 1px var(--d-accent), var(--d-shadow-1); }}
+"""
 
 
 def declared_token_names() -> tuple[str, ...]:

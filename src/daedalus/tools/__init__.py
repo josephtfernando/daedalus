@@ -25,6 +25,7 @@ def build_registry() -> ToolRegistry:
     from .schedule import ScheduleTool
     from .search import SearchTool
     from .secrets import SecretsTool
+    from .settings import SettingsTool
     from .shell import ShellTool
 
     registry = ToolRegistry()
@@ -47,6 +48,7 @@ def build_registry() -> ToolRegistry:
         CapabilityTool(),
         DelegateTool(),
         PushTool(),
+        SettingsTool(),
     ):
         registry.register(tool)
     return registry

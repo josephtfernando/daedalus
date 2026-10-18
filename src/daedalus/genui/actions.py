@@ -46,6 +46,11 @@ CONTROLS: frozenset[str] = frozenset(
         "calendar.create",
         "calendar.update",
         "calendar.delete",
+        # The roots editor (T35 / carried from T34): the page proposes, the
+        # tool's own risk posture decides — and the tool is an ASK, so either
+        # way the owner is the one who widens or shrinks reach.
+        "settings.roots-add",
+        "settings.roots-remove",
     }
 )
 
