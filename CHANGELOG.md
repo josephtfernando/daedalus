@@ -16,6 +16,20 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **Athena's practice got its ledger: the LC tracker (T37).** A verified capability
+  (`lc_tracker`, stdlib-only, no network, manual schedule — her cadence runs it, not
+  its own) that keeps practice as **coverage and staleness**, not a counter: `record`
+  stores one attempt per problem, keyed by the problem's slug so "record it again"
+  *updates* the row (attempt history riding along), with a topic move warned about
+  loudly rather than silently reweighting coverage and topics outside a fixed
+  vocabulary refused rather than stored-then-never-reported; `report` computes
+  per-topic count, last touch, days cold, and what is **stale** (10-day horizon),
+  emitting the digest her wake reads to plan the day's drills — and emitting nothing
+  at all for an empty tracker, so an empty record cannot nag. The stored rows are the
+  record; memory only ever inherits from a report a turn actually read, so a
+  recollection can never diverge from the ledger. 5 tests through the real runner;
+  suite 947 green.
+
 - **The inbox is wired: a seat's mail meets it on the seat's own turn (T31, P6's
   first step).** T14's durable queue stopped at substrate; now `engine.run_turn`
   asks the broker for the seat's unanswered messages exactly once per turn and the

@@ -947,6 +947,22 @@ tested: an exchange that would exceed its hops or its budget stops and says why,
 exchange nobody will answer ends as a reported dead end rather than as a queue that
 grows.
 
+**Blocked at a decision only the owner can make — recorded 19 Oct, verbatim, for when
+they wake.** The substrate is as ready as substrate can be without the bounds (T31
+wired the queue; `verify` exists as a type; every hop is causation-addressable), but
+*this ticket's acceptance is the SPEC text*, and SPEC is the owner's to decide. The
+questions, exactly as the ticket names them:
+
+> 1. Who may convene a room — the coordinator only, any seat, or the owner through one?
+> 2. How many hops may an exchange take before it must stop, and what may a seat spend
+>    while it participates?
+> 3. When nobody answers, when does an exchange end as a *reported dead end* rather
+>    than stay in the queue it will never leave?
+> 4. Must a seat's work be `verify`-ed (the type exists for a reason) before its
+>    answer counts?
+
+No code is one line ahead of these: the bounds *are* the feature.
+
 ### T33 — the owner sees the room · `open`
 *SPEC §9 (the surface). §3.6 (visual → dashboard, action → Discord).*
 
@@ -961,6 +977,24 @@ join it and stop it; what is kept can be read back later; and if seat traffic is
 summarized rather than shown, the summary names which seats spoke and the full exchange
 is still recoverable — otherwise the decision to summarize has silently become a
 decision to discard.
+
+**Blocked behind T32's decision and four decisions of its own — recorded 19 Oct,
+verbatim.** There is no room to surface until T32's bounds exist (the acceptance
+depends on live *bounded* exchanges), and even before that the four questions below
+change what would be built — Discord thread vs dashboard vs a published page (T25
+makes the third real now) are different products, not styling:
+
+> 1. Where does a live exchange appear — a Discord thread, the dashboard, or a
+>    published one-time page?
+> 2. Is seat-to-seat traffic shown *as itself* or summarized into one voice? (Not a
+>    formatting choice; if summarized, the summary names who spoke and the full
+>    exchange stays recoverable.)
+> 3. How does the owner join or steer mid-exchange — a reply in the thread, a dashboard
+>    control, or both?
+> 4. What is kept afterwards, for how long, and readable how?
+
+The machinery half an answer would need — the live turn status (T44's ledger),
+`message op=thread` for recoverability, `/pub/` for the served page — all exists.
 
 ---
 
@@ -1094,7 +1128,7 @@ misses are recorded with their date; asking for "how am I doing" answers from th
 capability's own state rather than from the model's memory; a missed day is visible as a
 miss, not silently absent; the streak it reports is the streak the stored days imply.
 
-### T37 — the LC tracker · `open`
+### T37 — the LC tracker · `done`
 *SPEC §7 (Athena — DSA, aptitude, competitive programming, interview prep).*
 
 LeetCode practice, for the seat whose whole charter is getting better at exactly this.
@@ -1107,6 +1141,39 @@ topic and result; the tracker reports per-topic progress and what has gone stale
 its record is Athena's namespace, so what she "remembers" about practice is the stored
 record and not a recollection; recording the same problem twice updates it rather than
 duplicating it.
+
+**Done 19 Oct (overnight).** The capability `lc_tracker` is authored and verified
+(melinoë gate: manifest, scope posture, run-once, output shape — all PASS), standard
+library only, no network, no deps, manual schedule — **her cadence runs it, not its
+own**, because the plan-the-day act is T23's `athena_practice` wake and a second
+schedule would be a second voice deciding when practice is discussed. Two acts:
+
+- **`action=record`** — `{problem, topic, result ∈ solved|reviewed|failed}`, by the
+  owner or from a turn (`capability op=run name=lc_tracker args=…`). The **row key is
+  the problem's slug** ("122. Best Time to Buy and Sell Stock II" →
+  `122-best-time-to-buy-and-sell-stock-ii`), so recording the same problem twice
+  *updates* the row — one row, and the attempt history (last three) rides on it, so
+  "how many times did I fall over this" survives the update. A move of a row's topic
+  emits a warning naming both topics rather than silently reweighting coverage, and a
+  topic outside the vocabulary is **refused, not stored** — an unlisted topic would
+  silently never appear in any report.
+- **`action=report`** — per-topic `{count, last touched, days cold, stale}`, stale =
+  untouched past a horizon (10 days default). The digest is a notification the cadence
+  run returns ("Stale topics (…) are due for a repeat"); a tracker with nothing
+  recorded reports ok-and-empty and emits **no** notification, so an empty record
+  cannot nag.
+
+**The namespace clause, and how it is honoured:** the record is the stored rows in the
+capability's own state — the ticket's "its record is Athena's namespace" is honoured
+from the other end: no recollection writes practice history. What she *remembers*
+about practice is written by her from reports she reads (her next live wake, tomorrow
+08:15, is the first cadence act over an implemented tracker), and this capability
+holds the stored truth both of us read — the model's memory of a solved problem can
+never diverge from the tracker's rows because the tracker's rows are where the answer
+comes from. 5 tests in `tests/test_lc_tracker.py`, run through the real runner
+(subprocess, protocol §9.3): the update-not-duplicate rule, the topic-move warning,
+staleness computed from stored dates, the quiet empty report, and the strict refusals.
+Suite 947 green.
 
 ### T38 — the workout tracker · `open`
 *SPEC §7 (Heracles — the body: training, nutrition, sleep). AGENTS.md (health data is
