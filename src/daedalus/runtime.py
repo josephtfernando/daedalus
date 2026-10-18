@@ -184,7 +184,7 @@ class Runtime:
 
     # -- scheduled work ---------------------------------------------------
 
-    async def wake(self, prompt: str) -> str:
+    async def wake(self, prompt: str, *, seat: str | None = None) -> str:
         """The agent choosing to speak: compose fresh, don't template (SPEC §9).
 
         Returns the message, or ``""`` when the agent decided there was nothing
@@ -193,17 +193,34 @@ class Runtime:
         owner and wrong for a proactive message.
 
         The gate on whether a wake may speak at all is deterministic and lives
-        in the scheduler; this is only reached once it has said yes.
+        in the scheduler; this is only reached once it has said yes. A wake a
+        scheduler job owns may name its **seat** (T21): the message is then that
+        seat's — its charter, its memory namespace — rather than the active
+        identity's, which is how Odysseus's weekly sweep is Odysseus's work and
+        not the coordinator's wearing a hat. An unknown seat is refused here as
+        loudly as in the scheduler: delivering it as someone else is the quiet
+        substitution the cabinet exists to make impossible.
         """
         from .loop.engine import Engine
+
+        if seat:
+            from .cabinet.seat import UnknownSeat as _Unknown, resolve as _resolve
+
+            try:
+                seat = _resolve(self.seats, seat).key
+            except _Unknown as exc:
+                raise ValueError(
+                    f"the wake names seat {seat!r}, and nobody in the cabinet answers to it"
+                ) from exc
 
         # Reset the session before composing the briefing, so the wake turn
         # starts from nothing rather than inheriting the last turn's ambient
         # facts. (`briefing()` withholds `local_only` on its own account — see
         # its docstring — but the session should not survive the handoff.) The
-        # wake speaks as the **active** seat: the agent reaches out as the
-        # identity the owner talks to, not as a second one.
-        self.session = Session(seat=active_seat(self.seats).key, turn_ref="wake")
+        # wake speaks as the **named** seat when one owns the job, and as the
+        # **active** seat otherwise: the agent reaches out as an identity the
+        # owner can put a name to, never as a second anonymous one.
+        self.session = Session(seat=seat or active_seat(self.seats).key, turn_ref="wake")
         event = InboundEvent(text=self.briefing(prompt), user_id="scheduler")
         # The seat is passed rather than left to resolve on its own: a wake is
         # not the owner's message and has no subject to route, so it speaks as

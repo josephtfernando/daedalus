@@ -165,7 +165,7 @@ async def _add_alert(runtime: Runtime, name: str = "alert") -> None:
 async def test_a_wake_in_quiet_hours_never_reaches_the_owner(runtime: Runtime) -> None:
     await _add_wake(runtime, "night")
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         return "you should be asleep"
 
     results = await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=NIGHT)
@@ -179,7 +179,7 @@ async def test_a_wake_in_quiet_hours_never_reaches_the_owner(runtime: Runtime) -
 async def test_a_wake_at_a_reasonable_hour_is_sent_and_counted(runtime: Runtime) -> None:
     await _add_wake(runtime, "midday")
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         return "Standup in ten minutes."
 
     results = await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=NOON)
@@ -207,7 +207,7 @@ async def test_a_second_pinned_tick_is_judged_by_the_pinned_clock_not_the_wall_c
     """
     await _add_wake(runtime, "midday")
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         return "Standup in ten minutes."
 
     night = datetime(2020, 1, 6, 3, 0)
@@ -227,7 +227,7 @@ async def test_a_job_does_not_run_twice_for_the_same_pinned_minute(runtime: Runt
     """The other half: pinning must not defeat the dedup it was hiding behind."""
     await _add_wake(runtime, "midday")
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         return "Standup in ten minutes."
 
     when = datetime(2020, 1, 6, 12, 0)
@@ -247,7 +247,7 @@ async def test_the_prompt_reaches_the_wake_handler(runtime: Runtime) -> None:
     await _add_wake(runtime, "midday", target="watch the disk")
     seen: list[str] = []
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         seen.append(prompt)
         return "ok"
 
@@ -261,7 +261,7 @@ async def test_the_cap_stops_a_wake_once_the_day_is_spent(runtime: Runtime) -> N
     for index in range(runtime.settings.proactive_max_per_day):
         runtime.scheduler.proactive.note_spoken(NOON, f"message {index}")
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         return "one more"
 
     results = await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=NOON)
@@ -275,7 +275,7 @@ async def test_the_cap_stops_a_wake_once_the_day_is_spent(runtime: Runtime) -> N
 async def test_the_agent_may_look_and_decide_to_stay_silent(runtime: Runtime) -> None:
     await _add_wake(runtime, "quiet_check")
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         return ""
 
     results = await runtime.scheduler.dispatch_tick(runtime, wake_handler=handler, when=NOON)

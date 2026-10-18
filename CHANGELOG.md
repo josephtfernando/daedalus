@@ -16,6 +16,25 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **A scheduled job can belong to a seat (T21).** Icarus and Odysseus were a charter,
+  a namespace, and an activation — three nouns and not one verb. Now a scheduler job
+  may name its seat, and a seated wake is the seat's work end to end: it composes
+  from *that* seat's charter, writes into *that* seat's memory namespace, and the
+  delivery arrives under its name (`Odysseus: …`), unsigned messages having been the
+  thing that would have made a wrong-seat read invisible. The honest edges are built
+  in: a seat that names nobody is recorded as a failed run rather than quietly
+  delivered as someone else; `schedule op=add` refuses an unknown seat at the door
+  (and refuses `seat` on a capability job, which has no identity to carry); the
+  proactive gate still bounds every wake, seated or not. Underneath, `Job` carries a
+  `seat` field persisted in `jobs.toml`, and `jobs()` re-reads the file before every
+  tick — ARCHITECTURE §8.5 calls jobs hand-editable, and a store that only read the
+  file at startup made that a lie (a job added by editing became real only on a
+  daemon restart). 7 tests in `tests/test_seat_jobs.py`, one of which drives a real
+  `rt.wake` turn to prove a seat's write lands in its own namespace where the
+  coordinator's cannot recall it. SPEC §7 gained the paragraph; the live cabinet now
+  has Odysseus's Monday-morning sweep job and Icarus's Monday-morning engineering
+  check job, whose first delivery is tomorrow morning.
+
 - **The `remind` verb — one-shot wakes, so a reminder can finally be said (T42).** The
   18 Oct 22:52 turn — four identical `schedule op=add` failures in a minute, ended
   "I got stuck repeating the same failing step" — was a contract failure three layers

@@ -44,7 +44,7 @@ async def test_a_reminder_fires_once_and_retires(runtime: Runtime) -> None:
     )
     calls: list[str] = []
 
-    async def wake(prompt: str) -> str:
+    async def wake(prompt: str, *, seat: str | None = None) -> str:
         calls.append(prompt)
         return f"(composed from: {prompt})"
 
@@ -67,7 +67,7 @@ async def test_a_fired_reminder_cannot_fire_again(runtime: Runtime) -> None:
     moment = datetime(2026, 10, 19, 14, 0)
     runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
-    async def wake(_prompt: str) -> str:
+    async def wake(_prompt: str, *, seat: str | None = None) -> str:
         return "done"
 
     await runtime.scheduler.dispatch_tick(runtime, when=moment, wake_handler=wake)
@@ -82,7 +82,7 @@ async def test_a_reminder_missed_while_down_is_caught_up_and_says_so(runtime: Ru
     moment = datetime(2026, 10, 19, 14, 0)
     runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
-    async def wake(_prompt: str) -> str:
+    async def wake(_prompt: str, *, seat: str | None = None) -> str:
         return "here it is"
 
     await runtime.scheduler.dispatch_tick(runtime, when=moment + timedelta(minutes=2), wake_handler=wake)
@@ -98,7 +98,7 @@ async def test_a_reminder_delivered_far_late_announces_how_late(runtime: Runtime
     moment = datetime(2026, 10, 19, 10, 0)
     runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
-    async def wake(_prompt: str) -> str:
+    async def wake(_prompt: str, *, seat: str | None = None) -> str:
         return "here it is"
 
     await runtime.scheduler.dispatch_tick(runtime, when=moment + timedelta(hours=3), wake_handler=wake)
@@ -126,7 +126,7 @@ async def test_a_failed_compose_keeps_the_reminder(runtime: Runtime) -> None:
 
         with pytest.raises(RuntimeError):
 
-            async def broken(_prompt: str) -> str:
+            async def broken(_prompt: str, *, seat: str | None = None) -> str:
                 raise RuntimeError("model down")
 
             await runtime.scheduler.dispatch_tick(runtime, when=moment, wake_handler=broken)
@@ -135,7 +135,7 @@ async def test_a_failed_compose_keeps_the_reminder(runtime: Runtime) -> None:
             "a failed compose must keep the reminder — losing it silently is the T41 sin"
         )
 
-        async def working(_prompt: str) -> str:
+        async def working(_prompt: str, *, seat: str | None = None) -> str:
             return "recovered"
 
         await runtime.scheduler.dispatch_tick(
@@ -169,7 +169,7 @@ async def test_a_crash_between_fire_and_retire_cannot_redeliver(runtime: Runtime
         )
     )
 
-    async def wake(_prompt: str) -> str:
+    async def wake(_prompt: str, *, seat: str | None = None) -> str:
         return "should never be reached"
 
     results = await runtime.scheduler.dispatch_tick(runtime, when=moment + timedelta(seconds=30), wake_handler=wake)

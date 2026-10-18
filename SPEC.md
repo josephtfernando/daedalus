@@ -471,6 +471,18 @@ the work. What makes the repeat safe is that the sender chose the message's id *
 first attempt — a retry carrying the same id is the same message, and the second answer to a
 resolved message is recognised as the duplicate of the first.
 
+**A scheduled job can belong to a seat (T21).** A scheduler job may name its seat; a
+seated wake composes from *that* seat's charter, writes into *that* seat's memory
+namespace, and delivers under its name — so a Monday sweep arrives as
+`Odysseus: …`, not as the coordinator's voice which the owner never asked to hear
+in that register. A job whose seat answers to nobody is recorded as a failed run,
+never quietly delivered as some other identity; `schedule op=add` refuses such a
+seat at the door. Only a wake can be seated: a capability job runs headless and
+speaks through its own manifest, and a one-shot `remind` is never seat-attributed —
+it is the owner's alarm, not anyone's work. Jobs remain file-first, and a store
+that only read the file at startup would make hand-editing a lie, so the next tick
+re-reads `jobs.toml` — an added job becomes real without a restart.
+
 ---
 
 ## 8. Runtime & Process

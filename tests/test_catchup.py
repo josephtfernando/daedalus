@@ -60,7 +60,7 @@ def _job(
 
 
 def _speaks(text: str = "Standup in ten minutes."):
-    async def handler(prompt: str) -> str:  # noqa: ARG001 — the prompt is the wake's reason
+    async def handler(prompt: str, *, seat: str | None = None) -> str:  # noqa: ARG001 — the prompt is the wake's reason
         return text
 
     return handler
@@ -204,7 +204,7 @@ async def test_two_missed_jobs_run_one_after_the_other_and_never_together(runtim
     peak = 0
     stamps: list[float] = []
 
-    async def handler(prompt: str) -> str:
+    async def handler(prompt: str, *, seat: str | None = None) -> str:
         nonlocal live, peak
         live += 1
         peak = max(peak, live)
@@ -263,7 +263,10 @@ async def test_a_skipped_run_is_decided_once_and_not_re_asked(runtime: Runtime) 
     again = await runtime.scheduler.dispatch_tick(runtime, when=NOW + timedelta(minutes=3))
 
     assert [result for result in again if result.job == "cap-disk_free_check"] == []
-    assert job.last_run == NOW.timestamp()
+    # Re-read rather than assert on the handle `_job` returned: the store reloads
+    # from the file before every tick, so a reference held across a tick is a
+    # snapshot, and the disk is the truth.
+    assert runtime.scheduler.get("cap-disk_free_check").last_run == NOW.timestamp()
 
 
 async def test_a_long_outage_collapses_to_one_message_not_a_pile(runtime: Runtime) -> None:
@@ -324,4 +327,4 @@ async def test_a_job_that_missed_exactly_now_is_the_due_pass_s_business(runtime:
 
     assert len(runtime.surface.sent) == 1, "the same minute was delivered twice"
     assert [result.ran for result in results if result.job == "every_minute"] == [True]
-    assert job.last_run == NOW.timestamp()
+    assert runtime.scheduler.get("every_minute").last_run == NOW.timestamp()

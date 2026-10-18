@@ -12,6 +12,21 @@ if TYPE_CHECKING:
     from ..runtime import Runtime
 
 
+def seat_in_cabinet(ctx: "Runtime", name: str) -> bool:
+    """Whether a job's `seat` names a charter the cabinet actually holds.
+
+    Refused here, at the tool's door, rather than discovered at fire time —
+    a job that could only fail every occurrence should not be creatable.
+    """
+    from ..cabinet.seat import UnknownSeat, resolve
+
+    try:
+        resolve(ctx.seats, name)
+    except UnknownSeat:
+        return False
+    return True
+
+
 class ScheduleTool(Tool):
     name = "schedule"
     title = "Schedule a job"
@@ -59,6 +74,18 @@ class ScheduleTool(Tool):
             },
             False,
         ),
+        seat=(
+            {
+                "type": "string",
+                "description": (
+                    "Optional, wake jobs only: the cabinet seat this job belongs to "
+                    "('odysseus', 'athena'...). A seated wake composes from that seat's "
+                    "charter and namespace, and delivers under its name. Omit for the "
+                    "coordinator's own work."
+                ),
+            },
+            False,
+        ),
     )
 
     def assess(self, args: dict[str, Any]) -> Assessment:
@@ -80,6 +107,19 @@ class ScheduleTool(Tool):
         if op == "add":
             name = str(args.get("name", "")).strip()
             cron = str(args.get("cron", "")).strip()
+            seat = str(args.get("seat", "")).strip()
+            if seat and str(args.get("kind", "capability")) != "wake":
+                return ToolResult.error(
+                    "`seat` belongs to a wake — a capability job runs headless and has no "
+                    f"identity to carry. You sent: {sent_args(args)}"
+                )
+            if seat and not seat_in_cabinet(ctx, seat):
+                return ToolResult.error(
+                    f"`seat` {seat!r} names nobody in the cabinet — the seats are "
+                    + ", ".join(sorted(key for key in ctx.seats if key != "daedalus"))
+                    + ". A job that names no seat would silently answer as someone else, "
+                    f"which is worse than no seat at all. You sent: {sent_args(args)}"
+                )
             if not name or not cron:
                 missing = " and ".join(
                     label for label, value in (("`name`", name), ("`cron`", cron)) if not value
@@ -100,14 +140,18 @@ class ScheduleTool(Tool):
                     kind=str(args.get("kind", "capability")),
                     target=str(args.get("target", "")),
                     late_within=str(args.get("late_within", "")),
+                    seat=str(args.get("seat", "")).strip(),
                 )
             except ValueError as exc:
                 return ToolResult.error(str(exc))
-            return ToolResult(output=f"scheduled {job.name!r}: {job.cron} → {job.kind}:{job.target}")
+            seat_note = f" (as {job.seat})" if job.seat else ""
+            return ToolResult(output=f"scheduled {job.name!r}: {job.cron} → {job.kind}:{job.target}{seat_note}")
         if op == "list":
             jobs = scheduler.jobs()
             rows = [
-                f"{j.name}\t{j.cron}\t{j.kind}:{j.target}\tnext={j.next_run_text()}"
+                f"{j.name}\t{j.cron or j.next_run_text()}\t{j.kind}:{j.target}"
+                + (f" as {j.seat}" if j.seat else "")
+                + f"\tnext={j.next_run_text()}"
                 + (f"\tlate_within={j.late_within}" if j.late_within else "")
                 for j in jobs
             ]

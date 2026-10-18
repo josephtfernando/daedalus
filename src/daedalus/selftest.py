@@ -536,7 +536,7 @@ async def _check_proactive(rt: Runtime) -> Check:
     noon = datetime(2026, 10, 16, 12, 0)
     before = len(rt.surface.sent)  # type: ignore[union-attr]
 
-    async def speaks(prompt: str) -> str:
+    async def speaks(prompt: str, *, seat: str | None = None) -> str:
         return "Standup in ten minutes."
 
     rt.scheduler.add_job(name="probe-wake", cron="* * * * *", kind="wake", target="the check-in")
@@ -552,7 +552,7 @@ async def _check_proactive(rt: Runtime) -> Check:
     rt.scheduler.remove_job("probe-wake")
     rt.scheduler.add_job(name="probe-silence", cron="* * * * *", kind="wake", target="the check-in")
 
-    async def stays_quiet(prompt: str) -> str:
+    async def stays_quiet(prompt: str, *, seat: str | None = None) -> str:
         return ""
 
     await rt.scheduler.dispatch_tick(rt, wake_handler=stays_quiet, when=datetime(2026, 10, 16, 13, 0))
@@ -618,7 +618,7 @@ async def _check_catchup(settings: Settings) -> Check:
 
         live = peak = 0
 
-        async def handler(prompt: str) -> str:
+        async def handler(prompt: str, *, seat: str | None = None) -> str:
             nonlocal live, peak
             live += 1
             peak = max(peak, live)

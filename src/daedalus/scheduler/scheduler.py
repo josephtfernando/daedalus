@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..calendar.reminders import ReminderLedger, key_for, render
+from ..cabinet.seat import UnknownSeat, resolve
 from . import catchup
 from .cron import validate as validate_cron
 from .jobs import Job, JobStore
@@ -31,7 +32,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("daedalus.scheduler")
 
-WakeHandler = Callable[[str], Awaitable[str]]
+#: Composes a proactive message. The second argument is the seat the message
+#: belongs to (a charter key) or ``None`` for the active seat; see `rt.wake`.
+#: Broadly typed because a fake in a test is a normal citizen here.
+WakeHandler = Callable[..., Awaitable[str]]
 
 #: How far back a tick looks for reminders that have come due. Must exceed the
 #: tick period, since a reminder falling between two ticks is delivered by the
@@ -75,6 +79,9 @@ class Scheduler:
     # -- job management ---------------------------------------------------
 
     def jobs(self) -> list[Job]:
+        # Reload before every read: jobs are file-first, and the next tick is
+        # where a hand edit becomes real (JobStore.reload's docstring).
+        self.store.reload()
         return self.store.all()
 
     def get(self, name: str) -> Job | None:
@@ -89,16 +96,23 @@ class Scheduler:
         kind: str = "capability",
         target: str = "",
         late_within: str = "",
+        seat: str = "",
     ) -> Job:
         expr = (cron_expr or cron or "").strip()
         validate_cron(expr)  # raises CronError (a ValueError)
         if kind not in ("capability", "wake"):
             raise ValueError(f"unknown job kind {kind!r}")
+        if seat and kind != "wake":
+            raise ValueError(
+                f"a {kind} job cannot belong to a seat — a capability runs headless and "
+                "speaks through its own manifest. Only a wake (the agent composing a "
+                "message) has an identity to carry."
+            )
         window = late_within.strip()
         if window and catchup.parse_window(window) is None:
             raise ValueError(f"late_within must read like 45m, 6h or 2d — got {window!r}")
         return self.store.put(
-            Job(name=name, cron=expr, kind=kind, target=target, late_within=window)
+            Job(name=name, cron=expr, kind=kind, target=target, late_within=window, seat=seat.strip())
         )
 
     def remove_job(self, name: str) -> bool:
@@ -312,7 +326,7 @@ class Scheduler:
             # **No proactive gate.** The owner named this moment; the gate
             # bounds the agent's own choice to speak, not the owner's — the
             # same rule `fire_reminders` states for calendar alarms.
-            text = await wake_handler(job.target or job.name)
+            text = await wake_handler(job.target or job.name, seat=None)
             if not text:
                 # The model looked at the named moment and said nothing — the
                 # same judgment a wake exercises. It costs the reminder its one
@@ -342,21 +356,45 @@ class Scheduler:
         if job.kind == "wake":
             if wake_handler is None:
                 return TickResult(job=job.name, ran=True, ok=False, detail="no wake handler wired")
+            # A job may belong to a seat (T21). The wake then composes as that
+            # seat — its charter, its namespace — rather than as whoever is
+            # active; that is what "one thing the seat owns that runs" runs on.
+            # An unknown seat is a broken job: recorded, not silently delivered
+            # as some other identity.
+            seat_key: str | None = None
+            seat_name = ""
+            if job.seat:
+                try:
+                    chosen = resolve(ctx.seats, job.seat)
+                except UnknownSeat:
+                    return TickResult(
+                        job=job.name,
+                        ran=True,
+                        ok=False,
+                        detail=f"seat {job.seat!r} names nobody in the cabinet — fix the job's `seat`",
+                    )
+                seat_key, seat_name = chosen.key, chosen.name
             allowed, why_not = self.proactive.may_speak(ctx.settings, when)
             if not allowed:
                 # A decision, not a failure: the wake was due and the agent is
                 # not permitted to speak. Recorded, so "why was it quiet" has an
                 # answer that is not a guess.
                 return TickResult(job=job.name, ran=False, ok=True, detail=f"stayed quiet — {why_not}")
-            text = await wake_handler(job.target or job.name)
+            text = await wake_handler(job.target or job.name, seat=seat_key)
             if not text:
                 # The agent looked at the day and found nothing worth the
                 # owner's attention. Silence is the outcome, not an error.
                 return TickResult(job=job.name, ran=True, ok=True, detail="nothing worth saying")
+            if seat_name and not text.lstrip().lower().startswith(seat_name.lower()):
+                # The reply names whoever took it (SPEC §7): a proactive
+                # message from a seat the owner is not currently talking to,
+                # unsigned, would read as the coordinator's.
+                text = f"{seat_name}: {text}"
             if ctx.surface is not None:
                 await ctx.surface.send(text)
             self.proactive.note_spoken(when, text)
-            return TickResult(job=job.name, ran=True, ok=True, detail="spoke", output=text)
+            detail = "spoke" if not seat_name else f"spoke as {seat_name}"
+            return TickResult(job=job.name, ran=True, ok=True, detail=detail, output=text)
         return TickResult(job=job.name, ran=True, ok=False, detail=f"unknown kind {job.kind!r}")
 
 

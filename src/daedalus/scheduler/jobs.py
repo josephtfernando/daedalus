@@ -28,6 +28,14 @@ class Job:
     #: one, while a briefing is about a day that is still running. A job that knows
     #: its own tolerance should say so.
     late_within: str = ""
+    #: The seat this work belongs to, by charter key (``"odysseus"``, ``"athena"``).
+    #: Empty means the coordinator's own work: a wake that has no name speaks as
+    #: the active seat, exactly as it always did. A named seat makes the wake the
+    #: *seat's* — it composes from that seat's charter, writes to that seat's
+    #: namespace, and delivers under that seat's name, so a weekly sweep that
+    #: arrives is visibly Odysseus's, not the coordinator's wearing a hat. A
+    #: reminder (`run_at`) is never seat-attributed: it is the owner's alarm.
+    seat: str = ""
     #: Exactly one of `cron` and `run_at` is set. A ``run_at`` job (``kind="remind"``)
     #: is a *one-shot wake* — a reminder the owner (or the agent) set for one named
     #: moment, which fires once and then retires itself. It never recurs: a cron
@@ -98,10 +106,21 @@ class JobStore:
                 last_run=row.get("last_run"),
                 created_at=float(row.get("created_at", time.time())),
                 late_within=str(row.get("late_within", "")),
+                seat=str(row.get("seat", "")),
                 run_at=row.get("run_at"),
             )
             if job.name:
                 self._jobs[job.name] = job
+
+    def reload(self) -> None:
+        """Read the file again — the file is the source, not the cache.
+
+        The daemon holds one store for the daemon's lifetime, but jobs are
+        first-file: the owner (or the agent in another process) adds a job by
+        writing the file, and the *next tick* is when that becomes real. A store
+        that only reads once makes hand-editing a lie the file tells.
+        """
+        self.load()
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,6 +136,7 @@ class JobStore:
                     "created_at": j.created_at,
                     **({"last_run": j.last_run} if j.last_run is not None else {}),
                     **({"late_within": j.late_within} if j.late_within else {}),
+                    **({"seat": j.seat} if j.seat else {}),
                 }
                 for j in self._jobs.values()
             ]

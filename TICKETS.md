@@ -444,7 +444,7 @@ each wired only as it earns its place. P4, P5 and P6 are tickets now instead of
 intentions. Where `SPEC.md` has not decided something, the ticket says so and names
 the decision; it does not invent a product to fill the gap.*
 
-### T21 — Icarus and Odysseus, first · `open`
+### T21 — Icarus and Odysseus, first · `open` — build done 19 Oct; closes on the first live delivery (Mon 08:00)
 *SPEC §7 (seats), §10 (P3). The owner, 17 Oct: "icarus and odysseus are worth it now."*
 
 Together, because they are already a pair in §7: Odysseus researches, Icarus builds.
@@ -469,6 +469,29 @@ listing already tells him). What remains here is the third and fourth clauses �
 each of Icarus and Odysseus owns, that has run**, and the owner having seen it. The
 charters being current is necessary and not sufficient: a seat whose work has never
 executed is still a file.
+
+**Done 19 Oct (overnight).** The mechanism clause landed: a scheduler job can carry a
+`seat` (SPEC §7 was extended in the same commit), and a seated wake composes from the
+seat's charter, writes into its namespace, and delivers under its name — with
+refusals, not substitutions, when the seat names nobody (`schedule op=add` refuses
+unknown seats at the door; a broken job at fire time is recorded, never delivered as
+somebody else). Jobs stay file-first and the tick now re-reads `jobs.toml`, so a seat's
+work can be added by hand and fire without a daemon restart. The live jobs, on the
+owner's request of 17 Oct ("icarus and odysseus are worth it now"):
+
+- **Odysseus** — `odysseus_sweep`, weekly Monday 09:30, a job-market and research sweep
+  reported with sources: the thing his charter names first.
+- **Icarus** — `icarus_workshop`, weekly Monday 08:00, an engineering health check (run
+  the selftest, report what broke and what he did not test — his charter's honest edge).
+  The OpenCode delegate remains his headline job, and it stays P5 (T28–T30); this is the
+  "something else" the ticket held open for him.
+
+The quiet-hours gate still applies at fire time, so the first live deliveries happen
+tomorrow morning, inside the wake window; the full fire-→-compose-→-deliver-→-record
+path is proven in `tests/test_seat_jobs.py` (7 tests, including a scripted `rt.wake`
+turn proving a seat's writes land only in its own namespace). The owner reads the first
+cohort's output at breakfast — "the owner saw it" is then witnessed in the journal
+(`journalctl --user -u daedalus.service`), same standard as §11's acceptance.
 
 ### T22 — Melinoë, next · `open`
 *SPEC §7 (verification, privacy, approvals), §3.5 (the Melinoë gate).*
