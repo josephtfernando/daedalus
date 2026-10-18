@@ -251,9 +251,16 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
   - **aptitude / DSA** practice reps
   - **body**: weight, workouts, sleep
   - **income target + application pipeline**
+  - **people + contacts**
   - **projects + status**
   - **research thread**
   - **published posts / brand**
+- **Capture is prompted, not hooked.** No extraction pipeline watches the
+  conversation; what makes a durable fact land is the system prompt naming the
+  habit (T43): people, contacts, dates, commitments and stated preferences are
+  written in the turn they are said, superseded rather than contradicted, and
+  banter is not memory. The store's own guarantees (§5 above) are what keep a
+  prompted capture honest.
 
 ---
 
@@ -500,9 +507,6 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Long tasks run in threads.
 - The "daily message" is **not a template** — it is the agent *choosing* to speak, composed fresh each time. The scheduler triggers; the model writes.
 - **Whether it may speak is decided in code, not by the model** (§6). *Quiet hours* silence a wake outright, and a *daily cap* bounds how often it may open its mouth, so a cadence job cannot become a drip. Within those bounds the model still owns *substance*: it may look at the day and reply `[silent]`. A notification from an authored capability is **not** a wake and is **not** gated — the owner defined that capability and asked it to speak up, and silencing an alert at 03:00 would defeat the thing it was built for.
-
----
-
 ## 10. Phases
 
 - **P0 — the loop** *(delivered: loop, primitives, capability substrate, memory v0, scheduler v0, Melinoë gate, Discord surface, setup wizard)*

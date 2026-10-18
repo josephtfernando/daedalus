@@ -52,3 +52,29 @@ def test_the_prompt_the_agent_is_actually_given_carries_the_date(runtime: Runtim
         "the agent was not told what today is — every relative date it is given "
         "is then a guess it cannot check"
     )
+
+
+def test_the_prompt_tells_the_model_what_capture_is_for(runtime: Runtime) -> None:
+    """A durable fact only becomes memory if something asks for it to.
+
+    Nothing recalls for the owner: the store sits behind a tool the model must
+    choose to use, and nothing else in the prompt, the schemas or a tool result
+    says *when* to use it. So on 18 Oct the owner told Calliope a fact about his
+    own writing and got an answer that kept none of it — not because memory was
+    missing, but because no instruction anywhere made capture part of the turn.
+    The rule is written where the other behavioural contracts live: in the
+    prompt. The store, supersession and the `local_only` gate it relies on are
+    §5's; this only names the habit.
+    """
+    prompt = build_system_prompt(runtime, InboundEvent(text="hi", user_id="owner"))
+
+    assert "### Remembering" in prompt
+    assert "memory op=write" in prompt, (
+        "the capture rule must name the call, or the model reads it as a feeling"
+    )
+    assert "supersede" in prompt, (
+        "capture without supersession writes contradictions beside facts, and "
+        "the next turn cannot tell which the owner meant"
+    )
+    for facet in ("people", "contacts"):
+        assert facet in prompt, f"the suggested facets must be reachable by the model ({facet})"

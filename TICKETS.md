@@ -22,7 +22,7 @@ updated, and it is committed on its own.
 **Dependencies:** `T1 → T2, T6`; `T3 → T4 → T6 → T7 → {T8, T9}`; `T6 → T10`;
 `T11 → T12 → T13 → T14`. Stream C does not touch Stream B; either may be done first.
 
-**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct) · T40**
+**Order:** T1 · T3 · T4 · T5 · T6 · T10 · T7 · T11 · T12 · T13 · T8 · T9 · T2 · T14 · T18 · T19 · T20 · **T21 T22 T23 T24 T39 (P3, seats)** · **T15 T25 T26 T27 (P4)** · **T28 T29 T30 (P5)** · **T31 T32 T33 (P6)** · **T34 T35 T36 T37 T38 (asked for 17 Oct) · T40 · **T41 (found 18 Oct, live-fixed, needs source)** · **T42 (found 18 Oct, the one-shot reminder contract)** · T43 · T44
 
 ---
 
@@ -937,3 +937,132 @@ Funnel on; the key reaches the store and never `.env`, config.toml or the wizard
 the registry note is a commented proposal, not a claim of access; and the wizard's Funnel
 reading agrees with the publisher's on the same inputs.
 
+
+## Found while working — 18 Oct
+
+*Two defects found by running the thing rather than reading it. Both were silent: the
+system kept working, so nothing surfaced. The first is fixed on the running instance; the
+second is the reason it happened and needs a source change.*
+
+### T42 — a wake that is not a cron cannot be said · `tools/schedule.py`, `scheduler/` · `open`
+
+**Symptom.** 18 Oct 22:51, routed to Calliope: the owner asked for a reminder to send
+a piece of his own writing. The turn tried `schedule op=add` four times in four steps
+(journald: 22:52:24 · 22:52:27 · 22:52:31 · 22:52:35, identical 253-char answers) and
+every call was the same shape:
+
+```json
+{"kind": "wake", "late_within": "2h", "name": "cmrlsim_voice_sample", "op": "add",
+ "target": "Remind the owner to send a piece of his own writing…"}
+```
+
+After the third identical failure the engine appended its correction — the full error,
+"Do not send that call again unchanged… if the error says what it wanted, do that" —
+and the fourth call went out **unchanged four seconds later**. The turn ended with
+`error=repeated failure` and a
+"tell me what to try instead" handed to the owner.
+
+**Cause — three stacked layers, in order of blame.** The engine behaved as built
+(three failures → one correction → one unchanged re-send → a clean stop); this is a
+contract failure, not an engine one.
+
+1. **The schema says `cron` is optional.** `schedule`'s JSON schema marks `name`,
+   `cron`, `kind` and `target` all optional (`tools/schedule.py` line 27-40) — the
+   requirement lives only in a runtime error the model has to fail into. A single flat
+   schema carrying three ops cannot express "required for `op=add`", and nothing in
+   the tool description or the parameter descriptions says so.
+2. **The intent is inexpressible.** The owner wanted a **one-shot** reminder. `cron`
+   is the only time dimension `schedule` has, and no cron expression says "2 hours
+   from now, once" — even an absolute-date one (`30 15 18 10 *`) recurs *yearly*. The
+   model reached for `late_within="2h"` because its description read like a delay;
+   it is the catch-up window for runs missed while the daemon was down. And the
+   correction's escape ladder — follow the error's fix → a different tool → a
+   different argument — was empty at every rung: the fix demanded a cron that cannot
+   say it, no tool existed for one-shots, and `late_within` is not a time. The one
+   legal rung ("ask a question") went untaken — the model's share of this.
+3. **The trap is original-sin, not a regression.** `git log -S "add needs"` lands on
+   `0b07899` — the P0 commit itself. Every one-shot intention since the loop shipped
+   has met the same wall; the acceptance run's sixteen-step identical retry
+   (`loop/engine.py` line 210) is the same trap in its oldest recorded form.
+
+A fourth, cosmetic layer: the pasted error read `"0 7 * * "` — **Discord's markdown
+italicises pairs of `*` and ate the trailing one from the engine's canned message**,
+which interpolates raw error text. (The live work-trace is safe — it code-spans each
+line.)
+
+**Fix.**
+
+1. **A `remind` verb** — one-shot wakes as their own contract, not a special shape
+   inside `schedule op=add`: `remind op=add` takes `in` ("2h") *or* `at`
+   ("2026-10-18T17:30"), exactly one, plus `note` (the wake prompt). Underneath, a
+   `Job` whose `run_at` is mutually exclusive with `cron`; it fires once through the
+   existing wake path (`fire_reminders` → the wake handler) and then **retires
+   itself**, so a reminder cannot become a yearly cron by accident. `late_within`
+   stays available as the honestly-described grace window. Plumbing, not a new
+   runtime concept: the post-turn engine, quiet hours and the daily cap are inherited
+   unchanged.
+2. **Schema honesty for `op=add`** — `cron`, `name` and `target` say "required for
+   `op=add`; omit for list/remove" in their descriptions, and the tool description
+   says `add` is recurring only, with one-shot reminders belonging to `remind`.
+3. **The error teaches the way out** — `add needs cron` ends with "for a one-shot
+   reminder, use `remind`", which makes the correction's "if the error says what it
+   wanted, do that" branch *followable* instead of a dead end. This is the
+   difference between the 22:52 turn succeeding and failing.
+
+**Acceptance:** `remind op=add in="2h"` produces one wake near the named moment as
+the active seat and is gone afterwards — no second firing, nothing left to remove;
+`late_within` on a reminder still covers a missed wake after a daemon-down window
+without the job recurring; `schedule op=add` without `cron` is refused with the
+`remind` path named in the refusal; the schema the model sees states the per-op
+requirements; and the canned "stuck" message renders the tool's error un-mangled
+(the trailing `*` of a cron example survives Discord).
+
+### T43 — memory capture is named as a habit, not left to personality · `loop/context.py` · `done`
+
+**What was missing.** The owner tells the agent a person, a contact, a date, a
+commitment — and the turn keeps none of it unless the model decides to. The store
+was never the missing half (§5's supersession, bitemporality and `local_only` gate
+are all there); what was missing was an instruction that makes capture part of the
+turn. On 18 Oct the owner told Calliope a fact about his own writing and got an
+answer that recorded nothing.
+
+**Done.** The system prompt carries a `### Remembering` section above the
+recent-memory block it reads from: a durable fact is written in the turn it is
+said (`memory op=write`), into a facet naming the subject (`people`, `contacts`
+suggested); what it replaces is superseded by `[id]` rather than contradicted
+beside; and banter, calendar-resident facts and next-week ephemera stay out. No
+hook, no pipeline — the prompt is where the other behavioural contracts live, and
+the store's guarantees keep a prompted capture honest. `SPEC.md` §5 records the
+decision and adds `people`/`contacts` to the modeled facets.
+
+**Acceptance:** a test asserts the assembled prompt carries the section, the call
+and the suggested facets — the assembled prompt, which is what the model reads,
+not the helper. **Done.**
+
+**Symptom.** `codeforces_contest_alert` failed with `[Errno 13] Permission denied` on
+`run.py`, exit code 127. `disk_free_check` had the identical defect and had not fired yet
+(it runs Mon–Fri 07:41, so it would have failed on its next weekday run).
+
+**Cause.** `limits.py` line 53 does `os.execvp(argv[0], argv)` where `argv[0]` is the
+entry file — `run.py`. `execvp` execs the file *directly*, which requires the executable
+bit. `authoring.py` line 77 writes the file with `write_text()`, which creates it `0644`
+— never `+x`. So **every capability authored this way is broken**, not just these two.
+
+**Why it stayed silent.** The runner reports `exit_code=127` with the message on stderr,
+but the scheduler treats a non-zero exit as "nothing to notify" — so the job quietly
+stops running. A capability that fails on its first run looks exactly like a capability
+with nothing to say. This is the part worth fixing hardest: the failure mode is
+indistinguishable from success.
+
+**Fix.** Two changes, and the second is the one that matters:
+
+1. `chmod 0o755` after `write_text()` in `authoring.py`, so a capability is not born
+   broken. (Done by hand on the live instance for both existing capabilities; both now
+   run clean.)
+2. A non-zero exit from a scheduled capability should notify, not vanish. A job that
+   dies is news; a job that has nothing to report is not. Today they produce the same
+   silence.
+
+**Acceptance:** author a new capability, run it on schedule, and it executes without a
+manual `chmod`. A capability whose `run.py` exits non-zero produces a notification naming
+the capability and the exit code.

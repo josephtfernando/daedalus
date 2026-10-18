@@ -16,7 +16,26 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
-- **The wizard provisions the tailnet path instead of narrating it** (`scripts/setup.sh`,
+- **The prompt names the habit of capturing durable facts (T43).** The owner tells the
+  agent a person, a contact, a date, a commitment, a preference — and the turn keeps
+  none of it unless the model *happens* to decide to. The store was never the missing
+  half: it already has provenance, supersession, bitemporality and a `local_only`
+  egress gate. What was missing was the instruction that makes capture part of the
+  turn instead of a coincidence of personality — on 18 Oct the owner told Calliope a
+  fact about his own writing and got an answer that recorded nothing. A
+  `### Remembering` section now sits in the system prompt, above the recent-memory
+  block it reads from: a durable fact is written **in the turn it is said** with
+  `memory op=write`, into a facet that names the subject (`people`, `contacts`, or
+  whatever fits); what it replaces is **superseded by id** rather than contradicted
+  beside, so recall keeps returning one truth; and small talk, things already in the
+  calendar and things the owner will say again next week stay out. No extraction
+  pipeline, no hook — the contract lives where the other behavioural contracts live
+  (the prompt), and its honesty is the store's own. `SPEC.md` §5 records the
+  decision and adds `people`/`contacts` to the modeled facets; one test asserts the
+  prompt carries the rule, the call and the facets. *Supersedes: capture happening
+  only when the model chose to write nothing in particular.*
+
+### Fixed- **The wizard provisions the tailnet path instead of narrating it** (`scripts/setup.sh`,
   stage 8, re-runnable like every resource stage). The spec's stage 8 has named tailscale
   since the P0 draft; the wizard honoured it with an advisory `command -v` and a Hardening
   line that read *"a P4 posture, nothing to assert"*. Meanwhile the phone path became real
