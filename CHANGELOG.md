@@ -16,6 +16,19 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The habit tracker exists up to its one open question (T36).** A verified
+  capability (`habit_tracker`, stdlib-only, no network, no schedule — seat wiring
+  awaits the owner): `record {habit, mark, date?}` marks a day done or missed —
+  same day again is an *update* that says what it corrected, future dates refused
+  (a habit is marked, not promised); `report` answers "how am I doing" strictly
+  from the stored days: the current streak walks back calendar-day by calendar-day
+  from the newest `done` and stops at a stored miss **or an unrecorded day** (absent
+  ≠ done — honesty beats flattery), longest run, exact miss counts with dates, and
+  a last-7 grid in which a miss is a named mark, never a silent absence. The
+  digest names its own source ("from the stored days, not a recollection"). Whose
+  seat's wake runs it — Heracles' or the coordinator's — is recorded verbatim in
+  the ticket for the owner. 7 tests through the real runner; suite 954 green.
+
 - **Athena's practice got its ledger: the LC tracker (T37).** A verified capability
   (`lc_tracker`, stdlib-only, no network, manual schedule — her cadence runs it, not
   its own) that keeps practice as **coverage and staleness**, not a counter: `record`

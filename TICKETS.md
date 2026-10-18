@@ -1113,7 +1113,7 @@ here. T34 made the roots owner-owned data rather than code, so that a folder can
 without a code change; this is the ticket that gives the owner the screen to do it, with
 T9's adopt-before-it-counts shape behind it.*
 
-### T36 — the habit tracker · `open`
+### T36 — the habit tracker · `open` — the capability is built and verified; the seat is the owner's
 *SPEC §3.5 (capabilities are local scripts first). SPEC §7 (the seats it belongs to).*
 
 The smallest of the three, and the one that needs a cadence rather than a conversation —
@@ -1127,6 +1127,28 @@ Daedalus is the one who guards sleep and writes the honest weekly audit.
 misses are recorded with their date; asking for "how am I doing" answers from the
 capability's own state rather than from the model's memory; a missed day is visible as a
 miss, not silently absent; the streak it reports is the streak the stored days imply.
+
+**Built and verified 19 Oct (overnight); the seat remains the owner's decision.** The
+capability `habit_tracker` is authored and melinoë-verified (manifest, scope posture,
+run-once, output shape — PASS). Everything the acceptance can ask of deterministic
+code exists: **`action=record`** takes `{habit, mark: done|missed, date?}` (today when
+omitted; a future date is refused — a habit is marked, not promised), and **the same
+habit on the same day is an update, not a second mark** — a correction says what it
+corrected in its warnings, and the stored day stays single. **`action=report`**
+answers "how am I doing" from the stored days only: per habit, *streak* (the walk
+backwards from the newest `done` calendar-day by calendar-day, stopping at a stored
+`missed` **or an unrecorded day** — absent is not done, honesty beats flattery), the
+*longest* complete run, exact miss counts with their dates, and a last-7 grid where a
+miss is a named mark, never a silent absence. The digest notification says in its own
+text that it answers from the stored days, not from a recollection. 7 tests in
+`tests/test_habit_tracker.py` through the real runner. **The one thing this ticket
+still needs is the owner's answer, recorded here verbatim from the 16 Oct wording:**
+
+> Whose seat is the habit tracker? (The body is Heracles', but habits are also the
+> coordinator's territory — Daedalus guards sleep and writes the honest weekly
+> audit.) The schedule choice rides the same answer: a wake of whichever seat is
+> chosen asks the report on its cadence; the capability itself carries no schedule
+> and guesses no seat until the owner names one.
 
 ### T37 — the LC tracker · `done`
 *SPEC §7 (Athena — DSA, aptitude, competitive programming, interview prep).*
@@ -1194,6 +1216,24 @@ the progress it reports is computed from stored sessions; **the owner has record
 this may read and what may never leave the laptop, and the capability is wired only to
 that**; no remote model call carries a workout value, checked as a property of the
 capability's egress rather than trusted to its prompt.
+
+**Blocked — the wiring decision is the owner's and the ticket says so before anything
+else. 19 Oct, verbatim.** Storing an owner's own record on their own laptop at `0700`
+needs no new decision, and the deterministic report is writable tonight — but the
+acceptance wires the capability **only to what the owner has recorded as its bounds**,
+and nothing has been recorded. The three questions (the same ones Heracles himself is
+blocked on, T24, because his subject *is* this data) precisely as TICKETS.md records
+them:
+
+> 1. What may Heracles *read* of the workout record?
+> 2. What of it must stay on the laptop?
+> 3. May a remote model ever see any of it — even the local chain, which runs on this
+>    machine's providers — or is this capability code-only regardless?
+
+The capability's egress posture can be made "no remote call carries a value" as a code
+property (manifest with no net scope, report deterministic) — but "wired only to that"
+needs the answers, and a protected category is never guessed. It is the one ticket
+whose correctness is the owner's sentence.
 
 ### T40 — the wizard provisions the tailnet path · `done`
 *SPEC §8.5 stage 8 ("Resources (optional, skippable) — gcal, mail, tailscale"). The
