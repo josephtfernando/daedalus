@@ -9,6 +9,7 @@ that is the implementable part, complete.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -133,7 +134,8 @@ async def test_how_am_i_doing_comes_from_state(root: Path) -> None:
 async def test_marks_are_validated_before_stored(root: Path) -> None:
     result, state, _ = await run_cap(root, {"action": "record", "habit": "x", "mark": "kind-of", "date": "2026-10-16"})
     assert not result["ok"] and "done" in result["error"] and state == {}
+    future = (date.today() + timedelta(days=2)).isoformat()
     result, _state, _ = await run_cap(
-        root, {"action": "record", "habit": "x", "mark": "done", "date": "2026-10-19"}
+        root, {"action": "record", "habit": "x", "mark": "done", "date": future}
     )
     assert not result["ok"] and "in the future" in result["error"], "a habit is marked, not promised"

@@ -444,7 +444,7 @@ each wired only as it earns its place. P4, P5 and P6 are tickets now instead of
 intentions. Where `SPEC.md` has not decided something, the ticket says so and names
 the decision; it does not invent a product to fill the gap.*
 
-### T21 — Icarus and Odysseus, first · `open` — build done 19 Oct; closes on the first live delivery (Mon 08:00)
+### T21 — Icarus and Odysseus, first · `done` — both seated; Icarus's first live delivery happened Mon 08:00, journal-evidenced
 *SPEC §7 (seats), §10 (P3). The owner, 17 Oct: "icarus and odysseus are worth it now."*
 
 Together, because they are already a pair in §7: Odysseus researches, Icarus builds.
@@ -486,12 +486,23 @@ owner's request of 17 Oct ("icarus and odysseus are worth it now"):
   The OpenCode delegate remains his headline job, and it stays P5 (T28–T30); this is the
   "something else" the ticket held open for him.
 
-The quiet-hours gate still applies at fire time, so the first live deliveries happen
-tomorrow morning, inside the wake window; the full fire-→-compose-→-deliver-→-record
+The quiet-hours gate still applied at fire time, so the first live deliveries happened
+this morning, inside the wake window; the full fire-→-compose-→-deliver-→-record
 path is proven in `tests/test_seat_jobs.py` (7 tests, including a scripted `rt.wake`
 turn proving a seat's writes land only in its own namespace). The owner reads the first
 cohort's output at breakfast — "the owner saw it" is then witnessed in the journal
 (`journalctl --user -u daedalus.service`), same standard as §11's acceptance.
+
+**Closed on the live fire, 19 Oct 08:00–08:15.** The journal shows both wakes ran on
+their tick and worked as their charters say: Icarus (08:00:05–08:14:09) ran the
+selftest via real shell/files turns and spoke his report; Athena (08:17) recalled her
+plan from her namespace, ran the LC tracker capability, checked the contest calendar,
+wrote her practice-log facet, and spoke her two lines. The machine's own record closes
+it: `wakes.db` has `icarus_workshop:20261019T0800 … ok=1, "spoke as Icarus"` and
+`athena_practice:20261019T0815 … ok=1, "spoke as Athena"`, `proactive.json` counts
+`spoken: 2` with Athena's message verbatim, and her `practice_log.md` facet carries
+today's entry. Odysseus's `odysseus_sweep` fires 09:30 on the same mechanism — the
+first Icarus/Athena deliveries are the ticket's own bar, and both cleared it.
 
 ### T22 — Melinoë, next · `done`
 *SPEC §7 (verification, privacy, approvals), §3.5 (the Melinoë gate).*
@@ -520,7 +531,7 @@ gate). SPEC §3.5 carries the paragraph. 4 tests in `tests/test_melinoe.py`; sui
 916 green. *The re-author path needed no code — the gate already ran on every
 authoring; the memory makes the verdict *hers* instead of the turn's exhaust.*
 
-### T23 — Athena · `done` — cadence set 19 Oct; first live fire tomorrow 08:15
+### T23 — Athena · `done` — fired live 08:15 Mon 19 Oct and spoke; her first cadence act used the LC tracker
 *SPEC §7 (knowledge and coding mastery — DSA, aptitude, competitive programming,
 interview prep; pairs with Odysseus).*
 
@@ -543,8 +554,13 @@ picks the day's 2–3 problems favouring weak or gone-cold topics, writes one co
 `practice-log` line back into **her** namespace, and tells the owner in two lines.
 Namespace invisibility is proven, not asserted: `tests/test_seat_jobs.py` drives a
 real `rt.wake` turn and asserts the write lands in her namespace while the
-coordinator's cannot recall it. Same wall-clock caveat as T21: the first live fire is
-tomorrow 08:15; the owner reads it at breakfast, and the audit closes the loop then.
+coordinator's cannot recall it. The first live fire happened on schedule, 19 Oct
+08:15: journal 08:17 shows recall → `capability op=run` (the LC tracker, built the
+same night under T37) → contest calendar fetch → practice-log write, and `wakes.db`
+records `ok=1, "spoke as Athena"`; the two lines she spoke are verbatim in
+`proactive.json` — the graphs/heaps pick with the Codeforces dates. The loop is
+closed: her cadence is live, and her first act as a seated practice planner read the
+tracker that was built to be read.
 
 ### T24 — Calliope and Heracles, last · `open` — Calliope done 19 Oct; Heracles blocked on the owner's recorded decision
 *SPEC §7 (creative voice and distribution; the body — training, nutrition, sleep).
@@ -743,7 +759,7 @@ this ticket is one owner decision**, recorded here verbatim for when they wake:
 Everything else in T26 was corrected 17 Oct by checking instead of remembering, and
 now the remaining mechanism is live.
 
-### T27 — still there in the morning · `open`
+### T27 — still there in the morning · `open` — the machine checks are built and live-checked 19 Oct; the lid's fix is the owner's sudo line
 *SPEC §8 (the laptop stays awake with the lid closed; `enable-linger`). §3.5.*
 
 Three measured facts on 17 Oct, one theme — the machine and its route outlive the run

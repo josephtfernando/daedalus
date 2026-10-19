@@ -38,7 +38,7 @@ def pinned(base: datetime, *, hours: float = 2) -> datetime:
 
 async def test_a_reminder_fires_once_and_retires(runtime: Runtime) -> None:
     """The named moment arrives, the agent composes, the owner reads — once."""
-    moment = datetime(2026, 10, 19, 14, 0)
+    moment = datetime.now() + timedelta(hours=2)
     runtime.scheduler.add_reminder(
         name="send_your_writing", when=moment, note="Remind the owner to send a piece of his own writing"
     )
@@ -64,7 +64,7 @@ async def test_a_reminder_fires_once_and_retires(runtime: Runtime) -> None:
 
 async def test_a_fired_reminder_cannot_fire_again(runtime: Runtime) -> None:
     """Fires once. The next tick has literally nothing to see."""
-    moment = datetime(2026, 10, 19, 14, 0)
+    moment = datetime.now() + timedelta(hours=2)
     runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
     async def wake(_prompt: str, *, seat: str | None = None) -> str:
@@ -79,7 +79,7 @@ async def test_a_fired_reminder_cannot_fire_again(runtime: Runtime) -> None:
 
 async def test_a_reminder_missed_while_down_is_caught_up_and_says_so(runtime: Runtime) -> None:
     """The daemon was down at the moment; the owner still hears — with the lateness named."""
-    moment = datetime(2026, 10, 19, 14, 0)
+    moment = datetime.now() + timedelta(hours=2)
     runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
     async def wake(_prompt: str, *, seat: str | None = None) -> str:
@@ -95,7 +95,7 @@ async def test_a_reminder_missed_while_down_is_caught_up_and_says_so(runtime: Ru
 
 async def test_a_reminder_delivered_far_late_announces_how_late(runtime: Runtime) -> None:
     """Delivered three hours late, it does not pretend the morning did not happen."""
-    moment = datetime(2026, 10, 19, 10, 0)
+    moment = datetime.now() + timedelta(hours=1)
     runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
     async def wake(_prompt: str, *, seat: str | None = None) -> str:
@@ -104,7 +104,7 @@ async def test_a_reminder_delivered_far_late_announces_how_late(runtime: Runtime
     await runtime.scheduler.dispatch_tick(runtime, when=moment + timedelta(hours=3), wake_handler=wake)
 
     delivered = "\n".join(runtime.surface.sent)
-    assert "(this reminder was set for Mon 19 Oct 10:00" in delivered, (
+    assert f"(this reminder was set for {moment:%a %d %b %H:%M}" in delivered, (
         "a delivery far past its named moment must carry the lateness on its face"
     )
     # And it is still gone afterwards — announced, delivered, never recurring.
@@ -121,7 +121,7 @@ async def test_a_failed_compose_keeps_the_reminder(runtime: Runtime) -> None:
     """
     logging.disable(logging.CRITICAL)
     try:
-        moment = datetime(2026, 10, 19, 14, 0)
+        moment = datetime.now() + timedelta(hours=2)
         runtime.scheduler.add_reminder(name="send_your_writing", when=moment, note="remind him")
 
         with pytest.raises(RuntimeError):
@@ -155,13 +155,13 @@ async def test_a_crash_between_fire_and_retire_cannot_redeliver(runtime: Runtime
     next tick redeliver — two copies of one reminder, the exact failure the
     duplicate-call guard exists for on the turn side.
     """
-    moment = datetime(2026, 10, 19, 14, 0)
+    moment = datetime.now() + timedelta(hours=2)
     job = runtime.scheduler.add_reminder(name="r", when=moment, note="remind him")
 
     # The compose succeeded and was logged; the retire never happened.
     runtime.scheduler.log.record(
         Wake(
-            key=job.idempotency_key(datetime(2026, 10, 19, 14, 0)),
+            key=job.idempotency_key(moment),
             job=job.name,
             ran_at=0.0,
             ok=True,
@@ -183,7 +183,7 @@ async def test_a_crash_between_fire_and_retire_cannot_redeliver(runtime: Runtime
 
 def test_catchup_never_scans_a_one_shot() -> None:
     """A `run_at` job has no cron to scan backwards with — the due pass owns it."""
-    moment = pinned(datetime(2026, 10, 19, 14, 0), hours=-1)  # long past
+    moment = pinned(datetime.now(), hours=-1)  # long past
     job = Job(name="r", kind="remind", target="missing", run_at=moment.timestamp(), last_run=None)
     assert catchup.plan([job], datetime.now()) == [], (
         "the cron scan must not touch a one-shot: it fires through the due pass"
