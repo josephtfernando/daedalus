@@ -501,8 +501,9 @@ wrote her practice-log facet, and spoke her two lines. The machine's own record 
 it: `wakes.db` has `icarus_workshop:20261019T0800 … ok=1, "spoke as Icarus"` and
 `athena_practice:20261019T0815 … ok=1, "spoke as Athena"`, `proactive.json` counts
 `spoken: 2` with Athena's message verbatim, and her `practice_log.md` facet carries
-today's entry. Odysseus's `odysseus_sweep` fires 09:30 on the same mechanism — the
-first Icarus/Athena deliveries are the ticket's own bar, and both cleared it.
+today's entry. Odysseus's `odysseus_sweep` fired on the same mechanism at 09:33 —
+`ok=1, "spoke as Odysseus"`, `spoken: 3` — so all three seats delivered on their
+first morning, and the ticket's own bar cleared three times over.
 
 ### T22 — Melinoë, next · `done`
 *SPEC §7 (verification, privacy, approvals), §3.5 (the Melinoë gate).*
