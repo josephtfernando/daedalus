@@ -609,6 +609,13 @@ they answer:
    (`heavy`/`cheap` are separate routes; "local only" is an answer the model
    chain already knows how to honour.)
 
+**Drafted posture, 19 Oct — the strictest reading, drafted so your answer has a
+concrete yes/no/edit to react to instead of three open questions.** The draft lives in
+full with T38 (the ticket whose acceptance wires to it): read only what you hand him,
+everything stays on the laptop, no remote model ever, nothing wired until your
+written word. A default that protective can only be relaxed by you — it cannot
+silently widen anything.
+
 ### T39 — the coordinator routes a request to the seat it belongs to · `done`
 *SPEC §7. The owner, 17 Oct: "I want daedalus to be able to figure out who is best suited
 to do things, and then route my message to them."*
@@ -980,6 +987,26 @@ questions, exactly as the ticket names them:
 
 No code is one line ahead of these: the bounds *are* the feature.
 
+**Drafted proposal — 19 Oct, for adopting, editing, or rejecting. Nothing is wired
+until you say the word; this is the draft criterion 3 asks for, not a decision.**
+
+1. **Who convenes:** the coordinator only — or you, by asking him. Seats keep
+   point-to-point mail (T31); convening a room is a *spend* (several seats, several
+   turns), and the seat that owns the budget is the one that convenes.
+2. **Hops:** an exchange ends at **8 messages total across the room** — room for
+   request → partial → verify → result, twice over. A room that needs more is two
+   rooms, and the second one should say why the first was not enough.
+3. **Budget:** each seat may join at most **2 rooms per day**; the coordinator may
+   convene at most **1**. Rooms are the expensive form of talking; the cap is what
+   keeps a room from becoming the drip §9's daily cap exists to prevent.
+4. **Dead end:** an exchange with **no answer for 24 hours** resolves as a dead end —
+   named in the next morning digest, removed from the queue. A queue that never
+   drains is the one failure at-least-once delivery guarantees, so the room inherits
+   the deadline the inbox never had.
+5. **Verify:** a seat's answer must be `verify`-ed before it **leaves the room** —
+   into your view, or into another seat's work. Intermediate chatter inside the room
+   does not need it; the type stays for what counts.
+
 ### T33 — the owner sees the room · `open`
 *SPEC §9 (the surface). §3.6 (visual → dashboard, action → Discord).*
 
@@ -1012,6 +1039,20 @@ makes the third real now) are different products, not styling:
 
 The machinery half an answer would need — the live turn status (T44's ledger),
 `message op=thread` for recoverability, `/pub/` for the served page — all exists.
+
+**Drafted proposal — 19 Oct, and every line of it rides T32's adoption.**
+
+1. **Where:** a **Discord thread** per room. You live there; §3.6's own split already
+   says visual → dashboard, action → Discord, and a room is action-shaped — you join
+   it by talking, not by clicking.
+2. **As itself:** seat traffic posted as the seats' own lines in the thread, not
+   summarized into one voice. (The drafted T32 hop cap keeps this readable; an
+   8-message room does not need a summarizer.)
+3. **Joining and steering:** you reply in the thread; the reply is addressed to the
+   room, and the coordinator routes it to whoever it concerns.
+4. **Kept:** the thread is Discord's to keep and prune; the broker's own record stays
+   queryable regardless, via `message op=thread` — recoverable even if the thread is
+   deleted.
 
 ---
 
@@ -1210,6 +1251,18 @@ still needs is the owner's answer, recorded here verbatim from the 16 Oct wordin
 > chosen asks the report on its cadence; the capability itself carries no schedule
 > and guesses no seat until the owner names one.
 
+**Drafted recommendation — 19 Oct, your call; the capability waits on nothing else.**
+
+- **The coordinator (Daedalus).** Habits are cadence and honesty, which is already his
+  charter — he guards sleep and writes the honest weekly audit — and the tracker's
+  data stays deliberately body-agnostic (marked days and misses, no health *values*),
+  so wiring it to him drags no protected boundary in with it. Schedule if adopted:
+  his morning wake reads the report and carries one line of it.
+- The alternative is Heracles, if you read habits as training-adjacent — but that
+  puts the record in the seat whose subject is the protected category, which is
+  exactly the boundary still open in T24/T38. The draft prefers the seat that keeps
+  the two questions separate.
+
 ### T37 — the LC tracker · `done`
 *SPEC §7 (Athena — DSA, aptitude, competitive programming, interview prep).*
 
@@ -1294,6 +1347,21 @@ The capability's egress posture can be made "no remote call carries a value" as 
 property (manifest with no net scope, report deterministic) — but "wired only to that"
 needs the answers, and a protected category is never guessed. It is the one ticket
 whose correctness is the owner's sentence.
+
+**Drafted posture — 19 Oct: the strictest reading of every open bound. Nothing is
+wired, and the draft can only be *narrowed further or relaxed by your written word* —
+a default this protective is the only safe direction to propose from.**
+
+1. **Read:** Heracles reads only what you tell him in conversation, plus records you
+   explicitly hand him. He does not browse; no listing of anything body-adjacent.
+2. **Stays on the laptop:** everything. The record lives in the capability's own state
+   directory on this disk, at `0600`, like the other trackers'.
+3. **Remote model: none, ever.** His turns run local-model-only; where a question
+   could only be answered by a remote model, he says so instead of answering. The
+   capability itself: standard library only, no network scope, deterministic report —
+   the LC tracker's shape.
+4. **Wiring:** none — not the seat, not the capability — until you write the yes.
+   The three questions above stay the gate.
 
 ### T40 — the wizard provisions the tailnet path · `done`
 *SPEC §8.5 stage 8 ("Resources (optional, skippable) — gcal, mail, tailscale"). The
