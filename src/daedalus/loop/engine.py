@@ -163,6 +163,22 @@ class Engine:
                 seat=chosen.key,
             )
 
+        # The seat's recorded bounds (T24): a turn as a seat the owner bound to
+        # the local chain never reaches a remote provider. The check is made
+        # *before* the loop so the refusal can be the whole turn's answer —
+        # said plainly, in the owner's words, not a stack trace from a chain
+        # that refused to yield a provider.
+        local_only = chosen.local_models_only
+        if local_only and not ctx.model.local_available():
+            return finish(
+                f"{chosen.name} answers only on this machine's local chain, and nothing "
+                "local is running right now. Nothing about this seat's subject "
+                "leaves the laptop, so this is a refusal rather than a fallback — "
+                "start the local runner, or ask the coordinator to relay a "
+                "structure-only question.",
+                error="local-only chain unavailable: the seat's charter binds it to "
+                "providers on this machine",
+            )
         while steps < ctx.settings.max_steps:
             steps += 1
             try:
@@ -171,6 +187,7 @@ class Engine:
                     tools=schemas,
                     on_delta=on_delta,
                     text_hint=event.text,
+                    local_only=local_only,
                 )
             except NoProviderAvailable as exc:
                 return finish(f"I couldn't reach a model — {exc}", error=str(exc))

@@ -563,7 +563,7 @@ records `ok=1, "spoke as Athena"`; the two lines she spoke are verbatim in
 closed: her cadence is live, and her first act as a seated practice planner read the
 tracker that was built to be read.
 
-### T24 — Calliope and Heracles, last · `open` — Calliope done 19 Oct; Heracles blocked on the owner's recorded decision
+### T24 — Calliope and Heracles, last · `done` — Calliope delivered 19 Oct; Heracles wired 20 Oct to the bounds the owner recorded in conversation
 *SPEC §7 (creative voice and distribution; the body — training, nutrition, sleep).
 AGENTS.md (personal data is out of bounds).*
 
@@ -615,6 +615,33 @@ full with T38 (the ticket whose acceptance wires to it): read only what you hand
 everything stays on the laptop, no remote model ever, nothing wired until your
 written word. A default that protective can only be relaxed by you — it cannot
 silently widen anything.
+
+**The decision arrived, and Heracles is wired to it — done 20 Oct.** The owner answered
+in conversation (19 Oct, ~11:45): the strictest draft **adjusted** in all three of the
+offered directions — *the tracker may store values* (what/how much/when, locally, its
+report readable by owner and Heracles), *he may read files the owner designates*, and
+*the local model chain is fine for his turns*; nothing remote, ever; reporting stays
+deterministic code. That is now recorded three ways, and the wiring follows it:
+
+- **The charter is the record** (`cabinet/seats/heracles.toml`): prose restated to the
+  decision, and a `[bounds]` table — `remote_models = false`, `read_roots = []` (empty:
+  the designation list is the owner's to fill by hand). A malformed table is a
+  `CharterError` at load, not a silent fallback to unrestricted.
+- **The bound is enforced at the call, not hoped for in the prompt:** `ModelClient.chat`
+  gained `local_only` — the chain is rebuilt from every local provider (cheap first),
+  route-blind, so a heavy-route text cannot reach past it; and the engine refuses the
+  turn up front, in Heracles' own name per his charter's clause, when nothing local is
+  running. 9 tests in `tests/test_seat_bounds.py`: parse-or-refuse, the live charter
+  carries the recorded decision, a bounded seat never touches a remote provider that is
+  sitting right there available, nothing-local is a named refusal rather than a
+  fallback, and an unbounded seat is byte-for-byte unchanged.
+- **SPEC §6 records the mechanism** (a protected category opens by written decision,
+  and the decision is data the code enforces); ARCHITECTURE §7.1 describes the seam.
+
+What is deliberately *not* here: `read_roots` enforcement plumbing for a list that is
+still empty — the owner designates a folder by writing it into the table, and the guard
+work lands with the first real designation, not speculatively before one exists. The
+workout *capability* (T38) is the other half of this decision and is built there.
 
 ### T39 — the coordinator routes a request to the seat it belongs to · `done`
 *SPEC §7. The owner, 17 Oct: "I want daedalus to be able to figure out who is best suited

@@ -32,6 +32,7 @@ from ..memory.namespaces import DEFAULT_NAMESPACE, NamespaceError, check
 
 __all__ = [
     "BUILTIN",
+    "Bounds",
     "CHART_FIELDS",
     "DEFAULT_SEAT",
     "CharterError",
@@ -53,7 +54,14 @@ DEFAULT_SEAT = "daedalus"
 
 #: What a charter file may say. Anything else is a typo, and a typo that is
 #: ignored is worse than one that is refused.
-CHART_FIELDS = frozenset({"name", "charter", "namespace", "active", "traits"})
+CHART_FIELDS = frozenset({"name", "charter", "namespace", "active", "traits", "bounds"})
+
+#: What a `[bounds]` table may say — the owner's recorded decision about a seat
+#: whose subject is protected data (T24/T38). A bound is *code-enforced*, not a
+#: charter hope: `remote_models = false` means the engine will not let the turn
+#: touch a remote provider, whatever the chain says; `read_roots` is the list of
+#: folders the owner designates that seat may read (empty = conversation only).
+BOUND_FIELDS = frozenset({"remote_models", "read_roots"})
 
 #: The eight built-in charters (SPEC §7), as the fallback for a fresh install.
 #:
@@ -144,6 +152,50 @@ _BUILTIN: tuple[tuple[str, str, str], ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class Bounds:
+    """The owner's recorded bounds for a seat (T24/T38) — a decision, as data.
+
+    A charter is prose the model answers from; a bound is a fact the *code*
+    answers from. `remote_models = false` is enforced in the engine's model
+    call, not hoped for in the prompt; `read_roots` is the designated-folder
+    list the owner can edit by hand. Both are the owner's to change, in the
+    charter file, in writing — the standard AGENTS.md sets for this category.
+    """
+
+    remote_models: bool = True
+    read_roots: tuple[str, ...] = ()
+
+
+def _read_bounds(path: Path, raw: Any) -> "Bounds | None":
+    """Parse a charter's `[bounds]` table, or refuse what it cannot be.
+
+    The refusal is the point: a typo'd bound that silently fell back to
+    "unrestricted" is the one failure this category cannot afford.
+    """
+    if "bounds" not in raw:
+        return None
+    table = raw["bounds"]
+    if not isinstance(table, Mapping):
+        raise CharterError(f"{path}: `[bounds]` is a table, not {table!r}")
+    unknown = sorted(set(table) - BOUND_FIELDS)
+    if unknown:
+        raise CharterError(
+            f"{path}: unknown bound {', '.join(unknown)} — `[bounds]` holds "
+            f"{', '.join(sorted(BOUND_FIELDS))}"
+        )
+    remote_models = table.get("remote_models", True)
+    if not isinstance(remote_models, bool):
+        raise CharterError(f"{path}: `remote_models` is true or false, not {remote_models!r}")
+    read_roots = table.get("read_roots", [])
+    if not isinstance(read_roots, list) or any(not isinstance(r, str) or not r.strip() for r in read_roots):
+        raise CharterError(
+            f"{path}: `read_roots` is a list of folder paths the owner designates, "
+            f"not {read_roots!r}"
+        )
+    return Bounds(remote_models=remote_models, read_roots=tuple(r.strip() for r in read_roots))
+
+
 class CharterError(ValueError):
     """A charter file that cannot be believed, named by its path."""
 
@@ -156,6 +208,11 @@ class Seat:
     namespace: str = ""
     active: bool = False
     traits: list[str] = field(default_factory=list)
+    #: The owner's recorded bounds for a protected-data seat (T24/T38), parsed
+    #: from the charter's `[bounds]` table. `None` means "no bounds recorded" —
+    #: an ordinary seat, unrestricted, exactly as every seat was before the
+    #: concept existed.
+    bounds: "Bounds | None" = None
     #: Where the charter came from, for `daedalus seats` to say. Empty means the
     #: built-in — which is not the same as "no charter", it is "the one in the code".
     source: str = ""
@@ -165,6 +222,16 @@ class Seat:
             self.key = self.name.lower()
         if not self.namespace:
             self.namespace = self.key
+
+    @property
+    def local_models_only(self) -> bool:
+        """True when the owner has bound this seat to the local chain (T24).
+
+        The one bound with a code seam already in the house: the engine reads
+        this and will not let the turn reach a remote provider, whatever the
+        configured chain says. A seat without recorded bounds is unrestricted.
+        """
+        return self.bounds is not None and not self.bounds.remote_models
 
     @property
     def from_file(self) -> bool:
@@ -291,6 +358,7 @@ def read_charter(path: Path) -> Seat:
         namespace=namespace,
         active=active,
         traits=list(traits),
+        bounds=_read_bounds(Path(path), raw),
         source=str(path),
     )
 

@@ -66,6 +66,19 @@ class ModelClient:
             return False
         return all(getattr(p, "is_local", False) for p in available)
 
+    def local_available(self) -> bool:
+        """Is any local provider running? The seat-bound turn's honest gate.
+
+        A seat the owner has bound to the local chain (T24) may not fall back to
+        a remote provider — so when nothing local is running, the turn is
+        refused outright rather than routed somewhere the bound forbids. This is
+        the probe that lets the engine say *why* in the owner's words.
+        """
+        return any(
+            getattr(p, "is_local", False) and p.available()
+            for p in ([self.cheap] if self.cheap else []) + self.providers
+        )
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -74,6 +87,7 @@ class ModelClient:
         route: str = "auto",
         on_delta: DeltaFn | None = None,
         text_hint: str = "",
+        local_only: bool = False,
     ) -> ChatResult:
         resolved = choose_route(
             text_hint or _last_user_text(messages),
@@ -81,7 +95,18 @@ class ModelClient:
             cheap_available=self.cheap_available(),
         )
         errors: list[str] = []
-        for provider in self._chain(resolved):
+        chain = self._chain(resolved)
+        if local_only:
+            # The bound is route-blind (T24): a seat bound to this machine's
+            # chain never reaches a remote provider *whatever route the text
+            # resolves to* — heavy included. The local providers, cheap first,
+            # are the whole chain for this call.
+            seen: list[Provider] = []
+            for p in ([self.cheap] if self.cheap else []) + self.providers:
+                if getattr(p, "is_local", False) and p not in seen:
+                    seen.append(p)
+            chain = seen
+        for provider in chain:
             if not provider.available():
                 continue
             if not self.ledger.allow(provider.name, provider.window_s, provider.max_calls):
@@ -98,7 +123,15 @@ class ModelClient:
                 continue
             self.last_provider = provider.name
             return result
-        raise NoProviderAvailable("; ".join(errors) or "no provider available")
+        raise NoProviderAvailable(
+            "; ".join(errors)
+            or (
+                "the local chain has nothing running — this seat is bound to it "
+                "(charter [bounds]) and will not fall back to a remote provider"
+                if local_only
+                else "no provider available"
+            )
+        )
 
 
 def _last_user_text(messages: Sequence[dict[str, Any]]) -> str:

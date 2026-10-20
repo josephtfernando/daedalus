@@ -16,6 +16,18 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **Heracles is wired, to the bounds you wrote (T24).** Your decision of 19 Oct —
+  the tracker may store values locally, he may read files you designate, the local
+  model chain is fine for his turns, nothing remote ever — is now recorded as *data the
+  code enforces*: his charter carries a `[bounds]` table (`remote_models = false`,
+  `read_roots = []`), a malformed table refuses to load rather than silently widening
+  his reach, and the engine holds the line two ways — `chat(local_only=True)` rebuilds
+  the provider chain from local providers only, route-blind, so a heavy-route text
+  cannot reach past the bound; and when nothing local is running, the turn refuses in
+  his own name ("he says so instead of answering" is a code path now, not a charter
+  hope). Seats without bounds are untouched. 9 tests; SPEC §6 records the mechanism.
+  The workout tracker itself lands with T38.
+
 - **The dashboard grew a design language, a mood of the moment, and a roots editor
   (T35).** The sheet is now three layers: the owner's validated tokens; **derived
   scales** — spacing from `gap`, radius and type from `radius`/`size`, scheme-composed

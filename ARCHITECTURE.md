@@ -199,6 +199,8 @@ Discord DM ─▶ Surface.recv ─▶ route(event) ─▶ Engine.run_turn(event,
 
 **The active seat is resolved once, at step 1.** `pick(seats, seat)` where `seat` is the caller's (a wake names none). No name means the charter carrying `active = true` — the identity the owner chose, and choosing it is `daedalus activate`, a write to the charter files and nothing else. That single resolution sets the session, the charter in the prompt, and the memory namespace, so the three cannot disagree about who is answering.
 
+**Seat bounds (T24/T38) — a recorded decision, enforced at the call.** A charter may carry a `[bounds]` table: the owner's decision about a seat whose subject is protected data, as data. `remote_models = false` is read at the turn's start and two things follow: the engine refuses the turn up front — in the seat's own name, per its charter's "he says so instead of answering" — when nothing local is running; and `ModelClient.chat(local_only=True)` rebuilds the chain from *every* local provider (cheap first), route-blind, so a heavy-route text can never reach past the bound. A malformed `[bounds]` table is a `CharterError` at load, not a silent fallback to unrestricted — a typo that widened a protected seat's reach is the one failure this category cannot afford. `read_roots` records the folders the owner designates the seat may read; the list is the owner's to fill by hand, and empty means conversation only. Ordinary seats carry no table and are untouched.
+
 ### 7.1.1 Routing — who takes this message
 
 `cabinet/triage.py`. The owner should not have to name a seat, so the ingress asks
