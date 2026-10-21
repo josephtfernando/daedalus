@@ -16,6 +16,19 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The workout record exists, inside the bounds you wrote (T38).** You adjusted
+  the strictest draft all three ways — store values, designated files, local chain —
+  and the capability is wired to exactly that: `workout_tracker` records sessions
+  (what, how much, when; one row per exercise per day, a same-day re-record is a
+  correction said aloud, future dates refused) and reports progress **computed from
+  the stored rows only** — count, last day, last what-it-was, days since — with an
+  empty record reporting ok-and-empty and nagging no one. The egress clause is a
+  property of the code, not a promise in prose: the manifest declares no network
+  scope and `run.py` has no fetch-capable import — both asserted by test, because a
+  capability that structurally cannot reach out cannot put a workout value on the
+  wire. Heracles reads it from his turns, which run the local chain by his charter's
+  bounds. 7 tests through the real runner; suite 1015 green.
+
 - **The habit tracker has its seat: yours truly (T36).** You named the coordinator
   19 Oct, so the `habit_report` wake is live — daily 08:45, seated `daedalus`, running
   the tracker's report and carrying **one line**: streaks alive, misses marked, from
@@ -23,7 +36,7 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
   instead of nagging. The capability stays exactly as built — seat-agnostic, verified,
   update-not-duplicate, the streak the stored days imply — because the decision was
   only ever about whose voice carries the line. A live-state test holds the wiring to
-  your decision. Suite 1015 green.
+  your decision. Suite 1008 green.
 
 - **You can watch a room happen, join it by replying, and stop it (T33).** The room
   you adopted with T32 now has its surface. Convening posts a room card to your DM;

@@ -1412,7 +1412,7 @@ comes from. 5 tests in `tests/test_lc_tracker.py`, run through the real runner
 staleness computed from stored dates, the quiet empty report, and the strict refusals.
 Suite 947 green.
 
-### T38 — the workout tracker · `open`
+### T38 — the workout tracker · `done` — the owner's adjusted decision of 19 Oct, wired: values stored locally, deterministic reporting, nothing remote
 *SPEC §7 (Heracles — the body: training, nutrition, sleep). AGENTS.md (health data is
 out of bounds; structure travels, values stay local). T24 (Heracles is the seat with a
 boundary in front of it).*
@@ -1464,6 +1464,32 @@ a default this protective is the only safe direction to propose from.**
    the LC tracker's shape.
 4. **Wiring:** none — not the seat, not the capability — until you write the yes.
    The three questions above stay the gate.
+
+**The yes arrived — adjusted, and wired to it. Done 21 Oct.** The owner answered 19
+Oct, adjusting the strictest draft in all three offered directions: *the tracker may
+store values* (what/how much/when, locally, its report readable by owner and
+Heracles); *he may read files the owner designates* (recorded in his charter's
+`[bounds]` — the list is the owner's to fill); *the local model chain is fine for his
+turns* — no remote provider ever, enforced at the engine since T24. Reporting stays
+deterministic code.
+
+The capability `workout_tracker` is authored and melinoë-verified (scope posture,
+manifest, run-once, output shape — all PASS), stdlib-only, no deps, **no network
+scope by declaration**. Two acts: `record {what, how_much, when?}` — one row per
+exercise per day (a same-day re-record is a correction that says what it corrected; a
+future date refused: a session is logged, not promised), and `report` — per exercise,
+computed from the stored sessions only (count, last day, last what-it-was, days
+since), with an empty record reporting ok-and-empty and emitting nothing: an empty
+record cannot nag.
+
+**The acceptance's egress clause is held as a property of the code, not a promise in
+prose** — and tested as one (`test_the_egress_is_structural_not_trusted_to_prose`):
+the manifest declares an empty net scope, and `run.py` carries no fetch-capable
+import. A capability that structurally cannot reach out cannot put a workout value on
+the wire. Heracles reads it from his turns (`capability op=run name=workout_tracker`),
+which run the local chain by his charter's bounds; his charter prose already names
+"the workout record the local tracker keeps" as one of the things he works from.
+7 tests in `tests/test_workout_tracker.py` through the real runner. Suite 1015 green.
 
 ### T40 — the wizard provisions the tailnet path · `done`
 *SPEC §8.5 stage 8 ("Resources (optional, skippable) — gcal, mail, tailscale"). The
