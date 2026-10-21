@@ -37,15 +37,29 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .protocol import Message, MessageError, seat_key
+from .protocol import Message, MessageError, seat_key, ulid
 
-__all__ = ["Broker", "Delivery", "Receipt", "UnknownMessage", "broker_for", "db_path"]
+__all__ = [
+    "Broker",
+    "Delivery",
+    "Receipt",
+    "Room",
+    "RoomError",
+    "ROOM_CONVENE_CAP",
+    "ROOM_DEAD_AFTER_H",
+    "ROOM_HOP_CAP",
+    "ROOM_JOIN_CAP",
+    "UnknownMessage",
+    "broker_for",
+    "db_path",
+]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS seat_messages (
@@ -65,6 +79,16 @@ CREATE TABLE IF NOT EXISTS seat_messages (
 );
 CREATE INDEX IF NOT EXISTS seat_messages_inbox ON seat_messages (recipient, resolved_at, seq);
 CREATE INDEX IF NOT EXISTS seat_messages_thread ON seat_messages (correlation_id, seq);
+CREATE TABLE IF NOT EXISTS rooms (
+  id            TEXT PRIMARY KEY,
+  convener      TEXT NOT NULL,
+  seats         TEXT NOT NULL,
+  subject       TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'open',
+  created_at    REAL NOT NULL,
+  last_activity REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rooms_status ON rooms (status, last_activity);
 """
 
 
@@ -91,6 +115,52 @@ class Delivery:
     #: has about exactly-once, and it is deliberate that it is visible.
     attempts: int = 1
     seq: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Room:
+    """A bounded multi-seat exchange (T32) — the room the owner's decision defines.
+
+    The room *is* its exchange: the id is the correlation every message in it
+    carries, so `thread(room.id)` reads a room whole, from any seat. The bounds
+    are the owner's adopted decision of 19 Oct, and every one of them is enforced
+    at the broker, where the counting is true — not in a prompt, where it would
+    be a hope.
+    """
+
+    id: str
+    convener: str
+    seats: tuple[str, ...]
+    subject: str
+    status: str
+    created_at: float
+    last_activity: float
+    message_count: int = 0
+
+    @property
+    def open(self) -> bool:
+        return self.status == "open"
+
+
+#: The bounds, as the owner adopted them (T32, 19 Oct). Named here because they
+#: are a decision, not a heuristic — changing one is changing the owner's word,
+#: and the docstring above each says what it keeps honest.
+ROOM_HOP_CAP = 8
+#: Eight messages is request → partial → verify → result, twice over. A room that
+#: needs more is two rooms, and the second should say why the first was not enough.
+ROOM_CONVENE_CAP = 1
+#: Convening is a spend of several seats' turns; the coordinator owns the budget.
+ROOM_JOIN_CAP = 2
+#: Rooms are the expensive form of talking; the cap keeps one from becoming the
+#: drip §9's daily cap exists to prevent.
+ROOM_DEAD_AFTER_H = 24
+#: An exchange nobody will answer ends as a *named* dead end — reported, removed
+#: from the queue — rather than a queue row that never drains, the one failure
+#: at-least-once delivery guarantees (T32's acceptance).
+
+
+class RoomError(ValueError):
+    """A room action the bounds refuse — the error says the bound it hit."""
 
 
 def db_path(home: Path) -> Path:
@@ -141,7 +211,13 @@ class Broker:
         before it sends a third time. The insert is a single statement with
         ``ON CONFLICT DO NOTHING``, so two processes racing the same id cannot
         both win.
+
+        A message whose correlation names a **room** (T32) passes the room's
+        bounds first — participant, hop cap, status, and verify-before-leaving —
+        and each refusal says the bound it hit, because a cap that stops
+        silently is a cap nobody can trust.
         """
+        self._room_send_checks(message)
         with self._db() as c:
             cur = c.execute(
                 "INSERT INTO seat_messages"
@@ -160,9 +236,224 @@ class Broker:
                 ),
             )
             if cur.rowcount:
+                self._touch_room(c, message)
                 return Receipt(message=message)
             row = c.execute("SELECT * FROM seat_messages WHERE id = ?", (message.id,)).fetchone()
         return Receipt(message=self._message(row), duplicate=True)
+
+    def _room_send_checks(self, message: Message) -> None:
+        """The room bounds, held where the counting is true (T32, adopted 19 Oct).
+
+        Only a message that names a room's exchange is checked — ordinary
+        point-to-point mail (T31) is untouched, and the seam is the correlation:
+        a room's id *is* its exchange.
+        """
+        if not message.correlation_id:
+            return
+        with self._db() as c:
+            room = self._room(c, message.correlation_id)
+            if room is None:
+                return
+            if not room.open:
+                raise RoomError(
+                    f"the room {room.subject!r} has ended ({room.status}) — its exchange "
+                    "is readable with op=thread, but nothing new may be said in it"
+                )
+            if message.sender not in room.seats:
+                raise RoomError(
+                    f"{message.sender!r} is not in the room {room.subject!r} "
+                    f"(its seats are {', '.join(room.seats)}) — a room is convened, "
+                    "not overheard"
+                )
+            if room.message_count >= ROOM_HOP_CAP:
+                raise RoomError(
+                    f"the room {room.subject!r} has spent its {ROOM_HOP_CAP} messages — "
+                    "a room that needs more is two rooms, and the second should say "
+                    "why the first was not enough"
+                )
+            if (
+                message.type == "result"
+                and message.sender in room.seats
+                and message.recipient not in room.seats
+            ):
+                # The adopted verify rule: an answer must be verified before it
+                # *leaves* the room — into the owner's view or another seat's
+                # work. Intermediate chatter inside the room needs no verify.
+                verified = c.execute(
+                    "SELECT COUNT(*) FROM seat_messages"
+                    " WHERE correlation_id = ? AND type = 'verify' AND sender != ?",
+                    (room.id, message.sender),
+                ).fetchone()[0]
+                if not verified:
+                    raise RoomError(
+                        f"an answer leaves the room {room.subject!r} only after it is "
+                        "verified — the exchange holds no verify yet, and an "
+                        "unverified result leaving is exactly what the rule exists "
+                        "to stop"
+                    )
+
+    def _touch_room(self, c: sqlite3.Connection, message: Message) -> None:
+        """A message landed in a room: the room's clock moves (dead-end sweep reads it)."""
+        c.execute(
+            "UPDATE rooms SET last_activity = MAX(last_activity, ?) WHERE id = ?",
+            (message.created_at, message.correlation_id),
+        )
+
+    # -- rooms (T32) -------------------------------------------------------
+
+    def convene(
+        self,
+        convener: str,
+        seats: Sequence[str],
+        subject: str,
+        *,
+        now: float | None = None,
+    ) -> Room:
+        """Convene a bounded room. The caps are the owner's adopted decision.
+
+        Every refusal names the bound it hit and the seat it counts, because the
+        cap is a decision the owner made about *spending* — and a spend that
+        stops silently is a spend nobody can account for. The "only the
+        coordinator may convene" half of the decision is enforced one layer up,
+        in the tool that knows whose turn is asking.
+        """
+        convener = seat_key(convener, field_name="convener")
+        subject = str(subject or "").strip() or "a room"
+        others: list[str] = []
+        for name in seats:
+            key = seat_key(name, field_name="seats")
+            if key != convener and key not in others:
+                others.append(key)
+        if not others:
+            raise RoomError(
+                "a room needs at least one seat besides the convener — a room of "
+                "one is a note to self, which is memory, not a message"
+            )
+        moment = time.time() if now is None else now
+        day_start = datetime.fromtimestamp(moment).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).timestamp()
+        with self._db() as c:
+            convened_today = c.execute(
+                "SELECT COUNT(*) FROM rooms WHERE convener = ? AND created_at >= ?",
+                (convener, day_start),
+            ).fetchone()[0]
+            if convened_today >= ROOM_CONVENE_CAP:
+                raise RoomError(
+                    f"{convener!r} already convened a room today (the cap is "
+                    f"{ROOM_CONVENE_CAP}) — convening is a spend of several seats' "
+                    "turns, and the owner bounded it"
+                )
+            # The join cap counts OPEN rooms a seat is in, and it deliberately
+            # skips the convener: he is in every room he convenes, so a join cap
+            # that counted him could only ever fire on him first and the
+            # per-seat bound would be dead code. His bound is the convene cap
+            # above; this one is the other seats'. An open room is a room that
+            # is still spending the seat's attention — which is what "per day"
+            # was always honest about meaning.
+            for seat in others:
+                joined_open = c.execute(
+                    "SELECT COUNT(*) FROM rooms WHERE seats LIKE ? AND status = 'open'",
+                    (f'%"{seat}"%',),
+                ).fetchone()[0]
+                if joined_open >= ROOM_JOIN_CAP:
+                    raise RoomError(
+                        f"{seat!r} is already in {joined_open} open rooms (the cap "
+                        f"is {ROOM_JOIN_CAP}) — rooms are the expensive form of "
+                        "talking, and the cap is what keeps one from becoming a drip"
+                    )
+            room = Room(
+                id=ulid(),
+                convener=convener,
+                seats=(convener, *others),
+                subject=subject,
+                status="open",
+                created_at=moment,
+                last_activity=moment,
+            )
+            c.execute(
+                "INSERT INTO rooms (id, convener, seats, subject, status, created_at, last_activity)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    room.id,
+                    room.convener,
+                    json.dumps(list(room.seats)),
+                    room.subject,
+                    room.status,
+                    room.created_at,
+                    room.last_activity,
+                ),
+            )
+        return room
+
+    def sweep_dead_rooms(self, *, cutoff_hours: float = ROOM_DEAD_AFTER_H, now: float | None = None) -> list[Room]:
+        """End the rooms nobody answered (T32's acceptance clause).
+
+        An open room with no activity past the cutoff is a **dead end**: it is
+        marked, its unresolved messages are resolved as dead — so no seat is
+        offered mail from an exchange that is over — and the room is returned so
+        the tick that swept it can *name* it. A queue that never drains is the
+        one failure at-least-once delivery guarantees; this is where the room
+        refuses to become one.
+        """
+        moment = time.time() if now is None else now
+        horizon = moment - cutoff_hours * 3600
+        with self._db() as c:
+            rows = c.execute(
+                "SELECT * FROM rooms WHERE status = 'open' AND last_activity < ?",
+                (horizon,),
+            ).fetchall()
+            dead: list[Room] = []
+            for row in rows:
+                c.execute(
+                    "UPDATE rooms SET status = 'dead' WHERE id = ?", (row["id"],)
+                )
+                c.execute(
+                    "UPDATE seat_messages SET resolved_at = ?, outcome = 'dead'"
+                    " WHERE correlation_id = ? AND resolved_at IS NULL",
+                    (moment, row["id"]),
+                )
+                fresh = c.execute("SELECT * FROM rooms WHERE id = ?", (row["id"],)).fetchone()
+                dead.append(self._room_from(c, fresh))
+            return dead
+
+    def rooms(self, *, status: str | None = None) -> list[Room]:
+        """The rooms this home has convened, newest first — the digest's query."""
+        with self._db() as c:
+            if status:
+                rows = c.execute(
+                    "SELECT * FROM rooms WHERE status = ? ORDER BY created_at DESC", (status,)
+                ).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM rooms ORDER BY created_at DESC").fetchall()
+            return [self._room_from(c, row) for row in rows]
+
+    def room(self, room_id: str) -> Room | None:
+        """One room by its id — the exchange's own address."""
+        with self._db() as c:
+            return self._room(c, str(room_id).strip())
+
+    def _room(self, c: sqlite3.Connection, room_id: str) -> Room | None:
+        row = c.execute("SELECT * FROM rooms WHERE id = ?", (room_id,)).fetchone()
+        if row is None:
+            return None
+        return self._room_from(c, row)
+
+    def _room_from(self, c: sqlite3.Connection, row: sqlite3.Row) -> Room:
+        seats = tuple(json.loads(row["seats"]))
+        count = c.execute(
+            "SELECT COUNT(*) FROM seat_messages WHERE correlation_id = ?", (row["id"],)
+        ).fetchone()[0]
+        return Room(
+            id=row["id"],
+            convener=row["convener"],
+            seats=seats,
+            subject=row["subject"],
+            status=row["status"],
+            created_at=row["created_at"],
+            last_activity=row["last_activity"],
+            message_count=count,
+        )
 
     def inbox(self, seat: str, *, limit: int | None = None) -> list[Delivery]:
         """Offer a seat the messages it has not answered yet, oldest first.

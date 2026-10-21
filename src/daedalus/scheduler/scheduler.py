@@ -211,6 +211,35 @@ class Scheduler:
         # of this scan's range — which is what makes running it every tick
         # affordable, and what makes a tick that merely *overran* recover too.
         results.extend(await self.catch_up(ctx, wake_handler, when))
+        results.extend(self.sweep_dead_rooms(ctx, when))
+        return results
+
+    def sweep_dead_rooms(self, ctx: "Runtime", when: datetime) -> list[TickResult]:
+        """End the rooms nobody answered, and say so where ticks are recorded (T32).
+
+        A room with no activity past the owner's 24-hour bound ends here — as a
+        *named* dead end in the tick's results (the same record the morning
+        reads), and with its unresolved mail resolved, so no seat is offered a
+        message from an exchange that is over. "A queue that grows forever" is
+        the one failure at-least-once delivery guarantees, and this sweep is
+        the room's refusal to become one.
+        """
+        from ..cabinet.broker import broker_for
+
+        dead = broker_for(ctx.settings.home).sweep_dead_rooms(now=when.timestamp())
+        return [
+            TickResult(
+                job=f"room:{room.id}",
+                ran=True,
+                ok=True,
+                detail=(
+                    f"room '{room.subject}' ended as a dead end — {room.message_count} "
+                    f"message(s), last activity 24h+ ago; its unanswered mail is resolved dead "
+                    "and no seat will be offered it again"
+                ),
+            )
+            for room in dead
+        ]
         return results
 
     async def catch_up(

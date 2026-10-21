@@ -29,8 +29,9 @@ from typing import Any, TYPE_CHECKING
 
 from ..approvals.classify import Assessment, Level
 from ..approvals.risk import Risk
-from ..cabinet.broker import UnknownMessage, broker_for
+from ..cabinet.broker import RoomError, UnknownMessage, broker_for
 from ..cabinet.protocol import TERMINAL, Message, MessageError, TYPES
+from ..cabinet.seat import DEFAULT_SEAT
 from .base import Tool, ToolResult, params, sent_args
 
 if TYPE_CHECKING:
@@ -51,7 +52,14 @@ class MessageTool(Tool):
         "message it follows, and id when retrying — the same id is the same "
         "message, not a second one. op=list shows what is unanswered for your "
         "seat, with its offer count; asking counts as another offer, which is the "
-        "point. op=thread correlation_id=... reads the whole exchange back."
+        "point. op=thread correlation_id=... reads the whole exchange back. "
+        "op=convene seats=<seat keys, comma-separated> text=<the subject> opens a "
+        "bounded room (only the coordinator's turns may: convening is a spend) — "
+        "its bounds are the owner's: 8 messages total, at most 2 rooms a day per "
+        "seat, one convening a day, a 24-hour-unanswered room ends as a named "
+        "dead end, and an answer must be verify-ed before it leaves the room; "
+        "send into it with correlation_id=<room id>. op=rooms lists the rooms and "
+        "their state."
     )
     risk = Risk.AUTO
     scopes = {}
@@ -59,8 +67,8 @@ class MessageTool(Tool):
         op=(
             {
                 "type": "string",
-                "enum": ["answer", "send", "list", "thread"],
-                "description": "answer closes an incoming message; send opens or continues one.",
+                "enum": ["answer", "send", "list", "thread", "convene", "rooms"],
+                "description": "answer closes an incoming message; send opens or continues one; convene opens a bounded room.",
             },
             True,
         ),
@@ -81,12 +89,17 @@ class MessageTool(Tool):
             {
                 "type": "string",
                 "description": "The substance of the message — its payload, not a gesture. "
-                "For the read ops (`list`, `thread`) send an empty string.",
+                "For the read ops (`list`, `thread`, `rooms`) send an empty string; "
+                "for `convene` it is the room's subject.",
             },
             True,
         ),
         correlation_id={"type": "string", "description": "The exchange a send continues."},
         causation_id={"type": "string", "description": "The message this one follows from."},
+        seats={
+            "type": "string",
+            "description": "For op=convene: the seats to convene, comma-separated keys ('athena, icarus').",
+        },
     )
 
     def title_for(self, args: dict[str, Any]) -> str:
@@ -110,6 +123,7 @@ class MessageTool(Tool):
         sent = sent_args(args)
         who = ctx.session.seat if ctx.session is not None else ""
         broker = broker_for(ctx.settings.home)
+        text = str(args.get("text", "")).strip()
         try:
             if op == "list":
                 mine = broker.inbox(who)
@@ -130,11 +144,20 @@ class MessageTool(Tool):
                     for m in broker.thread(correlation)
                 ]
                 return ToolResult(output="\n".join(rows) or f"no exchange under {correlation!r}")
+            if op == "rooms":
+                known = broker.rooms()
+                rows = [
+                    f"{r.status.upper()} · {r.subject} · seats: {', '.join(r.seats)}"
+                    f" · {r.message_count}/8 messages · room {r.id}"
+                    for r in known
+                ]
+                return ToolResult(output="\n".join(rows) or "no rooms have been convened")
+            if op == "convene":
+                return self._convene(args, broker, who, list(ctx.seats.keys()), text, sent)
             if op not in ("send", "answer"):
                 return ToolResult.error(
-                    f"unknown message op {op!r} — answer, send, list, thread. You sent: {sent}"
+                    f"unknown message op {op!r} — answer, send, list, thread, convene, rooms. You sent: {sent}"
                 )
-            text = str(args.get("text", "")).strip()
             if not text:
                 return ToolResult.error(
                     f"op={op} needs `text` — the message's substance is its payload, "
@@ -143,8 +166,50 @@ class MessageTool(Tool):
             if op == "answer":
                 return self._answer(args, broker, who, list(ctx.seats.keys()), text, sent)
             return self._send(args, broker, who, list(ctx.seats.keys()), text, sent)
-        except (MessageError, UnknownMessage) as exc:
+        except (MessageError, RoomError, UnknownMessage) as exc:
             return ToolResult.error(f"{exc} You sent: {sent}")
+
+    def _convene(
+        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str
+    ) -> ToolResult:
+        """Open a bounded room — the spend the owner capped, so the coordinator's."""
+        if who != DEFAULT_SEAT:
+            return ToolResult.error(
+                f"only the coordinator convenes rooms ({DEFAULT_SEAT!r} is the seat that "
+                f"owns the spend — this turn is {who or 'nobody'!r}). The owner adopted "
+                "that bound on 19 Oct; a seat that wants a room asks the coordinator. "
+                f"You sent: {sent}"
+            )
+        raw = str(args.get("seats", "")).strip()
+        wanted = [s for s in (part.strip() for part in raw.split(",")) if s]
+        if not wanted:
+            return ToolResult.error(
+                f"op=convene needs `seats` — the keys to convene, comma-separated "
+                f"('athena, icarus'). You sent: {sent}"
+            )
+        known = sorted(set(seat_keys))
+        unknown = [s for s in wanted if s not in known]
+        if unknown:
+            return ToolResult.error(
+                f"not seats in this cabinet: {', '.join(unknown)} (the cabinet holds "
+                f"{', '.join(known) or 'nobody'}) — a room for nobody is a queue that "
+                f"never drains. You sent: {sent}"
+            )
+        try:
+            room = broker.convene(convener=who, seats=wanted, subject=text or "a room")
+        except RoomError as exc:
+            return ToolResult.error(f"{exc} You sent: {sent}")
+        return ToolResult(
+            ok=True,
+            output=(
+                f"room {room.id} convened — {room.subject!r} with {', '.join(room.seats)}. "
+                "Its bounds are the owner's: 8 messages total, at most 2 rooms a day per "
+                "seat, and a room nobody answers for 24 hours ends as a named dead end. "
+                f"Send into it with correlation_id={room.id}, and an answer must be "
+                "verify-ed before it leaves."
+            ),
+            data={"room": room.id, "seats": list(room.seats), "subject": room.subject},
+        )
 
     def _answer(
         self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str

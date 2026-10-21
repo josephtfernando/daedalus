@@ -981,7 +981,7 @@ and in the turn; the second-answer refusal; open/continue/retry/refuse). Suite 9
 green. What is *not* here is the room itself — hops, budgets, convening (T32) — which
 is an owner decision SPEC has not had.
 
-### T32 — a room is a bounded exchange · `open`
+### T32 — a room is a bounded exchange · `done` — the owner adopted the draft 19 Oct; the bounds are in SPEC and enforced in code
 *SPEC §7 (the typed vocabulary, including `verify`). **The decision this needs is the
 owner's, and SPEC does not make it yet.***
 
@@ -1013,6 +1013,37 @@ questions, exactly as the ticket names them:
 >    answer counts?
 
 No code is one line ahead of these: the bounds *are* the feature.
+
+**Adopted 19 Oct, and done 21 Oct.** The owner adopted the draft as written (in
+conversation, recorded above), so the bounds went into **SPEC §7 first** — the ticket's
+own acceptance order — and then into the broker, where the counting is true:
+
+- **`convene`** creates a room as a second table in the same `messages.db`; the room's
+  id *is* its exchange's correlation, so `thread(room id)` reads a room whole from any
+  seat, and its mail rides the same queue T31 built. The caps: the coordinator convenes
+  at most **1/day** (day = the convene moment's calendar day); a seat is in at most
+  **2 open rooms** — the cap counts *open* rooms, because an open room is still spending
+  the seat's attention, and it skips the convener, whose bound is the convene cap (a
+  join cap that counted him could only ever fire on him first; the per-seat bound would
+  have been dead code).
+- **`send` holds the room's line**: a message naming a room's correlation is checked
+  for participant ("a room is convened, not overheard"), status ("has ended — its
+  exchange is readable, nothing new may be said"), the **8-message hop cap** ("the room
+  has spent its 8 messages — a room that needs more is two rooms, and the second should
+  say why the first was not enough"), and **verify-before-leaving**: a `result` addressed
+  outside the room is refused until another seat has put a `verify` in the exchange —
+  intermediate chatter needs none.
+- **The dead end**: `sweep_dead_rooms` ends any open room 24h-quiet, resolves its
+  unanswered mail as dead (no seat is ever offered mail from an exchange that is over),
+  and the scheduler's tick names each one (`room:<id> — 'the quiet one' ended as a dead
+  end`) — reported, not a queue that grows. `message op=rooms` lists them all with state.
+- **"Only the coordinator convenes"** is enforced at the tool, the layer that knows
+  whose turn is asking: `op=convene` from any other seat's turn is refused with the
+  bound named, and unknown seats are refused against the live cabinet.
+
+14 tests in `tests/test_rooms.py` — each acceptance clause as its own test, including
+both refusal texts ("stops and says why") and the tick-level dead-end report. Suite 999
+green, 0 failed.
 
 **Drafted proposal — 19 Oct, for adopting, editing, or rejecting. Nothing is wired
 until you say the word; this is the draft criterion 3 asks for, not a decision.**

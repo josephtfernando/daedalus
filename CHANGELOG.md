@@ -16,6 +16,22 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **Rooms exist, bounded exactly as you adopted them (T32).** A room is a convened
+  multi-seat exchange — its id *is* its exchange's correlation, so a room reads back
+  whole with `thread`, and its mail rides the same durable queue. Your five bounds,
+  enforced in the broker where the counting is true and each refusal naming the bound
+  it hit: only the coordinator's turns may convene (the tool reads the session seat);
+  a room ends at **8 messages total** ("a room that needs more is two rooms"); the
+  coordinator convenes at most **1 a day** and a seat sits in at most **2 open rooms**
+  (the cap counts open rooms — an open room is still spending the seat's attention —
+  and skips the convener, whose bound is the convening cap); a room nobody answers for
+  **24 hours ends as a named dead end**, its unanswered mail resolved so no seat is
+  offered a message from an exchange that is over, the tick naming it in its own
+  record; and an answer must be **verify-ed before it leaves** the room — intermediate
+  chatter needs no verify. `message op=convene` (coordinator), `op=rooms` (anyone), and
+  `op=thread` to read one back. The bounds are written into SPEC §7 verbatim as your
+  decision. 14 tests; suite 999 green.
+
 - **Heracles is wired, to the bounds you wrote (T24).** Your decision of 19 Oct —
   the tracker may store values locally, he may read files you designate, the local
   model chain is fine for his turns, nothing remote ever — is now recorded as *data the

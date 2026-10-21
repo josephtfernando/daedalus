@@ -540,6 +540,32 @@ it is the owner's alarm, not anyone's work. Jobs remain file-first, and a store
 that only read the file at startup would make hand-editing a lie, so the next tick
 re-reads `jobs.toml` — an added job becomes real without a restart.
 
+**Rooms are bounded exchanges, and the bounds are the owner's (T32, adopted 19 Oct).**
+Seats also leave messages in **rooms** — a convened, multi-seat exchange whose
+durable shape is the broker's own: a room's id *is* its exchange's correlation, so
+the whole room reads back with `thread(room id)` from any seat. The bounds are a
+recorded decision, not a heuristic, and each is enforced where the counting is true
+(the broker), with every refusal naming the bound it hit:
+
+- **Only the coordinator convenes** — convening is a spend of several seats' turns,
+  and the seat that owns the budget is the one that convenes (enforced at the tool:
+  a convene from any other seat's turn is refused).
+- **A room ends at 8 messages, total.** Enough for request → partial → verify →
+  result, twice over; a room that needs more is two rooms, and the second should say
+  why the first was not enough.
+- **The coordinator convenes at most one room a day; a seat is in at most two open
+  rooms.** The join cap counts *open* rooms — an open room is still spending the
+  seat's attention, which is what "per day" honestly means — and it skips the
+  convener, whose bound is the convene cap.
+- **A room nobody answers for 24 hours ends as a named dead end.** The tick sweeps,
+  marks the room dead, resolves its unanswered mail as dead so no seat is offered a
+  message from an exchange that is over, and names the room in its results — because
+  a queue that grows forever is the one failure at-least-once delivery guarantees,
+  and a room refuses to become one.
+- **An answer must be `verify`-ed before it leaves the room** — into the owner's
+  view or another seat's work. Intermediate chatter inside the room needs no verify;
+  the type is for what counts.
+
 ---
 
 ## 8. Runtime & Process
