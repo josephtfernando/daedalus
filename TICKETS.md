@@ -756,7 +756,7 @@ clause stays with the owner (T15's residue), and Funnel is inherited as a refusa
 `funnel_on()` reads the serve config and Funnel-on or unreadable-state both refuse,
 reusing T2's posture rather than re-deciding it.
 
-### T26 — the calendar from the phone · `open`
+### T26 — the calendar from the phone · `done` — every view opens from the phone; the day view edits; the wider small-screen scope question stands with the owner
 *SPEC §5.5 (a full dashboard view), §13 (calendar dashboard scope — the open decision).*
 
 **Corrected 17 Oct, by checking instead of remembering.** This ticket was written from
