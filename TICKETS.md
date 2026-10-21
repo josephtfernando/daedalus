@@ -1303,7 +1303,7 @@ control seam's deny-then-allow through Discord). Suite 974 green. Not adopted: t
 shadcn *toolchain* — recorded as the standing recommendation, and §3.6's no-script
 property stays intact.
 
-### T36 — the habit tracker · `open` — the capability is built and verified; the seat is the owner's
+### T36 — the habit tracker · `done` — built and verified 19 Oct; the owner named the coordinator 19 Oct, and his wake is live
 *SPEC §3.5 (capabilities are local scripts first). SPEC §7 (the seats it belongs to).*
 
 The smallest of the three, and the one that needs a cadence rather than a conversation —
@@ -1351,6 +1351,19 @@ still needs is the owner's answer, recorded here verbatim from the 16 Oct wordin
   puts the record in the seat whose subject is the protected category, which is
   exactly the boundary still open in T24/T38. The draft prefers the seat that keeps
   the two questions separate.
+
+**Decided 19 Oct, and wired: done.** The owner chose **the coordinator**. The
+`habit_report` wake is live in `state/jobs.toml` — daily 08:45 (inside the wake
+window, after Athena's practice plan), seated `daedalus`: his turn runs the
+tracker's `action=report` and carries **one line** in his own words — streaks alive,
+misses marked, from the stored days only, never from memory, and an empty record
+says so in one short line and stops rather than nagging. A live-state test in
+`tests/test_seat_jobs.py` holds the wiring to the decision (the seat, the wake kind,
+the window, the one-line rule, the from-the-record rule), in the charter test's own
+pattern. The capability itself was built and melinoë-verified on 19 Oct (7 tests
+through the real runner — the update-not-duplicate rule, the streak the stored days
+imply, absents and misses named, last-7 grid); nothing about it changed with the
+decision, which was the point of building it seat-agnostic.
 
 ### T37 — the LC tracker · `done`
 *SPEC §7 (Athena — DSA, aptitude, competitive programming, interview prep).*

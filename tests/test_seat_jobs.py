@@ -168,3 +168,27 @@ async def test_a_hand_edited_job_becomes_real_on_the_next_tick(runtime: Runtime)
         "a job added by editing the file fires without a restart — a daemon that "
         "only reads its files once made hand-editing a lie"
     )
+
+
+def test_the_coordinators_habit_wake_is_live() -> None:
+    """T36, decided by the owner 19 Oct: the habit tracker is the coordinator's.
+
+    A live-state assertion in the charter test's own pattern — the decision is
+    real only while its wiring is: a daily wake, seated `daedalus`, that reads
+    the tracker's report and carries one line. The scheduler re-reads the file
+    every tick, so the job being in the file IS it being live.
+    """
+    from pathlib import Path
+
+    from daedalus.scheduler.jobs import JobStore
+
+    store = JobStore(Path.home() / ".daedalus" / "state" / "jobs.toml")
+    jobs = {j.name: j for j in store.all()}
+    job = jobs.get("habit_report")
+
+    assert job is not None, "the owner named the coordinator — his morning wake must exist"
+    assert job.seat == "daedalus" and job.kind == "wake"
+    assert job.cron == "45 8 * * *", "inside the wake window, after Athena's practice plan"
+    assert "habit_tracker" in job.target and "action=report" in job.target
+    assert "ONE line" in job.target, "a habit digest is a line, not a lecture"
+    assert "never from memory" in job.target, "the report is the stored record, not a recollection"

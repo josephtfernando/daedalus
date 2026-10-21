@@ -16,6 +16,15 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **The habit tracker has its seat: yours truly (T36).** You named the coordinator
+  19 Oct, so the `habit_report` wake is live — daily 08:45, seated `daedalus`, running
+  the tracker's report and carrying **one line**: streaks alive, misses marked, from
+  the stored days only (never memory), and an empty record says so in one short line
+  instead of nagging. The capability stays exactly as built — seat-agnostic, verified,
+  update-not-duplicate, the streak the stored days imply — because the decision was
+  only ever about whose voice carries the line. A live-state test holds the wiring to
+  your decision. Suite 1015 green.
+
 - **You can watch a room happen, join it by replying, and stop it (T33).** The room
   you adopted with T32 now has its surface. Convening posts a room card to your DM;
   every message into the room posts as **the seat's own line** — never summarized —
