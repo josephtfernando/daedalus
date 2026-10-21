@@ -618,6 +618,16 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 - Errors travel to the owner **fenced** (T44): raw tool error text goes out in a code
   block, because Discord's markdown italicises pairs of `*` and rewrites things like
   a five-field cron example on the way out.
+- **A room is shown as it happens, in the DM the owner already reads (T33).** A
+  Discord DM cannot host real threads, so the room's *projection* is honest about
+  what it is: the broker is the truth, and every room line posts to the owner as the
+  seat's own words, labeled with the room — never summarized into one voice. The
+  owner **joins by replying**: a Discord reply to a room line resolves back to the
+  room, and the turn is told which room was answered, that the whole exchange is one
+  `op=thread` away, and the word that stops it (`op=close` — a participant carries
+  it; the room's unanswered mail resolves, the exchange stays readable). The
+  room→message map is in-memory by design: the durable record is the broker's, and
+  a restart loses nothing a read cannot recover.
 
 ---
 

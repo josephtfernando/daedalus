@@ -16,6 +16,20 @@ _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the prim
 
 ### Added
 
+- **You can watch a room happen, join it by replying, and stop it (T33).** The room
+  you adopted with T32 now has its surface. Convening posts a room card to your DM;
+  every message into the room posts as **the seat's own line** — never summarized —
+  and ordinary seat-to-seat mail posts nothing. You **join by replying** to a room
+  line: the reply resolves to the room, and the answering turn is told exactly what
+  it is inside — the subject, who is in it, how many of the 8 messages are spent,
+  the whole exchange one `op=thread` away, and the one op that relays into it. You
+  **stop it by saying so**: `op=close` (carried by a participant) resolves the
+  room's unanswered mail, refuses anything new, and leaves the exchange readable.
+  One constraint is recorded, not papered over: a Discord DM cannot host real
+  threads, so the surface is an honest projection — the broker is the durable
+  record, the DM shows it live, and a restart loses nothing a read cannot recover.
+  7 tests; suite 1007 green.
+
 - **Rooms exist, bounded exactly as you adopted them (T32).** A room is a convened
   multi-seat exchange — its id *is* its exchange's correlation, so a room reads back
   whole with `thread`, and its mail rides the same durable queue. Your five bounds,

@@ -191,6 +191,39 @@ def build_system_prompt(
     )
 
 
+def room_block(ctx: "Runtime", event: InboundEvent) -> str:
+    """The section that tells a turn the owner replied inside a room (T33).
+
+    The event's `thread_id` is the surface's resolution of the owner's reply —
+    the room they answered. This block hands the turn the room's state and the
+    words to act in it: relay with `correlation_id`, stop with `op=close`.
+    Nothing is summarized: the full exchange is one `op=thread` away, and the
+    turn is told that.
+    """
+    room_id = (event.thread_id or "").strip()
+    if not room_id:
+        return ""
+    from ..cabinet.broker import broker_for
+
+    room = broker_for(ctx.settings.home).room(room_id)
+    if room is None:
+        return ""
+    lines = ["## The owner, inside a room", ""]
+    state = "open" if room.open else f"ended ({room.status}) — readable, not speakable"
+    lines.append(
+        f"The owner replied inside the room **{room.subject}** ({state}; seats: "
+        f"{', '.join(room.seats)}; {room.message_count}/8 messages used; id `{room.id}`). "
+        "Their reply is this turn's text. Read the whole exchange with "
+        f"`message op=thread correlation_id={room.id}` — never summarize it from "
+        "memory. Speak into the room with `message op=send correlation_id="
+        f"{room.id}` (the line shows on the owner's surface as your own words), and "
+        f"if the owner is stopping the room, `message op=close room={room.id}` ends it: "
+        "its unanswered mail is resolved and the exchange stays readable."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def inbox_block(ctx: "Runtime", seat_key_name: str) -> str:
     """The section that hands a seat its unanswered messages — the offer (T31).
 
@@ -232,8 +265,16 @@ def build_messages(
     max_history: int = 12,
     inbox: str = "",
 ) -> list[dict[str, Any]]:
+    # T33: when the event carries a room reply, the turn is told the room —
+    # state, the words to act in it, and that the whole exchange is one
+    # op=thread away. It rides beside the inbox section, which stays exactly
+    # the caller's (the offer count is the caller's to make, T31).
+    room = room_block(ctx, event)
+    sections = inbox or ""
+    if room:
+        sections = f"{sections}\n{room}" if sections else room
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(ctx, event, seat=seat, inbox=inbox)}
+        {"role": "system", "content": build_system_prompt(ctx, event, seat=seat, inbox=sections)}
     ]
     key = event.thread_id or event.channel_id or event.user_id
     messages.extend(ctx.recent(key, max_history))

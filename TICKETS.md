@@ -1065,7 +1065,7 @@ until you say the word; this is the draft criterion 3 asks for, not a decision.*
    into your view, or into another seat's work. Intermediate chatter inside the room
    does not need it; the type stays for what counts.
 
-### T33 — the owner sees the room · `open`
+### T33 — the owner sees the room · `done` — the adopted projection, live in the DM: lines as the seats' own, joining by reply, stopping by word
 *SPEC §9 (the surface). §3.6 (visual → dashboard, action → Discord).*
 
 The room is only the owner's if they can watch it and interrupt it. Where an exchange
@@ -1111,6 +1111,37 @@ The machinery half an answer would need — the live turn status (T44's ledger),
 4. **Kept:** the thread is Discord's to keep and prune; the broker's own record stays
    queryable regardless, via `message op=thread` — recoverable even if the thread is
    deleted.
+
+**Done 21 Oct — the adopted surface, honestly projected.** One real-world constraint
+shaped the build and is recorded rather than papered over: **a Discord DM cannot host
+threads** — the deployment is single-user DM-first (SPEC §9), and the bot is in no
+guild. So the room's surface is the *projection* the DM allows, with every clause of the
+adopted decision kept:
+
+- **Where:** the owner's DM — where they already live. Convening posts the room card
+  (`🏠 Room: <subject> — seats… · reply here to join`), labeled with the room id.
+- **As itself:** every send or answer into an open room posts **the seat's own line**
+  (`**Athena**: <words>`), never summarized — the tool posts it, the broker holds the
+  truth, and ordinary 1:1 mail posts nothing (asserted).
+- **Joining:** the owner **replies** to a room line. The bot records each posted
+  line's message id against its room, and a reply's reference resolves
+  (`_room_of_reply`, a pure lookup, tested) into `event.thread_id` — and the turn is
+  *told the room*: a prompt section with the subject, state, seats, message count, the
+  whole exchange one `op=thread` away, and the exact words to relay into the room
+  (`correlation_id=<id>`) or stop it (`op=close room=<id>`).
+- **Stopping:** `op=close` — a participant carries the owner's word; the room's
+  unanswered mail resolves (nobody works a stopped exchange), sends are refused after,
+  the closing line posts, and the exchange stays readable. Non-participants are
+  refused by name (asserted).
+- **Kept:** the broker's record, permanently queryable — `op=thread` from any seat,
+  `op=rooms` for the state. The projection's map is in-memory by design: a restart
+  forgets which DM message belonged to which room, and loses nothing a read cannot
+  recover.
+
+7 tests in `tests/test_room_surface.py` (card, the seat's-own line, non-room mail
+unprojected, stop-resolves-and-refuses, the outsider refusal, the reply reaching the
+prompt, the ordinary DM carrying no room) plus the reply-resolution unit. Suite 1007
+green, 0 failed. SPEC §9 and ARCHITECTURE §7.5 record the projection and why.
 
 ---
 

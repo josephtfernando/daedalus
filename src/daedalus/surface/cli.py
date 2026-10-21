@@ -46,6 +46,7 @@ class ScriptedSurface:
         approve: bool = True,
     ) -> None:
         self.sent: list[str] = []
+        self.threads: list[tuple[str, str | None]] = []
         self.asked: list[str] = []
         self.approvals: list[ApprovalRequest] = []
         self.progressed: list[str] = []
@@ -63,6 +64,7 @@ class ScriptedSurface:
 
     async def send(self, text: str, *, thread: str | None = None) -> None:
         self.sent.append(text)
+        self.threads.append((text, thread))
 
     async def ask(self, question: str, *, options: list[str] | None = None) -> str:
         self.asked.append(question)

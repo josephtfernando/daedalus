@@ -40,6 +40,14 @@ class DiscordSurface:
         self.client = discord.Client(intents=intents)
         self._awaiting: asyncio.Future[str] | None = None
         self._ready = asyncio.Event()
+        #: Room lines this surface has posted (T33): the Discord message id of
+        #: each room line, mapped to the room it belongs to. A DM cannot host
+        #: real threads, so the room's *projection* is its labeled lines and the
+        #: owner's reply to one — a Discord reply carries a reference to the
+        #: original — is routed back into the room. The map is deliberately
+        #: in-memory: the broker is the durable record; a restart loses nothing
+        #: that op=thread cannot read back.
+        self._room_lines: dict[str, str] = {}
         #: The live work trace (see :meth:`progress`): the lines, the message
         #: they are edited into, and the throttling state.
         self._trace: list[str] = []
@@ -240,8 +248,11 @@ class DiscordSurface:
 
     async def send(self, text: str, *, thread: str | None = None) -> None:
         user = await self._owner_user()
-        for chunk in chunk_text(text):
-            await user.send(chunk)
+        for i, chunk in enumerate(chunk_text(text)):
+            posted = await user.send(chunk)
+            # T33: the first chunk of a room line is the one a reply resolves.
+            if thread and i == 0:
+                self._room_lines[str(posted.id)] = thread
 
     async def ask(self, question: str, *, options: list[str] | None = None) -> str:
         user = await self._owner_user()
@@ -286,10 +297,20 @@ class DiscordSurface:
             self._awaiting.set_result(message.content)
             return
 
+        # T33: a *reply* to a room line is the owner joining that room. The
+        # reference is resolved against the lines this surface posted, so the
+        # room the owner answered is the room the turn is told about — and
+        # nothing else about the reply is special: it is an ordinary turn whose
+        # event carries the room's id.
+        room_id = self._room_of_reply(message)
+        if room_id:
+            log.info("the owner replied into room %s", room_id)
+
         event = InboundEvent(
             text=message.content,
             user_id=str(message.author.id),
             channel_id=str(message.channel.id),
+            thread_id=room_id,
             is_dm=True,
             source="discord",
         )
@@ -298,6 +319,19 @@ class DiscordSurface:
         except Exception:  # noqa: BLE001 — a bad turn must not kill the bot
             log.exception("turn failed")
             await message.channel.send("Something went wrong handling that — check the logs.")
+
+    def _room_of_reply(self, message: "discord.Message") -> str | None:
+        """The room a reply answers, if the replied-to line was a room's.
+
+        A pure resolution over the map — kept separate so the rule is testable
+        without a live client: a reply whose reference points at a room line
+        joins that room; anything else is an ordinary DM.
+        """
+        reference = getattr(message, "reference", None)
+        if reference is None:
+            return None
+        replied_to = getattr(reference, "message_id", None)
+        return self._room_lines.get(str(replied_to)) if replied_to is not None else None
 
 
 def chunk_text(text: str, limit: int = MAX_DISCORD) -> list[str]:

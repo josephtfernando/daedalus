@@ -417,6 +417,39 @@ class Broker:
                 dead.append(self._room_from(c, fresh))
             return dead
 
+    def close_room(self, room_id: str, who: str, *, now: float | None = None) -> Room:
+        """Close a room by decision (T33) — the owner's *stop it*, made real.
+
+        Distinct from a dead end: a dead room *expired* (nobody answered); a
+        closed room was *stopped* by a participant carrying the owner's word.
+        Its unresolved mail is resolved so no seat is offered work from an
+        exchange that is over, and the thread of it stays readable — closed
+        is ended, not erased.
+        """
+        room_id = str(room_id or "").strip()
+        who = seat_key(who, field_name="who")
+        room = self.room(room_id)
+        if room is None:
+            raise RoomError(f"no room {room_id!r} — op=rooms shows what exists")
+        if not room.open:
+            raise RoomError(f"the room {room.subject!r} has already ended ({room.status})")
+        if who not in room.seats:
+            raise RoomError(
+                f"{who!r} is not in the room {room.subject!r} (its seats are "
+                f"{', '.join(room.seats)}) — a room is closed by one of its own, "
+                "carrying the owner's word"
+            )
+        moment = time.time() if now is None else now
+        with self._db() as c:
+            c.execute("UPDATE rooms SET status = 'closed' WHERE id = ?", (room_id,))
+            c.execute(
+                "UPDATE seat_messages SET resolved_at = ?, outcome = 'closed'"
+                " WHERE correlation_id = ? AND resolved_at IS NULL",
+                (moment, room_id),
+            )
+            fresh = c.execute("SELECT * FROM rooms WHERE id = ?", (room_id,)).fetchone()
+            return self._room_from(c, fresh)
+
     def rooms(self, *, status: str | None = None) -> list[Room]:
         """The rooms this home has convened, newest first — the digest's query."""
         with self._db() as c:

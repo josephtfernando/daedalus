@@ -59,7 +59,9 @@ class MessageTool(Tool):
         "seat, one convening a day, a 24-hour-unanswered room ends as a named "
         "dead end, and an answer must be verify-ed before it leaves the room; "
         "send into it with correlation_id=<room id>. op=rooms lists the rooms and "
-        "their state."
+        "their state. op=close room=<id> ends a room by decision — the owner's "
+        "stop, carried by one of the room's own seats; its mail is resolved and "
+        "the exchange stays readable."
     )
     risk = Risk.AUTO
     scopes = {}
@@ -67,8 +69,8 @@ class MessageTool(Tool):
         op=(
             {
                 "type": "string",
-                "enum": ["answer", "send", "list", "thread", "convene", "rooms"],
-                "description": "answer closes an incoming message; send opens or continues one; convene opens a bounded room.",
+                "enum": ["answer", "send", "list", "thread", "convene", "rooms", "close"],
+                "description": "answer closes an incoming message; send opens or continues one; convene opens a bounded room; close ends one by decision.",
             },
             True,
         ),
@@ -99,6 +101,10 @@ class MessageTool(Tool):
         seats={
             "type": "string",
             "description": "For op=convene: the seats to convene, comma-separated keys ('athena, icarus').",
+        },
+        room={
+            "type": "string",
+            "description": "For op=close: the room to close — the owner's stop, carried by a participant.",
         },
     )
 
@@ -153,10 +159,12 @@ class MessageTool(Tool):
                 ]
                 return ToolResult(output="\n".join(rows) or "no rooms have been convened")
             if op == "convene":
-                return self._convene(args, broker, who, list(ctx.seats.keys()), text, sent)
+                return await self._convene(args, broker, who, list(ctx.seats.keys()), text, sent, ctx)
+            if op == "close":
+                return await self._close(args, broker, who, sent, ctx)
             if op not in ("send", "answer"):
                 return ToolResult.error(
-                    f"unknown message op {op!r} — answer, send, list, thread, convene, rooms. You sent: {sent}"
+                    f"unknown message op {op!r} — answer, send, list, thread, convene, rooms, close. You sent: {sent}"
                 )
             if not text:
                 return ToolResult.error(
@@ -164,13 +172,13 @@ class MessageTool(Tool):
                     f"not a gesture. You sent: {sent}"
                 )
             if op == "answer":
-                return self._answer(args, broker, who, list(ctx.seats.keys()), text, sent)
-            return self._send(args, broker, who, list(ctx.seats.keys()), text, sent)
+                return await self._answer(args, broker, who, list(ctx.seats.keys()), text, sent, ctx)
+            return await self._send(args, broker, who, list(ctx.seats.keys()), text, sent, ctx)
         except (MessageError, RoomError, UnknownMessage) as exc:
             return ToolResult.error(f"{exc} You sent: {sent}")
 
-    def _convene(
-        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str
+    async def _convene(
+        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str, ctx: Any
     ) -> ToolResult:
         """Open a bounded room — the spend the owner capped, so the coordinator's."""
         if who != DEFAULT_SEAT:
@@ -199,6 +207,17 @@ class MessageTool(Tool):
             room = broker.convene(convener=who, seats=wanted, subject=text or "a room")
         except RoomError as exc:
             return ToolResult.error(f"{exc} You sent: {sent}")
+        names = {k: getattr(s, "name", k) for k, s in ctx.seats.items()} if ctx is not None else {}
+        card = (
+            f"🏠 **Room: {room.subject}** — {', '.join(names.get(s, s) for s in room.seats)}. "
+            "Reply here to join; say the word and the room closes. "
+            f"(room {room.id}; 8 messages; a room nobody answers ends in 24h)"
+        )
+        if ctx is not None and ctx.surface is not None:
+            try:
+                await ctx.surface.send(card, thread=room.id)
+            except Exception:  # noqa: BLE001 — a room exists even if its projection fails
+                pass
         return ToolResult(
             ok=True,
             output=(
@@ -206,13 +225,62 @@ class MessageTool(Tool):
                 "Its bounds are the owner's: 8 messages total, at most 2 rooms a day per "
                 "seat, and a room nobody answers for 24 hours ends as a named dead end. "
                 f"Send into it with correlation_id={room.id}, and an answer must be "
-                "verify-ed before it leaves."
+                "verify-ed before it leaves. The room card is posted to the owner's "
+                "surface; each line in it is posted as the seat's own."
             ),
             data={"room": room.id, "seats": list(room.seats), "subject": room.subject},
         )
 
-    def _answer(
-        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str
+    async def _close(
+        self, args: dict[str, Any], broker: Any, who: str, sent: str, ctx: Any
+    ) -> ToolResult:
+        """The owner's *stop it* (T33) — a participant carries the word, the room ends."""
+        room_id = str(args.get("room", "")).strip()
+        if not room_id:
+            return ToolResult.error(f"op=close needs `room` — the room to close. You sent: {sent}")
+        try:
+            room = broker.close_room(room_id, who)
+        except (RoomError, MessageError) as exc:
+            return ToolResult.error(f"{exc} You sent: {sent}")
+        if ctx is not None and ctx.surface is not None:
+            try:
+                await ctx.surface.send(
+                    f"🏠 **Room: {room.subject}** — closed. The exchange stays readable "
+                    f"(room {room.id}).",
+                    thread=room.id,
+                )
+            except Exception:  # noqa: BLE001 — the close stands even if its line fails
+                pass
+        return ToolResult(
+            ok=True,
+            output=(
+                f"room {room.subject!r} closed by {who!r} — its unanswered mail is "
+                "resolved so nobody is offered work from it, and the exchange stays "
+                "readable with op=thread"
+            ),
+            data={"room": room.id, "status": room.status},
+        )
+
+    @staticmethod
+    async def _post_room_line(ctx: Any, room_id: str, sender: str, text: str) -> None:
+        """A room's line on the owner's surface: the seat's own words, labeled by the room.
+
+        This is T33's "traffic shown as the seats' own lines": the projection is
+        dumb on purpose — the broker holds the truth, the surface shows it as it
+        happens, and nothing is summarized. A posting failure is never the
+        message's failure: the exchange lives in the queue, not in the chat.
+        """
+        if ctx is None or getattr(ctx, "surface", None) is None:
+            return
+        names = {k: getattr(s, "name", k) for k, s in ctx.seats.items()}
+        line = f"**{names.get(sender, sender)}**: {text}"
+        try:
+            await ctx.surface.send(line, thread=room_id)
+        except Exception:  # noqa: BLE001 — see the docstring
+            pass
+
+    async def _answer(
+        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str, ctx: Any = None
     ) -> ToolResult:
         message_id = str(args.get("id", "")).strip()
         if not message_id:
@@ -252,6 +320,12 @@ class MessageTool(Tool):
             # attempt count follows) — at-least-once survives even its own bug.
             broker.reopen(message_id)
             raise
+        # T33: an answer inside an open room is the room's line too — the seat's
+        # own words, shown while they happen.
+        if reply.correlation_id:
+            room = broker.room(reply.correlation_id)
+            if room is not None and room.open:
+                await self._post_room_line(ctx, room.id, who, text)
         return ToolResult(
             ok=True,
             output=(
@@ -266,8 +340,8 @@ class MessageTool(Tool):
             },
         )
 
-    def _send(
-        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str
+    async def _send(
+        self, args: dict[str, Any], broker: Any, who: str, seat_keys: list[str], text: str, sent: str, ctx: Any = None
     ) -> ToolResult:
         to = str(args.get("to", "")).strip()
         if not to:
@@ -289,6 +363,13 @@ class MessageTool(Tool):
             id=str(args.get("id", "")).strip(),
         )
         receipt = broker.send(message)
+        # T33: a send into an open room is shown on the surface as it happens —
+        # the seat's own line, posted to the owner, never summarized away. The
+        # broker is still the truth; this is the projection.
+        if message.correlation_id:
+            room = broker.room(message.correlation)
+            if room is not None and room.open:
+                await self._post_room_line(ctx, room.id, who, text)
         return ToolResult(
             ok=True,
             output=(
