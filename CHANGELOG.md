@@ -12,6 +12,10 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ## [Unreleased]
 
+### Changed
+
+- Added a project README covering Daedalus's purpose, architecture, capability and memory model, setup wizard, CLI, runtime state, development workflow, current status, and staged limits. It supersedes the absence of a repository-level onboarding document and points readers to `SPEC.md` as the normative source.
+
 _Design frozen; **P0, P1 and P2 are implemented as code** — the loop, the primitives, the capability substrate, memory (now **P1 depth**: file-first source of truth, supersession + bitemporal, a `local_only` egress gate, Obsidian-compatible notes), the scheduler and the **P2 proactive gate** (quiet hours, a daily cap, and the freedom to stay silent), the Melinoë gate, the Discord surface, the **cabinet** (charters read from files, a memory namespace per seat, exactly one active identity, a **router** that sends each message to the seat it belongs to, and a durable typed queue between seats), and the setup wizard. The **internal calendar now stands on its own** at gcal parity — recurrence with exceptions and moved instances, time zones that survive a clock change, free/busy and conflict detection, search, bulk edits, reminders that fire through the scheduler, and an `.ics` import for the owner's real history. The **dashboard now reaches the owner's phone again** — a fixed port, published on start, taken down on stop. Verified by `daedalus selftest` (15/15 offline; 16/16 with `--live`) and an 880-test suite. The owner's own free-text request — watch free space on `/` every weekday morning and speak up under 25% — **completes end-to-end**: a capability authored, run once by the Melinoë gate, registered, and scheduled, with no code touched. `0.1.0` is cut once that same round-trip is confirmed from Discord.
 
 ### Added
