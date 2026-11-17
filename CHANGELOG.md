@@ -14,6 +14,19 @@ Change types: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `S
 
 ### Changed
 
+- **Discord tables now render instead of arriving as a wall of pipes.** Asked
+  Heracles for a home workout plan, the model produced a perfectly good GFM
+  table and Discord showed the raw `| Workout | Duration | ... |` separators —
+  Discord renders lists and code blocks but not tables. The fix is in the
+  surface (`surface/discord/render.py`), applied to the final text just before
+  chunking and to the adopted streamed answer, never to individual deltas: a
+  real table (header, `---` separator, and body rows of matching width) becomes
+  one aligned monospace block, and a table already inside a code block is left
+  alone. Prose, a pipe in prose, and a half-arrived table pass through byte for
+  byte; the converter is idempotent. Six tests cover the conversion and both
+  delivery paths. No prompt rule was added — asking the model to remember is
+  exactly what this fix removes. Suite **311 passed**, selftest 15/15.
+
 - **The local chain is now `qwen3.5:2b`, chosen on the real tool registry rather
   than on a toy one.** The cheap route — which is also triage's model, and the
   whole chain for a seat bound to `remote_models = false` (Heracles) — ran on

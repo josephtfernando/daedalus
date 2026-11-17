@@ -303,6 +303,11 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
   step supersedes it and when a new provider takes over after a failed attempt. It becomes the
   delivered answer only when it is *exactly* the text the turn ends with; otherwise it is deleted and
   ordinary delivery runs, so a preview is never a second copy of the reply.
+- **A table is rendered, not pasted.** Discord has no GFM tables, and the model will emit them anyway
+  (a workout plan is a table). The surface converts a real table — header, `---` separator, and body
+  rows of matching width — into one aligned code block before delivery; prose and half-written
+  streamed tables pass through untouched, and a table already inside a fence is left alone. The
+  conversion is a property of the surface, never a rule the model has to remember.
 - **Usage is recorded.** Every turn writes one line to `state/usage.jsonl` — seat, provider, steps,
   tokens in/out, **retries**, the last **failure kind**, seconds, outcome, and nothing of the
   owner's — so slow models, flaky tries, and overflowing turns are observed rather than guessed at.

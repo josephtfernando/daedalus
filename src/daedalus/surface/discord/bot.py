@@ -22,6 +22,7 @@ from ... import inbox
 from ...config import Settings
 from ..base import ApprovalRequest, InboundEvent
 from .approvals import ApprovalView
+from .render import discord_markdown
 
 log = logging.getLogger("daedalus.surface.discord")
 
@@ -293,7 +294,9 @@ class DiscordSurface:
 
     async def send(self, text: str, *, thread: str | None = None) -> None:
         user = await self._owner_user()
-        for i, chunk in enumerate(chunk_text(text)):
+        # Discord has no GFM tables. Render them before chunking, so a table is
+        # converted as a whole rather than cut in half at the message limit.
+        for i, chunk in enumerate(chunk_text(discord_markdown(text))):
             posted = await user.send(chunk)
             # T33: the first chunk of a room line is the one a reply resolves.
             if thread and i == 0:
@@ -543,7 +546,11 @@ class Streamer:
             await self._drop()
             return False
         body = f"{header}\n\n{text}" if header else text
-        chunks = chunk_text(body)
+        # The equality check above uses the raw text: the preview must match
+        # what the model wrote, not what we are about to render. What lands on
+        # screen is the rendered form — the preview itself stays raw while it
+        # is being written, because a half-arrived table is not a table.
+        chunks = chunk_text(discord_markdown(body))
         try:
             await self._message.edit(content=chunks[0])
         except Exception:  # noqa: BLE001 — fall back to an ordinary send
