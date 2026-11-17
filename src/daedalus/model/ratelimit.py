@@ -1,4 +1,9 @@
-"""Cross-process rolling-window rate-limit ledger (ARCHITECTURE §4, §8.5)."""
+"""Cross-process rolling-window rate-limit ledger (ARCHITECTURE §4, §8.5).
+
+Rows are keyed by **credential**, not by model: the free tiers cap per API key,
+so two entries on one key share one budget. The caller supplies the key
+(``HttpProvider.ledger_key``) and this table does not care what it means.
+"""
 
 from __future__ import annotations
 

@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..approvals.classify import Assessment
 from ..cabinet.seat import pick
-from ..model.providers import NoProviderAvailable, ToolCall
+from ..model.providers import ContextOverflowError, NoProviderAvailable, ToolCall
 from ..surface.base import ApprovalRequest, InboundEvent
 from . import context as ctx_mod
+from .budget import estimate_tokens, over_budget
 from .context import inbox_block
+from .usage import record_usage
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
@@ -42,6 +45,89 @@ _ALREADY_RAN = (
     "repeating a call does not repeat its effect.)"
 )
 
+#: What an old tool result says once the context had to be made smaller. It is
+#: deliberately *not* empty: an empty result reads as "the tool returned
+#: nothing", and the model would act on that instead of asking again.
+_TRIMMED = (
+    "[trimmed to fit the model's context window — this result was older; "
+    "ask again with a narrower slice if you still need it]"
+)
+
+
+def _tokens(usage: dict[str, Any]) -> tuple[int, int]:
+    """Input/output tokens from a provider's usage block, either naming style."""
+
+    def as_int(*names: str) -> int:
+        for name in names:
+            value = usage.get(name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+        return 0
+
+    return as_int("prompt_tokens", "input_tokens"), as_int("completion_tokens", "output_tokens")
+
+
+def _make_room(messages: list[dict[str, Any]]) -> bool:
+    """Shrink what the model has already read, without changing the ask.
+
+    Only ``content`` is replaced: roles, tool-call ids and the shape of the
+    conversation stay intact, so the provider still receives a legal message
+    list. Never touched: the system prompt (index 0), the owner's current
+    message (the last one), and the two most recent tool results — those are
+    what the model is in the middle of using.
+
+    Returns whether anything changed. A list that cannot be shrunk is a real
+    refusal: the turn says the request is too big rather than trying again.
+    """
+    tool_indexes = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    keep = set(tool_indexes[-2:])
+    trimmed = 0
+    for index in tool_indexes:
+        if index in keep:
+            continue
+        if messages[index].get("content") != _TRIMMED:
+            messages[index]["content"] = _TRIMMED
+            trimmed += 1
+    if trimmed:
+        return True
+    # No tool results left to give — drop the oldest half of the replayed
+    # conversation instead, as whole messages, still leaving the system prompt
+    # and the owner's current ask alone.
+    droppable = [
+        i
+        for i in range(1, len(messages) - 1)
+        if messages[i].get("role") in ("user", "assistant") and not messages[i].get("tool_calls")
+    ]
+    if not droppable:
+        return False
+    for index in reversed(droppable[: max(1, len(droppable) // 2)]):
+        del messages[index]
+    return True
+
+
+def _fit_context(
+    messages: list[dict[str, Any]], window: int, extra_chars: int = 0
+) -> bool:
+    """Trim until the request fits the window, or until nothing is left to trim.
+
+    The same operation overflow recovery uses, moved *before* the call so the
+    provider does not have to refuse first. Bounded: `_make_room` gives up when
+    only the system prompt, the ask and the last two results remain, and a loop
+    over a function that refuses is an infinite loop waiting to be written.
+    """
+    changed = False
+    for _ in range(8):
+        if not over_budget(messages, window, extra_chars=extra_chars):
+            break
+        if not _make_room(messages):
+            break
+        changed = True
+    return changed
+
 
 def _truncate(output: str) -> str:
     if len(output) <= MAX_TOOL_CHARS:
@@ -64,6 +150,17 @@ class TurnResult:
     #: The seat that answered — the key, not the display name, because this is
     #: what a surface compares against to decide whether to say who it was.
     seat: str = ""
+    #: Token accounting from the provider's own usage block, summed over every
+    #: step. Zero when the provider does not report it (some free endpoints do
+    #: not), which is why it is a fact to record, never a decision to make on.
+    tokens_in: int = 0
+    tokens_out: int = 0
+    #: Wall-clock the turn took. Pi keeps the same pair per session; together
+    #: with tokens it is what makes "that model is slow" an observation.
+    seconds: float = 0.0
+    #: How many same-provider retries the turn paid. Zero on a clean turn; a
+    #: number here is what tells a slow turn apart from a flaky one.
+    retries: int = 0
 
 
 class Engine:
@@ -76,6 +173,7 @@ class Engine:
         *,
         seat: str | None = None,
         on_delta=None,
+        on_restart=None,
     ) -> TurnResult:
         """Run one turn — and never let two of them run at once.
 
@@ -100,10 +198,19 @@ class Engine:
         the scheduler queues behind a conversation turn exactly as it should.
         """
         lock = self.ctx.turn_lock
+        queued_at = time.monotonic()
         if lock.locked():
             log.info("a turn is already running — this one waits for it")
         async with lock:
-            return await self._run_turn(event, seat=seat, on_delta=on_delta)
+            waited = time.monotonic() - queued_at
+            if waited > 0.5:
+                # The answer to "why did you take so long": this turn was behind
+                # another one (a wake, usually). Recorded, because otherwise the
+                # delay is indistinguishable from a slow model.
+                log.info("turn started %.1fs after the message arrived (queued)", waited)
+            return await self._run_turn(
+                event, seat=seat, on_delta=on_delta, on_restart=on_restart
+            )
 
     async def _run_turn(
         self,
@@ -111,6 +218,7 @@ class Engine:
         *,
         seat: str | None = None,
         on_delta=None,
+        on_restart=None,
     ) -> TurnResult:
         ctx = self.ctx
         from ..runtime import Session
@@ -139,6 +247,24 @@ class Engine:
         nudged: set[str] = set()
         denied: set[str] = set()
         steps = 0
+        started = time.monotonic()
+        tokens_in = 0
+        tokens_out = 0
+        retries = 0
+        # Whether any step had to estimate its tokens (a streamed or terse
+        # endpoint that reports no usage block). Recorded, so a mixed ledger is
+        # never mistaken for measured fact.
+        estimated = False
+        # The kind of the most recent failure (an exception class name), and the
+        # entry that was tried last. Both exist so a *failed* turn's usage line
+        # can say what happened instead of leaving `provider` blank.
+        failure = ""
+        attempted = ""
+        answer_model = ""
+        # One context-overflow recovery per turn: make room once, try once. A
+        # second overflow is a request this model cannot take at all, and
+        # trimming further only destroys what the turn was working from.
+        made_room = False
 
         def finish(text: str, *, error: str = "", provider: str = "") -> TurnResult:
             """End the turn, and write down that it happened.
@@ -154,6 +280,33 @@ class Engine:
                 # clean-channel contract — the ledger is deleted, not kept.
                 self._hold_trace(ctx)
             ctx.remember(event, event.text, text)
+            seconds = time.monotonic() - started
+            usage: dict[str, Any] = {
+                "seat": chosen.key,
+                "provider": provider or attempted,
+                "model": answer_model,
+                "steps": steps,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "retries": retries,
+                "failure": failure,
+                "seconds": round(seconds, 2),
+                "outcome": "error" if error else "ok",
+            }
+            if estimated:
+                usage["tokens_estimated"] = True
+            record_usage(ctx.settings.home, usage)
+            log.info(
+                "turn seat=%s steps=%d provider=%s tokens=%d/%d retries=%d in %.1fs%s",
+                chosen.key,
+                steps,
+                provider or attempted or "(none)",
+                tokens_in,
+                tokens_out,
+                retries,
+                seconds,
+                f" — {error}" if error else "",
+            )
             return TurnResult(
                 text=text,
                 steps=steps,
@@ -161,6 +314,10 @@ class Engine:
                 provider=provider,
                 error=error,
                 seat=chosen.key,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                seconds=seconds,
+                retries=retries,
             )
 
         # The seat's recorded bounds (T24): a turn as a seat the owner bound to
@@ -179,18 +336,79 @@ class Engine:
                 error="local-only chain unavailable: the seat's charter binds it to "
                 "providers on this machine",
             )
-        while steps < ctx.settings.max_steps:
-            steps += 1
+
+        # One pessimistic budget for the whole turn: the smallest window in the
+        # chain, because only one entry will answer and it is not known which.
+        # Trimming early is cheap (chars/4); a refused request is a round trip.
+        window = ctx.model.context_window(event.text, local_only=local_only)
+        schemas_chars = len(json.dumps(schemas))
+
+        async def ask():
+            """One model call, with the turn's accounting folded in.
+
+            Reading `last_stats` in a `finally` means a failed attempt is
+            recorded too — the retries it paid are exactly what makes a bad turn
+            worth looking at. The preview reset goes first: what the previous
+            step streamed is about to be superseded.
+            """
+            nonlocal retries, failure, attempted
+            if on_restart is not None:
+                try:
+                    await on_restart()
+                except Exception:  # noqa: BLE001 — a preview is cosmetic, never fatal
+                    log.debug("could not reset the streamed preview", exc_info=True)
             try:
-                result = await ctx.model.chat(
+                return await ctx.model.chat(
                     messages,
                     tools=schemas,
                     on_delta=on_delta,
                     text_hint=event.text,
                     local_only=local_only,
                 )
+            finally:
+                retries += ctx.model.last_stats.retries
+                failure = ctx.model.last_stats.failure or failure
+                attempted = ctx.model.last_attempted or attempted
+
+        while steps < ctx.settings.max_steps:
+            steps += 1
+            if window and _fit_context(messages, window, schemas_chars):
+                log.info(
+                    "context budget: trimmed older results to fit %d tokens before step %d",
+                    window,
+                    steps,
+                )
+            try:
+                result = await ask()
+            except ContextOverflowError as exc:
+                if made_room or not _make_room(messages):
+                    return finish(
+                        "That request is bigger than the model's context window, even after "
+                        "I trimmed what I had already read. Ask for a narrower slice — one "
+                        "file, one day, one search — and I'll pick it up from there.",
+                        error=f"context overflow: {exc}",
+                    )
+                made_room = True
+                # The attempt produced no answer, so it should not consume one
+                # of the turn's steps: making room is recovery, not progress.
+                steps -= 1
+                log.info("context overflow — trimmed older tool results and trying again")
+                continue
             except NoProviderAvailable as exc:
                 return finish(f"I couldn't reach a model — {exc}", error=str(exc))
+            step_in, step_out = _tokens(result.usage)
+            if not result.usage:
+                # A streamed or terse endpoint may report no usage block at all.
+                # Zero would read as "this turn cost nothing"; an estimate with
+                # a marker is honest, and the ledger says which it is.
+                step_in = estimate_tokens(messages)
+                step_out = estimate_tokens(
+                    [_assistant_message(result.content, result.tool_calls)]
+                )
+                estimated = True
+            tokens_in += step_in
+            tokens_out += step_out
+            answer_model = result.model
             if not result.tool_calls:
                 return finish(result.content.strip(), provider=result.provider)
 
@@ -347,6 +565,12 @@ class Engine:
                 level=assessment.level.value,
                 note=assessment.note(),
                 reasons=assessment.reasons,
+                effects=assessment.effects,
+                remembers=(
+                    f"this scope ({decision.scope}) stops asking"
+                    if tool.grantable and not assessment.dangerous
+                    else ""
+                ),
                 affirm_label=tool.approval_labels(args)[0],
                 deny_label=tool.approval_labels(args)[1],
             )

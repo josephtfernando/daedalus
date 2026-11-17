@@ -44,6 +44,7 @@ DEFAULT_HEAVY: list[dict[str, Any]] = [
         "model": "stepfun-ai/step-5-preview",
         "api_key_env": "NVIDIA_API_KEY",
         "timeout_s": 60,
+        "context_window": 131072,
     },
     {
         "name": "nim-glm-5.3-flash",
@@ -51,6 +52,7 @@ DEFAULT_HEAVY: list[dict[str, Any]] = [
         "model": "z-ai/glm-5.3-flash",
         "api_key_env": "NVIDIA_API_KEY",
         "timeout_s": 60,
+        "context_window": 131072,
     },
     {
         "name": "zai-glm-4.7-flash",
@@ -58,6 +60,7 @@ DEFAULT_HEAVY: list[dict[str, Any]] = [
         "model": "glm-4.7-flash",
         "api_key_env": "ZAI_API_KEY",
         "timeout_s": 60,
+        "context_window": 131072,
     },
     {
         "name": "zai-glm-4.5-flash",
@@ -65,17 +68,17 @@ DEFAULT_HEAVY: list[dict[str, Any]] = [
         "model": "glm-4.5-flash",
         "api_key_env": "ZAI_API_KEY",
         "timeout_s": 60,
+        "context_window": 131072,
     },
 ]
 
-DEFAULT_CHEAP: dict[str, Any] = {    "name": "bonsai-8b-local",
-    "base_url": LOCAL_BASE,
-    "model": "bonsai-8b",
-    "api_key_env": "",  # local runner needs no key
-    # The stall ceiling is not about the provider being remote: a local runner
-    # that has no weights pulled, or is mid-load, hangs exactly the same way.
-    "timeout_s": 60,
-}
+#: There is **no default cheap model**, by design. A local model is a thing the
+#: owner pulls, so a default that names one is a default that 404s on every
+#: routing question — which is exactly what happened here: `bonsai-8b` was
+#: written into the config by the template, never pulled, and every triage call
+#: spent itself on a 404 before falling back. Absent a cheap route, routing goes
+#: to the heavy chain: slower, and never wrong about a model that is not there.
+DEFAULT_CHEAP: dict[str, Any] | None = None
 
 
 # --- .env -----------------------------------------------------------------
@@ -106,13 +109,28 @@ def default_config_toml() -> str:
         "discord_users = []          # only these users may DM the agent",
         "",
         "[models]",
-        f"cheap = {_toml_inline(DEFAULT_CHEAP)}",
+        "# A local model answers the routing question (which seat takes this). It",
+        "# is optional, and there is no default: a name written here that is not",
+        "# pulled is a 404 on every message. Set it only to a model you have —",
+        "# e.g. cheap = { name = \"qwen3.5-4b-local\", base_url = \"http://127.0.0.1:11434/v1\",",
+        "# model = \"qwen3.5-4b-abliterated\", api_key_env = \"\", timeout_s = 120,",
+        "# retries = 0, context_window = 32768 } — and routing goes to the heavy",
+        "# chain when it is absent.",
         "heavy = [",
     ]
     for p in DEFAULT_HEAVY:
         lines.append(f"  {_toml_inline(p)},")
     lines += [
         "]",
+        "# An entry may also carry retries = 2 (extra tries on a 429/5xx or a",
+        "# connection blip), retry_budget_s = 10.0 (how long those tries may",
+        "# spend in total before the chain moves on), deadline_s = 120.0 (the",
+        "# whole call, retries included; timeout_s bounds silence, not duration),",
+        "# cooldown_s = 300.0 (how long a key is benched after it says it is out",
+        "# of quota) and context_window = 131072 (the model's window, so the",
+        "# request can be trimmed before the provider has to refuse it). Omitted",
+        "# values take those defaults; retries = 0 turns retrying off for that",
+        "# entry, and context_window = 0 means the window is unknown.",
         "",
         "[approvals]",
         'default_tier = "auto"      # auto | ask | block  (self-contained actions)',
@@ -159,6 +177,26 @@ class ProviderConfig:
     window_s: int = 60
     max_calls: int = 40
     timeout_s: int = 180
+    #: Extra tries for a *transient* failure (429/5xx/connection blip) on this
+    #: provider, before the chain moves to the next one. 0 disables retrying.
+    retries: int = 2
+    #: Wall-clock a provider's retries may spend in total. This is what keeps
+    #: resilience from becoming latency: a 60s stall spends the budget by
+    #: itself, so a stalling provider is skipped rather than retried twice.
+    retry_budget_s: float = 10.0
+    #: How long this entry's key is benched after it says it is out of quota.
+    #: A quota window is not a pause; five minutes stops the rest of the turn
+    #: from paying the same tries at every step. The provider's own
+    #: ``Retry-After`` wins when it is longer, capped at an hour.
+    cooldown_s: float = 300.0
+    #: The total a *single call* may take, retries included. ``timeout_s``
+    #: bounds silence; this bounds duration, so a provider that trickles (or a
+    #: retry chain) cannot hold the turn for minutes. 0 disables the bound.
+    deadline_s: float = 120.0
+    #: The model's context window, in tokens. 0 means unknown. When known, the
+    #: engine estimates the request (chars/4) and trims old tool results
+    #: *before* the call, so overflow recovery stays an emergency path.
+    context_window: int = 0
 
     def api_key(self, env: dict[str, str]) -> str:
         if not self.api_key_env:
@@ -237,6 +275,11 @@ def _providers(entries: list[dict[str, Any]]) -> list[ProviderConfig]:
                 window_s=int(e.get("window_s", 60)),
                 max_calls=int(e.get("max_calls", 40)),
                 timeout_s=int(e.get("timeout_s", 180)),
+                retries=int(e.get("retries", 2)),
+                retry_budget_s=float(e.get("retry_budget_s", 10.0)),
+                cooldown_s=float(e.get("cooldown_s", 300.0)),
+                deadline_s=float(e.get("deadline_s", 120.0)),
+                context_window=int(e.get("context_window", 0)),
             )
         )
     return out
@@ -283,7 +326,7 @@ def load_settings(home: Path | None = None) -> Settings:
 
     heavy = _providers(models.get("heavy") or DEFAULT_HEAVY)
     cheap_entry = models.get("cheap") or DEFAULT_CHEAP
-    cheap = _providers([cheap_entry])[0]
+    cheap = _providers([cheap_entry])[0] if cheap_entry else None
 
     return Settings(
         home=home,
