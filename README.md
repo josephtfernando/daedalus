@@ -69,7 +69,9 @@ A newly authored capability runs once through the Melinoë verification gate bef
 
 - Memory is file-first, indexed by SQLite, and supports supersession, bitemporal facts, namespaces, and a `local_only` boundary.
 - The internal Daedalus calendar is file-first (`.ics`) with recurrence, exceptions, time zones, reminders, search, conflict detection, bulk edits, and import.
-- The scheduler runs cron-like jobs and one-shot reminders, catches up missed work, and avoids duplicate external side effects.
+- The scheduler runs cron-like jobs, one-shot reminders, and file/path `watch` triggers, catches up missed work, and avoids duplicate external side effects.
+- Files the owner sends in Discord land in a local inbox and are read **on this machine** — text directly, images by local OCR, audio by a local Whisper-family CLI, PDFs by poppler. Nothing is uploaded to read an attachment; a missing reader is reported with what to install.
+- `diagnose` answers "why were you quiet?" offline from the machine's own record: provider caps and benches, disk and dashboard state, turn counts, retries, failures, and per-provider latency.
 - Proactive wakes are gated by quiet hours and a daily speaking cap before the model is reached. The model may still choose silence.
 - Notifications produced by an owner-requested capability are distinct from a proactive wake and are delivered when that capability says they should be.
 
@@ -210,7 +212,7 @@ src/daedalus/
   capabilities/ # authoring, verification, registry, runner
   memory/        # file-first facts and recall index
   calendar/      # local calendar and recurrence
-  scheduler/     # jobs, wakes, reminders, and catch-up
+  scheduler/     # jobs, wakes, reminders, watches, and catch-up
   surface/       # Discord and CLI surfaces
   cabinet/       # seats, namespaces, and durable protocol
   genui/         # generated dashboards and controls

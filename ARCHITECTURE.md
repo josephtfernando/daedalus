@@ -75,8 +75,8 @@ Derived from `SPEC.md` §1 and binding on every component:
 | **Scheduler** | Trigger wakes and run authored capabilities on a period | in-process ticker → `dispatch_tick()`; `agent_wakes` table |
 | **Turn engine** | Assemble context, drive model↔tool loop, emit output | `run_turn(event) → TurnResult` |
 | **Model client** | One OpenAI-compatible client, provider chain, local fallback | `chat(msgs, tools) → stream` |
-| **Rate-limit ledger** | Cross-process rolling-window accounting | SQLite `ratelimit.db` |
-| **Tools (primitives)** | The 13 Layer-1 primitives + the `capability` tool | `Tool` protocol (name · schema · risk · `call`) |
+| **Rate-limit ledger** | Cross-process rolling-window accounting, keyed by **credential** (two models on one key share one cap) | SQLite `ratelimit.db` |
+| **Tools (primitives)** | The Layer-1 primitives + the `capability` tool (22 registered) | `Tool` protocol (name · schema · risk · `call`) |
 | **Approval middleware** | Tiering, standing grants, sink checks, action binding | `authorize(tool, args, provenance) → allow/ask/block` |
 | **Secrets** | Scoped credential access, never logged | `get(resource) → value` |
 | **Capability substrate** | Author · verify · register · run authored capabilities | `author()`, `registry`, `runner` |
@@ -112,7 +112,9 @@ daedalus/                      # code repo
     tools/
       base.py registry.py guard.py
       shell.py code.py files.py http.py browser.py search.py
-      schedule.py process.py memory.py calendar.py discord.py ask.py secrets.py capability.py
+      schedule.py remind.py watch.py process.py memory.py calendar.py discord.py ask.py secrets.py
+      inbox.py diagnose.py
+    inbox.py                   # attachment intake + local extraction (OCR / ASR / PDF)
     approvals/
       middleware.py grants.py risk.py classify.py
     capabilities/
@@ -124,7 +126,7 @@ daedalus/                      # code repo
     calendar/
       store.py index.py event.py ical.py recur.py occurrences.py zones.py reminders.py
     scheduler/
-      scheduler.py jobs.py wakes.py proactive.py catchup.py cron.py
+      scheduler.py jobs.py wakes.py watches.py proactive.py catchup.py cron.py
     surface/
       discord/ bot.py approvals.py
       base.py cli.py
@@ -151,12 +153,13 @@ $DAEDALUS_HOME/                # runtime state (default ~/.daedalus)
   cabinet/      seats/*.toml  messages.db        # typed protocol log
   genui/        components/  tokens/  drafts/
   approvals/    grants.toml  log.db
-  state/        wakes.db  ratelimit.db  proactive.json  reminders.json  processes.json
+  state/        wakes.db  ratelimit.db  usage.jsonl  proactive.json  reminders.json  watches.json  processes.json
+  inbox/                                     # attachments the owner sent, owner-only, read locally
   ui/                                        # generated dashboards (served)
   logs/                                      # journald mirrors
 ```
 
-**Rule:** the repo holds code; `$DAEDALUS_HOME` holds state. Code is versioned; state is owned by the owner and editable by hand.
+**Rule:** the repo holds code; `$DAEDALUS_HOME` holds state. Code is versioned; state is owned by the owner and editable by hand. The daemon **enters the state home** at startup (`main.enter_state_home`), so a relative path the model invents resolves there and never beside the source; the repo remains reachable by its absolute root.
 
 ---
 
@@ -290,13 +293,37 @@ remembers what was delivered so a double tick cannot double-nudge, and a
 `local_only` event's reminder still fires — it goes to the owner, over the
 owner's surface, with no model in the loop.
 
-### 7.3.3 The catch-up queue — what fell due while the loop was down
+### 7.3.3 The watch — a change, checked once a tick
+
+```
+tick ─▶ watches.any_fire_due(now) ─▶ stat(path) ≠ baseline? ─▶ cooldown ok?
+     ─▶ wake_handler(prompt) ─▶ Surface ─▶ signature = now ─▶ once? remove : keep
+```
+
+The third trigger, beside the recurrence and the named moment: *that* happened, not
+*when*. `schedule` cannot express it and neither can `remind`, because no clock knows
+when a build finishes. It is not a second scheduler either — the same tick stats each
+watched path (`mtime_ns` + size) and fires through the same `wake_handler`, so there is
+one clock and one record. Polling, not `inotify`: the delivery resolution is a minute
+anyway, and a stat is microseconds.
+
+Three bounds are in code, and each closes a trap: the **baseline is taken when the
+watch is added**, so a new watch never fires on what was already true; a repeating
+watch fires at most once per `cooldown_s` (floor 30s), so a file being written is not a
+metronome; and `once` is the **default**, so "tell me when" does not become "tell me
+every time". A watch is the **owner's** instruction, so the proactive gate (§7.3.1) does
+not silence it — and a model that composes nothing does not swallow the fact: the plain
+line is delivered (`describe_fire`). The signature moves **only after the send
+succeeds**, so a failed delivery is retried next tick rather than lost.
+
+### 7.3.4 The catch-up queue — what fell due while the loop was down
 
 ```
 dispatch_tick(when)
   1. due jobs        cron.matches(when) — exactly this minute
   2. reminders       the last 15 minutes
-  3. catch_up(when)  everything else that was missed, one at a time
+  3. watches         every watched path whose signature moved (past its cooldown)
+  4. catch_up(when)  everything else that was missed, one at a time
        plan():  floor = last_run | created_at
                 latest occurrence in (floor, when]  ▸ candidate
        too late?  ▸ record "missed 08:00 — not caught up: 6h20m late, past its 1h window"
@@ -585,9 +612,12 @@ stage as `local_cli`, `access = "local"`, `scopes = ["workspace", "net"]`.
 - `state/wakes.db` — `agent_wakes` + job state (idempotency keys).
 - `state/proactive.json` — the day's proactive ledger: how often the agent has spoken, and what it last said. Hand-editable, so "why did you ping me at 23:00" has an answer that is not a guess.
 - `state/reminders.json` — which calendar reminders have already been delivered, so a tick that runs twice in a minute does not nudge the owner twice about the same meeting. Pruned after a week.
+- `state/watches.json` — the `watch` triggers: path, note, mode, cooldown, `once`, and the last signature the owner was told about. `0600` and atomic, hand-editable like the rest; a corrupt file reads as *no watches* and logs a warning rather than taking the tick down, and the next write repairs it.
+- `inbox/` — attachments the owner sent, saved at `0600` with a reduced basename. Text is read directly, images by local OCR, audio by a local Whisper-family CLI, PDFs by poppler; nothing is uploaded to read it. A missing reader is a line naming what to install, never a silent upload.
 - `serve/<name>` + `serve/published.json` — what the `push` tool has published: the published bytes in one place (deliberately not `ui/`, where the plain artifact route serves without a token) and the registry that gates them (token, lifetime, fetch count, takedown). File-first like `jobs.toml`: the CLI that publishes and the daemon's route that gates on it are different processes, so the registry is reloaded before every gate decision.
 - `delegate/ws/<name>/…` — a delegation's workspace: the task and its edits, a `.delegation.json` run record (task, caps, exit, what it could not do), and the diff the owner reviews. Created fresh on first use with one baseline commit by the daemon (the delegate itself never commits), and the workspace *is* the delegation's declared reach — a task naming paths outside it is refused before the CLI spawns.
 - `state/ratelimit.db` — rolling-window provider accounting.
+- `state/usage.jsonl` — one line per turn: seat, provider, steps, tokens in/out (estimated and marked when the endpoint reports none), retries, failure kind, seconds, outcome. **Structure only** — never the owner's words or a tool's output — so "which model is slow", "which turn was flaky", "when do turns start overflowing" and "what did that wake cost" are answerable instead of guessed. Rotated at 5 MiB into one `.1` generation, always `0600`.
 - `state/processes.json` — every process the agent has started: name, command, pid **and its `/proc` start time**, when and with what code it ended. Hand-editable like the rest. The start time is the point — a pid is recycled, so the pair is what lets a registry row from a previous daemon say "that was me" without ever saying it about whatever holds the number now. Live processes are never evicted; the last 50 endings are kept.
 - `cabinet/messages.db` — typed seat messages.
 - `calendar/` — `events.ics` (the `Daedalus` calendar, internal-authoritative) + `index.sqlite` + `sync_state.json` (gcal cursor/token); reads from other calendars are cached with their gcal-authoritative origin.
@@ -652,6 +682,25 @@ route:  heavy (NIM stepfun-ai/step-5-preview → z-ai/glm-5.3-flash
               → Z.ai glm-4.7-flash → glm-4.5-flash, 60s stall ceiling each)
       | cheap (Bonsai 8B, local)
       | forbidden-for-local-only (refuse remote when provenance = local_only)
+retry:  transient 429/5xx/connect blip on the same entry (2 tries, ≤10s budget,
+        Retry-After obeyed when short), never after output began; each attempt
+        is a ledger row
+deadline: 120s total per entry per call (retries included); timeout_s bounds
+        silence, deadline_s bounds duration
+quota:  a 429/402 that says "out of quota" is NOT retried — the *credential*
+        is benched (300s by default, or its own Retry-After, capped at 1h) so
+        every model behind that key is skipped, not re-learned
+size:   the engine estimates the request (chars/4) against the chain's smallest
+        known context_window and trims the oldest tool results *before* the
+        call; context_length_exceeded is still recovered once the same way, and
+        a second overflow is refused in the owner's words
+health: an entry that just failed is tried after the healthy ones; one answer
+        restores the configured order
+record: state/usage.jsonl — one line per turn: seat, provider, steps, tokens,
+        retries, failure kind, seconds, outcome (structure only, never the
+        owner's words); rotated at 5 MiB, 0600
+stream: the surface may ask for deltas; the preview is reset between steps and
+        between providers, and is adopted as the answer only when it matches
 ```
 
 ### 9.5 Dashboard control API (loopback only, tailnet-authenticated)

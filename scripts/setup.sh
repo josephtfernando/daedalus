@@ -245,7 +245,10 @@ KEY_FILE="$DAEDALUS_HOME/resources/master.key"
 REGISTRY_FILE="$DAEDALUS_HOME/resources/registry.toml"
 UNITS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SELFTEST_LOG="$DAEDALUS_HOME/logs/selftest.log"
-LOCAL_MODEL="${DAEDALUS_LOCAL_MODEL:-bonsai-8b}"
+# No invented default: the model is whatever the runner actually has. A name the
+# wizard made up is a name nobody pulled, and every routing question then spends
+# itself on a 404 (`bonsai-8b` did exactly that for months).
+LOCAL_MODEL="${DAEDALUS_LOCAL_MODEL:-}"
 
 umask 077          # everything this wizard creates is owner-only by default
 
@@ -271,7 +274,8 @@ Options:
 
 Environment:
   DAEDALUS_HOME        State dir (default: ~/.daedalus).
-  DAEDALUS_LOCAL_MODEL Local fallback model tag (default: bonsai-8b).
+  DAEDALUS_LOCAL_MODEL Local model tag for the cheap route (default: the
+                       first model `ollama list` reports).
 
 The wizard is idempotent: re-run it any time to repair or to grant more.
 USAGE
@@ -764,12 +768,20 @@ pause "Continue?"
 # ══════════════════════════════════════════════════════════════════════════
 # 6 — Local runner
 # ══════════════════════════════════════════════════════════════════════════
-stage "Local runner — the Bonsai fallback"
-say "When the heavy chain is rate-limited or offline, the cheap model runs here."
+stage "Local runner — the cheap route"
+say "A local model answers the routing question (which seat takes this)."
+say "It is optional: without one, routing goes to the heavy chain."
 
 if command -v ollama >/dev/null 2>&1; then
   ok "ollama found ($(command -v ollama))"
-  if confirm "Pull/refresh the local model '$LOCAL_MODEL' now? (a few GB)"; then
+  if [[ -z "$LOCAL_MODEL" ]]; then
+    LOCAL_MODEL="$(ollama list 2>/dev/null | awk 'NR>1 {print $1}' | head -1)"
+  fi
+  if [[ -z "$LOCAL_MODEL" ]]; then
+    warn "ollama has no models yet — nothing to point the cheap route at"
+    step "Pull one (e.g. 'ollama pull qwen3.5:4b'), then re-run this stage."
+    SKIPPED+=("cheap route (no local model installed)")
+  elif confirm "Pull/refresh the local model '$LOCAL_MODEL' now? (a few GB)"; then
     if ollama pull "$LOCAL_MODEL"; then
       ok "ollama has $LOCAL_MODEL"
     else
@@ -779,6 +791,36 @@ if command -v ollama >/dev/null 2>&1; then
   else
     note "skipped the pull"
     SKIPPED+=("ollama pull $LOCAL_MODEL")
+  fi
+  # A cheap route is a preference, never a guess: point the runtime at the model
+  # only when the runner actually has it, and remove the entry otherwise. A
+  # config that names an unpulled model 404s on every routing question — it
+  # spent months doing exactly that with a model name nobody had.
+  if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$LOCAL_MODEL"; then
+    python3 - "$CONFIG_FILE" "$LOCAL_MODEL" <<'PY' && ok "cheap route → $LOCAL_MODEL (local, no key needed)"
+import re, sys
+path, model = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+line = (
+    'cheap = { name = "%s-local", base_url = "http://127.0.0.1:11434/v1", '
+    'model = "%s", api_key_env = "", timeout_s = 120, retries = 0, '
+    'context_window = 32768 }' % (model.split(":")[0], model)
+)
+text = re.sub(r"(?m)^cheap\s*=.*\n", "", text)
+text = text.replace("[models]\n", "[models]\n" + line + "\n", 1)
+open(path, "w", encoding="utf-8").write(text)
+PY
+  else
+    warn "$LOCAL_MODEL is not in 'ollama list' — routing will use the heavy chain"
+    note "that is correct, not broken: a cheap route is an optimisation, and the"
+    note "heavy chain answers instead. Re-run this stage once the model is pulled."
+    python3 - "$CONFIG_FILE" <<'PY' >/dev/null 2>&1 || true
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+open(path, "w", encoding="utf-8").write(re.sub(r"(?m)^cheap\s*=.*\n", "", text))
+PY
+    SKIPPED+=("cheap route (model not pulled)")
   fi
 else
   warn "ollama is not installed — skipping gracefully"

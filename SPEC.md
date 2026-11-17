@@ -1,7 +1,7 @@
 # Daedalus — Spec
 
 **Scope:** single-user, local-first (only the owner can talk to it)
-**Status:** P0, P1, P2 and the internal calendar implemented as code (loop + primitives + capability substrate + memory depth + calendar + scheduler + proactive gate + Melinoë gate + Discord surface + setup wizard), with the P3 substrate under it (charters as files, a memory namespace per seat, one active identity, and the durable seat↔seat queue); 845 tests green, `daedalus selftest` 15/15 offline. The **proof-of-life (§11) holds** — observed from Discord on 17 Oct, a free-text request authored and scheduled a capability with no code touched.
+**Status:** P0, P1, P2 and the internal calendar implemented as code (loop + primitives + capability substrate + memory depth + calendar + scheduler + proactive gate + Melinoë gate + Discord surface + setup wizard), with the P3 substrate under it (charters as files, a memory namespace per seat, one active identity, and the durable seat↔seat queue); 303 tests green, `daedalus selftest` 15/15 offline. The **proof-of-life (§11) holds** — observed from Discord on 17 Oct, a free-text request authored and scheduled a capability with no code touched.
 **Date:** 2026-10-16
 **Supersedes:** the Hermes-based `~/down/daedalus.md` plan (architecture reference retained; runtime decision reversed)
 
@@ -68,6 +68,9 @@ The system is **not** a fixed toolbox. It **authors its own tools** on demand, k
 | `search` | web search |
 | `schedule` | cron-like: run *anything* on a period |
 | `remind` | a one-shot wake: a reminder for one named moment, kept once (T42) |
+| `watch` | be told when a path *changes* (or disappears) — the trigger a clock cannot express |
+| `inbox` | the files the owner sent, read back on request; extraction runs locally, never uploaded |
+| `diagnose` | the agent's own health: provider caps and benches, usage and latency, the last turns |
 | `process` | start / stop / monitor long-running processes (servers, demos) |
 | `memory` | read / write facts |
 | `calendar` | the internal Daedalus calendar: agenda, add / change / delete (§5.5) |
@@ -102,7 +105,9 @@ How the agent hands artefacts **to the owner** — delivery, not action:
 - **`serve`** — spin up a loopback HTTP server, published privately via **Tailscale Serve** (loopback-bound, **no public Funnel**). This is how a served project, a dashboard, or the **calendar view** reaches the phone. The daemon's own dashboard binds a **fixed port** (`[ui] port`, default `8787`) and is published at start and taken down at stop, so the route always points at a live port; `[ui] publish = false` keeps it loopback-only.
 - **`push`** — send to an owner device via **Taildrop** (e.g. the phone).
 
-Forward (not built yet): **voice / audio**, **live / streaming views**, **non-Discord notification transports**.
+Forward (not built yet): **live voice** (a spoken conversation — audio *attachments* are
+already read locally, by `inbox`), **live / streaming views**, **non-Discord notification
+transports**.
 
 ### External actions
 
@@ -261,6 +266,48 @@ Reconciling "truly generative" with the rule *"never arbitrary model-generated C
   Both NIM entries were confirmed to return text *and* well-formed tool calls; the **fastest entry is
   first**, because a cold primary that stalls is worse than a warm fallback, and each entry carries a
   **60s stall ceiling** (`timeout_s`) — the client streams, so this bounds silence, not answer length.
+  A **transient** failure — 429, 5xx, a connection blip, a 200 that is not JSON — is **tried again on
+  the same entry** before the chain moves on: **two extra tries inside a 10s retry budget**
+  (`retries`, `retry_budget_s` per entry), the server's own `Retry-After` obeyed when it is short
+  enough to be worth obeying. Two limits are deliberate: **nothing is retried once output has begun**
+  (half an answer on screen must not be said twice), and **a stall is not repeated** — 60s of silence
+  spends the whole budget by itself, so the warm fallback is taken instead. Every attempt is a row in
+  the rate-limit ledger, because a retry the ledger cannot see is how the free tier's cap gets
+  exceeded.
+- **Quota is not a blip.** A 429 whose body says `insufficient_quota`, "usage limit", "balance" or
+  "billing" (and any 402) is **not retried**: that entry is **benched** for five minutes — or its own
+  `Retry-After`, capped at an hour — so the remaining steps of the turn skip it instead of paying the
+  same retries at every step. The rule is pi's: keep the retryable set and the exhausted-quota set
+  apart, or the retry loop is what hides the thing the owner needs to know.
+- **The quota belongs to the key, not the model.** The ledger and the bench are keyed by credential
+  (`api_key_env`), because NVIDIA's free-tier cap is per account and the chain has two NIM entries on
+  one key (and two Z.ai entries on another). Two models behind one spent key are one refusal, not
+  two: the twin is skipped without a request, and the rolling window is the strictest one either
+  entry declares. A local runner has no key, so its base URL is what is shared.
+- **A call has a duration, not just a silence ceiling.** `timeout_s` bounds how long the provider may
+  be *silent*; `deadline_s` (120s, retries included) bounds the whole call. A provider that trickles,
+  or a retry chain, cannot hold the turn for minutes.
+- **A request too big is recovered, not fatal.** A provider's `context_length_exceeded` trims the
+  oldest tool results — never the system prompt, the owner's current message, or the last two results
+  the model is working from — and the call is retried **once**. A second overflow is refused in the
+  owner's words rather than reported as an unreachable model.
+- **Size is budgeted before it is refused.** Each entry may declare its `context_window`; the engine
+  estimates the request (characters over four) against the **smallest** window in the chain and trims
+  the oldest tool results *before* the call. Overflow recovery stays an emergency path, not the
+  normal way a long turn gets smaller. An unknown window (`0`) is not guessed at.
+- **A failing entry goes to the back.** The chain is ordered by the owner's preference and stays
+  that way — except that an entry which has just failed is tried after the healthy ones. One answer
+  restores its place. Static "fastest first" cannot know the fastest entry is having a bad minute.
+- **The answer streams.** The Discord surface asks for deltas and shows the answer in one message
+  edited while the model writes. The preview belongs to the current step: it is cleared when a tool
+  step supersedes it and when a new provider takes over after a failed attempt. It becomes the
+  delivered answer only when it is *exactly* the text the turn ends with; otherwise it is deleted and
+  ordinary delivery runs, so a preview is never a second copy of the reply.
+- **Usage is recorded.** Every turn writes one line to `state/usage.jsonl` — seat, provider, steps,
+  tokens in/out, **retries**, the last **failure kind**, seconds, outcome, and nothing of the
+  owner's — so slow models, flaky tries, and overflowing turns are observed rather than guessed at.
+  A streamed or terse endpoint that reports no usage block is recorded as **estimated** rather than
+  as zero. The file is `0600` and rotates at 5 MiB (one `.1` generation).
   *Superseded:* the earlier shorthand `glm-5-3 → glm-4.7 → minimax → kimi` named models that do not
   exist — `glm-4.7` and `minimax` are absent from the catalogue, `moonshotai/kimi-k2.6` is listed but
   answers 404, and `z-ai/glm-5.3` (non-flash) does not answer within a useful timeout.
@@ -369,6 +416,21 @@ time), fires once, and then retires out of the job store, so no absolute-date cr
 the lateness** rather than pretending it was on time, and a compose that fails keeps the
 reminder and retries rather than retiring an owner's alarm into silence.
 
+**A change is a trigger too — `watch`.** No clock can say "when the build finishes" or "when
+the export lands", so `watch` is the third kind of trigger beside a recurrence and a named
+moment: a **path** (`on=change`, appeared or modified, or `on=missing`, disappeared) and a note
+saying why the owner cares. It is deliberately **not a second scheduler**: the tick that
+already runs every minute stats each watched path and fires through the same wake handler as
+a reminder, so there is one clock and one record. Polling rather than `inotify`, because the
+delivery resolution is a minute anyway. Three bounds keep it from becoming a drip: the
+**baseline is taken when the watch is added** (a new watch never fires on what was already
+true), a repeating watch fires at most once per `cooldown_s` (floor 30s), and a watch is a
+**one-shot by default**, removed after it speaks. Like a reminder, it is the **owner's**
+instruction, so the proactive gate does not silence it — and if the model composes nothing,
+the plain line is still delivered. The signature moves only after a successful send, so a
+failed delivery is retried on the next tick rather than lost. Paths resolve through the same
+guard roots as `files`.
+
 **A change can reach a whole set.** `update` and `delete` take one event by `uid`, or every
 event whose **name** matches `match` — "move all my standups to 10" is one call, not a loop
 the model has to build out of ids it guessed at. The time is given as `at` (`"10:00"`), which
@@ -450,6 +512,7 @@ The three views are read paths on the loopback server: `/dashboard` is today, an
 - **Personal data is out of bounds.** Passwords, `.env`, `docs/private`, the Obsidian `private/` folder, and health / financial / relationship / location data are never opened, read, logged, summarized, or transmitted.
 - **Bytes stay home.** Nothing leaves the machine without approval: no secret or personal value in any prompt, request body, log, or message. **Structure travels; values stay local** (§3.6).
 - Approvals surface as **Discord buttons** for actions, **on the artifact** for visuals (§3.6).
+- **The prompt says what the action will do, not just that it is risky.** The tier is one word; the decision needs the facts. So the same deterministic pass that tiers a call also reads its source or command and reports the concrete effects — `writes /home/…/notes.md`, `sends a request to https://…`, `deletes ~/projects/x/build`, `asks for root`, `downloads a script from … and runs it` — above the code block, followed by what declining costs (*nothing runs; the turn carries on*), how long the question waits, and what saying yes remembers when consent becomes a standing grant. None of this is a model's opinion: a model round-trip would let the code argue for itself, and §6 decides from the call. An action the reader cannot characterise is reported as unreadable, never as safe.
 - Standing grants (bounded, scoped, revocable) preferred over approval spam; strong confirmation retained for purchases, sensitive disclosure, irreversible ops.
 - **The tier is decided from the call, deterministically** — never by the model, and never by a model round-trip. A call is judged by the worst plausible outcome of what it actually does: reads state → auto; changes something → ask; destroys data or history → ask loudly; can take the machine with it, or reaches a path that is out of bounds → **refused outright, never offered as a choice**. A command that cannot be judged is not called safe.
 - **Consent is narrow.** A standing grant is remembered only for an action that is bounded, repeatable, and not destructive — an approval covers what was approved, and nothing more. Irreversible ops are never covered by a standing grant, and a refusal is always reported to the owner: silently stopping makes *tried and was stopped* indistinguishable from *never tried*.
@@ -571,6 +634,13 @@ recorded decision, not a heuristic, and each is enforced where the counting is t
 ## 8. Runtime & Process
 
 - **systemd `--user` units**, `loginctl enable-linger`, journald logs.
+- **The loop runs from the state home.** `daedalus run` enters `$DAEDALUS_HOME`
+  before it builds the runtime, so a path the agent invents (`notes.md`,
+  `build/`) is an artefact in its own tree, never a stray file beside `src/`
+  that `git status` then reports. The code repo stays reachable through its own
+  absolute root in the workspace guard; it is simply not the default
+  neighbourhood. Launching from a directory must not decide where the agent
+  keeps its work.
 - Laptop **stays awake with the lid closed** (required for remote access and overnight work).
 - No always-on heavyweight daemon; lazily launched, suspend-aware.
 
@@ -661,13 +731,13 @@ An interactive, **re-runnable** first-run wizard that provisions the system end 
 
 1. **Scaffold** — uv project, Python 3.14, package layout, config, `.env` (reuse existing creds: `NVIDIA_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS`), journald logging.
 2. **Model client** — one OpenAI-compatible client behind a single `base_url`; NIM chain + fallback; Bonsai 8B local; cross-process rate-limit ledger.
-3. **Primitives (Layer 1 + capability tool)** — `shell`, `code`, `files`, `http`, `browser`, `search`, `schedule`, `remind`, `process`, `memory`, `discord`, `ask`, `secrets`, plus `capability` (Layer 2 author/run/verify/schedule/remove).
+3. **Primitives (Layer 1 + capability tool)** — `shell`, `code`, `files`, `http`, `browser`, `search`, `schedule`, `remind`, `watch`, `process`, `memory`, `discord`, `ask`, `secrets`, `inbox`, `diagnose`, plus `capability` (Layer 2 author/run/verify/schedule/remove).
 4. **Approval middleware** — trust tiers; egress needs one-time approval → standing grant; buttons.
 5. **Discord surface** — one bot, DM allowlist (owner only), free-text handler, approval buttons.
 6. **The loop** — message → context assembly → model → multi-step tool calls → streamed response.
 7. **Capability substrate (Layer 2)** — registry + `capabilities/<name>/{run.py, manifest.toml, README.md, state/}`; per-capability uv venv; startup inventory injected into context; MCP seam noted (§3.5).
 8. **Memory v0** — file-first store (markdown + SQLite index); write a fact, recall a fact.
-9. **Scheduler v0** — cron-pumped wake to run authored capabilities (no model) and to let the agent speak first. A moment that falls while the laptop is asleep is not lost: the tick that follows catches it up — **once**, staggered, and only while it is still true (ARCHITECTURE §7.3.3).
+9. **Scheduler v0** — cron-pumped wake to run authored capabilities (no model) and to let the agent speak first. A moment that falls while the laptop is asleep is not lost: the tick that follows catches it up — **once**, staggered, and only while it is still true (ARCHITECTURE §7.3.4).
 10. **Melinoë verification gate** — a newly authored capability is run once and checked before it is scheduled.
 11. **Proof-of-life** — the unseen free-text test.
 
