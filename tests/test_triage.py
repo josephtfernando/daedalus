@@ -3,15 +3,14 @@
 Routing is a *preference*, and these tests are mostly about the ways it refuses
 to be one: an answer that is not a seat, prose that merely mentions a seat, a
 provider that is down, a message too short to be about anything. Every one of
-those has to end with the owner's request still intact — on the seat that was
-already handling the conversation, or on the coordinator.
+those has to end with the owner's request still intact — on the seat already
+handling the conversation, or on the coordinator.
 """
 
 from __future__ import annotations
 
 import asyncio
-
-import pytest
+from dataclasses import replace
 
 from daedalus.cabinet.seat import builtin_charters
 from daedalus.cabinet.triage import MAX_REASON, addressed, menu, read, triage
@@ -49,10 +48,13 @@ def a_broken_ask():
     return ask
 
 
-# -- addressing --------------------------------------------------------------
+def provider(runtime: Runtime, script: list[ChatResult]) -> ScriptedProvider:
+    scripted = ScriptedProvider(script)
+    runtime.model = ModelClient(runtime.settings, providers=[scripted])
+    return scripted
 
 
-def test_a_message_that_addresses_a_seat_asks_no_model() -> None:
+def test_naming_a_seat_routes_to_it_without_asking_the_model() -> None:
     seats = builtin_charters()
     ask = an_ask("odysseus: never consulted")
     decision = run(triage("athena: drill me on graphs", seats, ask=ask))
@@ -60,37 +62,19 @@ def test_a_message_that_addresses_a_seat_asks_no_model() -> None:
     assert decision.by == "named"
     assert ask.questions == []
 
-
-@pytest.mark.parametrize(
-    "message,key",
-    [
+    # Every way of addressing a seat works.
+    for message, key in [
         ("@odysseus who is hiring in Chennai?", "odysseus"),
         ("Odysseus, find me the salary bands", "odysseus"),
         ("to melinoe: check this capability", "melinoe"),
         ("Icarus — build me a parser", "icarus"),
         ("dave: what is eating my disk", "dave"),
-    ],
-)
-def test_every_way_of_addressing_a_seat_works(message: str, key: str) -> None:
-    decision = run(triage(message, builtin_charters(), ask=an_ask("")))
-    assert decision.seat.key == key
-    assert decision.by == "named"
+    ]:
+        decision = run(triage(message, builtin_charters(), ask=an_ask("")))
+        assert decision.seat.key == key, message
+        assert decision.by == "named", message
 
-
-def test_a_leading_word_that_is_not_a_seat_is_an_ordinary_sentence() -> None:
-    """SPEC §7: an unrecognised name does not stop the request."""
-    seats = builtin_charters()
-    ask = an_ask("daedalus: general")
-    assert addressed("Right, so the deploy broke", seats) is None
-    decision = run(triage("Right, so the deploy broke", seats, ask=ask))
-    assert decision.by == "model"
-    assert ask.questions, "an unaddressed message should reach the router"
-
-
-def test_a_charter_alone_makes_a_ninth_seat_routable() -> None:
-    """The menu is the cabinet — there is no second list of responsibilities."""
-    from dataclasses import replace
-
+    # The menu is the cabinet — a charter alone makes a ninth seat routable.
     seats = builtin_charters()
     seats["synthia"] = replace(
         seats["athena"], key="synthia", name="Synthia", charter="Synthesizes nonsense."
@@ -100,105 +84,81 @@ def test_a_charter_alone_makes_a_ninth_seat_routable() -> None:
     assert decision.seat.key == "synthia"
 
 
-# -- reading the answer ------------------------------------------------------
-
-
-def test_a_made_up_seat_is_not_a_route() -> None:
+def test_a_name_the_cabinet_does_not_know_is_an_ordinary_sentence() -> None:
     seats = builtin_charters()
+
+    # SPEC §7: an unrecognised name does not stop the request.
+    ask = an_ask("daedalus: general")
+    assert addressed("Right, so the deploy broke", seats) is None
+    decision = run(triage("Right, so the deploy broke", seats, ask=ask))
+    assert decision.by == "model"
+    assert ask.questions, "an unaddressed message should reach the router"
+
+    # A made-up seat is not a route.
     assert read("synthia: she can do it", seats) is None
     decision = run(triage("do the thing", seats, ask=an_ask("synthia: she can do it")))
     assert decision.seat.key == "daedalus"
     assert not decision.routed
 
-
-def test_prose_that_mentions_a_seat_is_not_an_answer() -> None:
-    """'not Athena, this is Odysseus's' contains both names; neither is a choice."""
-    seats = builtin_charters()
+    # Prose that mentions a seat is not an answer.
     assert read("Not Athena, this one is Odysseus's.", seats) is None
     assert read("", seats) is None
     assert read("   \n\n", seats) is None
 
 
-def test_the_display_name_reads_as_well_as_the_key() -> None:
+def test_an_answer_reads_only_when_a_known_name_leads() -> None:
     seats = builtin_charters()
+
+    # The display name reads as well as the key.
     parsed = read("Athena: practice", seats)
     assert parsed is not None
     assert parsed[0].key == "athena"
     assert parsed[1] == "practice"
 
-
-def test_a_chatty_answer_still_reads_when_the_name_leads() -> None:
-    seats = builtin_charters()
+    # A chatty answer still reads when the name leads.
     parsed = read("- **melinoe**: review it", seats)
     assert parsed is not None
     assert parsed[0].key == "melinoe"
 
-
-def test_a_reason_is_one_line_and_bounded() -> None:
-    seats = builtin_charters()
+    # The reason is one line and bounded.
     parsed = read("heracles: " + "x" * 500, seats)
     assert parsed is not None
     assert len(parsed[1]) == MAX_REASON
 
 
-# -- refusing to be a second owner -------------------------------------------
-
-
-def test_a_follow_up_stays_with_the_seat_already_handling_it() -> None:
+def test_a_turn_never_loses_the_request_when_routing_cannot_decide() -> None:
+    # A follow-up stays with the seat already handling it.
     decision = run(
         triage("and the second one?", builtin_charters(), ask=an_ask(""), previous="athena")
     )
     assert decision.seat.key == "athena"
     assert decision.by == "previous"
 
-
-def test_a_broken_router_does_not_break_the_turn() -> None:
+    # A broken router does not break the turn.
     decision = run(
         triage("drill me on graphs", builtin_charters(), ask=a_broken_ask(), previous="athena")
     )
     assert decision.seat.key == "athena"
     assert "could not run" in decision.reason
 
-
-def test_a_message_too_short_to_be_about_anything_spends_no_call() -> None:
+    # A message too short to be about anything spends no call.
     ask = an_ask("athena: guess")
     decision = run(triage("ok", builtin_charters(), ask=ask, previous="athena"))
     assert decision.seat.key == "athena"
     assert decision.by == "previous"
     assert ask.questions == []
 
-
-def test_routing_without_an_asker_keeps_the_active_seat() -> None:
+    # Routing without an asker keeps the active seat.
     decision = run(triage("drill me on graphs", builtin_charters()))
     assert decision.seat.key == "daedalus"
     assert decision.by == "default"
 
-
-def test_an_active_seat_that_is_not_the_default_keeps_what_falls_through() -> None:
-    """`active = true` on Athena means her, not Daedalus, when nothing is sure."""
-    from dataclasses import replace
-
+    # `active = true` on Athena means her, not Daedalus, when nothing is sure.
     seats = builtin_charters()
     seats["daedalus"] = replace(seats["daedalus"], active=False)
     seats["athena"] = replace(seats["athena"], active=True)
     decision = run(triage("do the thing", seats, ask=an_ask("nobody: unclear")))
     assert decision.seat.key == "athena"
-
-
-# -- at the ingress ----------------------------------------------------------
-
-
-@pytest.fixture()
-def runtime(settings: Settings) -> Runtime:
-    return build_runtime(
-        settings, surface=ScriptedSurface(approve=True), provider=ScriptedProvider([])
-    )
-
-
-def provider(runtime: Runtime, script: list[ChatResult]) -> ScriptedProvider:
-    scripted = ScriptedProvider(script)
-    runtime.model = ModelClient(runtime.settings, providers=[scripted])
-    return scripted
 
 
 def test_a_routed_message_answers_as_that_seat(settings: Settings) -> None:
@@ -231,9 +191,12 @@ def test_a_routed_message_answers_as_that_seat(settings: Settings) -> None:
     assert attribution(rt, decision) == "**Athena** · DSA practice"
 
 
-def test_the_owner_is_not_told_who_they_are_already_talking_to(settings: Settings) -> None:
+def test_the_ingress_remembers_the_seat_and_a_dead_provider_costs_nothing(
+    settings: Settings,
+) -> None:
     from daedalus.main import attribution, route
 
+    # The owner is not told who they are already talking to.
     rt = build_runtime(
         settings, surface=ScriptedSurface(approve=True), provider=ScriptedProvider([])
     )
@@ -243,14 +206,13 @@ def test_the_owner_is_not_told_who_they_are_already_talking_to(settings: Setting
     assert decision.seat.key == "daedalus"
     assert attribution(rt, decision) == ""
 
-
-def test_the_ingress_remembers_the_seat_for_the_next_message(settings: Settings) -> None:
-    from daedalus.main import route
-
+    # The ingress remembers the seat for the next message.
     rt = build_runtime(
         settings, surface=ScriptedSurface(approve=True), provider=ScriptedProvider([])
     )
-    provider(rt, [ChatResult(content="athena: DSA practice"), ChatResult(content="odysseus: jobs")])
+    provider(
+        rt, [ChatResult(content="athena: DSA practice"), ChatResult(content="odysseus: jobs")]
+    )
     first = InboundEvent(text="drill me on graphs", user_id="owner", channel_id="dm-1")
     second = InboundEvent(text="", user_id="owner", channel_id="dm-1")
     run(route(rt, first))
@@ -259,9 +221,7 @@ def test_the_ingress_remembers_the_seat_for_the_next_message(settings: Settings)
     assert decision.by == "previous"
     assert rt.last_seat["dm-1"] == "athena"
 
-
-def test_a_provider_that_dies_leaves_the_message_on_the_active_seat(settings: Settings) -> None:
-    """A classifier's bad day must not cost the owner their request."""
+    # A classifier's bad day must not cost the owner their request.
     rt = build_runtime(
         settings, surface=ScriptedSurface(approve=True), provider=ScriptedProvider([])
     )
@@ -276,12 +236,11 @@ def test_a_provider_that_dies_leaves_the_message_on_the_active_seat(settings: Se
             raise RuntimeError("connection refused")
 
     rt.model = ModelClient(rt.settings, providers=[Dead()])
-    event = InboundEvent(text="what should I do today?", user_id="owner")
-
-    async def go():
-        from daedalus.main import route
-
-        return await route(rt, event)
-
-    decision = run(go())
+    decision = run(route(rt, InboundEvent(text="what should I do today?", user_id="owner")))
     assert decision.seat.key == "daedalus"
+
+
+def provider(runtime: Runtime, script: list[ChatResult]) -> ScriptedProvider:
+    scripted = ScriptedProvider(script)
+    runtime.model = ModelClient(runtime.settings, providers=[scripted])
+    return scripted

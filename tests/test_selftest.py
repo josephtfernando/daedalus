@@ -1,3 +1,5 @@
+"""The self-test gate: it verifies the machine, and it must not dirty what it verifies."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,15 +8,29 @@ from daedalus.config import Settings
 from daedalus.selftest import run_selftest
 
 
-async def test_selftest_passes(settings: Settings) -> None:
+async def test_the_self_test_passes_and_a_broken_layout_fails_it(settings: Settings) -> None:
     report = await run_selftest(settings)
     assert report.ok, report.render()
     names = [c.name for c in report.checks]
     assert "layout" in names and "capability gate" in names and "loop" in names
 
+    # The hardening stage must catch a home that is not locked down.
+    from daedalus.storage import paths
 
-async def test_selftest_leaves_no_trace_in_the_real_home(settings: Settings) -> None:
+    home = settings.home.parent / "loose"
+    paths.ensure_tree(home)
+    home.chmod(0o755)
+    broken = await run_selftest(Settings(home=home, env={}))
+    layout = next(c for c in broken.checks if c.name == "layout")
+    assert not layout.ok
+    assert not broken.ok
+
+
+async def test_the_self_test_leaves_the_home_exactly_as_it_found_it(settings: Settings) -> None:
     """A verification gate that dirties the thing it verifies is not a gate."""
+    from daedalus.memory.store import MemoryStore
+    from daedalus.scheduler.scheduler import Scheduler
+
     before = sorted(str(p) for p in settings.home.rglob("*"))
 
     report = await run_selftest(settings)
@@ -22,49 +38,19 @@ async def test_selftest_leaves_no_trace_in_the_real_home(settings: Settings) -> 
 
     after = sorted(str(p) for p in settings.home.rglob("*"))
     assert after == before, f"self-test added: {sorted(set(after) - set(before))}"
+    assert list((settings.home / "capabilities").iterdir()) == [], "a capability was registered"
+    assert Scheduler(settings.home / "state").jobs() == [], "a job was scheduled"
+    assert MemoryStore(settings.home / "memory").count() == 0, "a memory was written"
 
 
-async def test_selftest_does_not_register_capabilities(settings: Settings) -> None:
-    await run_selftest(settings)
-    assert list((settings.home / "capabilities").iterdir()) == []
-
-
-async def test_selftest_does_not_schedule_anything(settings: Settings) -> None:
-    await run_selftest(settings)
-    from daedalus.scheduler.scheduler import Scheduler
-
-    assert Scheduler(settings.home / "state").jobs() == []
-
-
-async def test_selftest_does_not_write_memory(settings: Settings) -> None:
-    await run_selftest(settings)
-    from daedalus.memory.store import MemoryStore
-
-    assert MemoryStore(settings.home / "memory").count() == 0
-
-
-async def test_selftest_reports_failure_on_a_broken_layout(tmp_path) -> None:
-    from daedalus.storage import paths
-
-    home = tmp_path / "loose"
-    paths.ensure_tree(home)
-    home.chmod(0o755)  # the hardening stage must catch this
-
-    report = await run_selftest(Settings(home=home, env={}))
-    layout = next(c for c in report.checks if c.name == "layout")
-    assert not layout.ok
-    assert not report.ok
-
-
-# -- still there: the machine's own claims about itself (T27's lid half) -----
-
-
-def test_effective_logind_is_the_last_files_word(tmp_path: Path) -> None:
-    """Vendor default, /etc override, drop-in — last assignment wins."""
+def test_the_system_checks_read_the_machines_last_word_and_name_the_fix(
+    monkeypatch, tmp_path: Path  # noqa: ANN001
+) -> None:
     import textwrap
 
-    from daedalus.selftest import _effective_logind
+    import daedalus.selftest as st
 
+    # Vendor default, /etc override, drop-in — last assignment wins; a comment is not the machine's word.
     vendor = tmp_path / "vendor.conf"
     vendor.write_text(textwrap.dedent("""\
         [Login]
@@ -76,40 +62,27 @@ def test_effective_logind_is_the_last_files_word(tmp_path: Path) -> None:
     drop_in = tmp_path / "drop.conf"
     drop_in.write_text("[Login]\nHandleLidSwitch=ignore\n")
 
-    assert _effective_logind(key="HandleLidSwitch", default="suspend", files=[vendor]) == "lock", (
+    assert st._effective_logind(key="HandleLidSwitch", default="suspend", files=[vendor]) == "lock", (
         "an uncommented vendor value is the machine's word; a comment is not"
     )
-    assert _effective_logind(key="HandleLidSwitch", default="suspend", files=[vendor, etc]) == "suspend"
+    assert st._effective_logind(key="HandleLidSwitch", default="suspend", files=[vendor, etc]) == "suspend"
     assert (
-        _effective_logind(key="HandleLidSwitch", default="suspend", files=[vendor, etc, drop_in])
+        st._effective_logind(key="HandleLidSwitch", default="suspend", files=[vendor, etc, drop_in])
         == "ignore"
     )
 
-
-
-
-def test_the_lid_check_fails_naming_the_fix_and_passes_when_fixed() -> None:
-    """A suspending lid is a failure with its fix in the sentence, not a wiki elsewhere."""
-    from daedalus.config import Settings
-    from daedalus.selftest import _check_lid
-
+    # A suspending lid is a failure with its fix in the sentence, not a wiki elsewhere.
     settings = Settings(home=Path.home(), env={})
-    failing = _check_lid(settings, value="suspend")
+    failing = st._check_lid(settings, value="suspend")
     assert not failing.ok and "HandleLidSwitch=ignore" in failing.detail, (
         "the fix's actual lines belong in the failure"
     )
-
-    passing = _check_lid(settings, value="ignore")
+    passing = st._check_lid(settings, value="ignore")
     assert passing.ok and passing.detail == "HandleLidSwitch=ignore"
-
-    odd = _check_lid(settings, value="lock")
+    odd = st._check_lid(settings, value="lock")
     assert odd.ok and "awake" in odd.detail, "lock keeps the machine awake; it is not a suspend"
 
-
-def test_the_funnel_check_names_what_it_read(monkeypatch) -> None:
-    import daedalus.selftest as st
-
-    settings = Settings(home=Path.home(), env={})
+    # The funnel check names what it read, in all three readings.
     monkeypatch.setattr(st, "funnel_on", lambda: True)
     on = st._check_funnel(settings)
     assert not on.ok and "Funnel is ON" in on.detail

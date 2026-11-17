@@ -1,17 +1,13 @@
-"""The component vocabulary: schema and renderer agree, and nothing renders raw.
+"""The component vocabulary: schema, prompt and renderer agree, and nothing renders raw.
 
-Two kinds of test here, and the second kind matters more.
+The first kind of test checks the components behave: a table pads a short row, an
+empty list says so instead of rendering an empty `<ul>`, the calendar marks today.
 
-The first kind checks the components behave: a table pads a short row, a calendar
-refuses a day that is not three cells, an empty list says so instead of rendering
-an empty `<ul>`.
-
-The second kind **bypasses the door**. Every value in a spec is refused for
-markup by `spec.py` before it ever reaches a renderer — so a test that only goes
-through `Spec.parse` can never prove the renderer escapes anything. These tests
-build a `Block` by hand, as a bug or a new component would, and assert the
-renderer still cannot be made to emit a tag. That is the defence that holds when
-the first one is forgotten.
+The second kind **bypasses the door**. `spec.py` refuses markup before any renderer
+sees it, so a test that only went through `Spec.parse` could never prove the
+renderer escapes. These build a `Block` by hand, as a bug or a new component would,
+and assert the renderer still cannot be made to emit a tag — the defence that holds
+when the first one is forgotten.
 """
 
 from __future__ import annotations
@@ -26,20 +22,6 @@ EVIL = "<script>alert(1)</script>"
 
 def spec_of(component: str, props: dict[str, object]) -> Spec:
     return Spec.parse({"blocks": [{"component": component, "props": props}]}, vocabulary=VOCABULARY)
-
-
-# -- the vocabulary is coherent ---------------------------------------------
-
-
-def test_every_component_has_a_renderer_and_every_renderer_has_a_schema() -> None:
-    """The two halves of a component cannot drift: one list is derived from the other."""
-    assert set(VOCABULARY) == set(RENDERERS), "a component exists without its other half"
-
-
-def test_every_component_declares_a_summary_and_at_least_one_prop() -> None:
-    for name, component in VOCABULARY.items():
-        assert component.summary, f"{name} has no summary for the prompt"
-        assert component.props, f"{name} takes no props, so it can show nothing"
 
 
 SAMPLES = {
@@ -64,14 +46,26 @@ def minimal_props(name: str, component: Component) -> dict[str, object]:
     return {key: SAMPLES[component.props[key].kind] for key in component.required()}
 
 
-def test_every_component_renders_from_a_minimal_valid_spec() -> None:
-    """Derived from the schema, so a component added without a renderer fails here."""
+def test_the_schema_the_prompt_and_the_renderers_all_agree() -> None:
+    """The halves of a component cannot drift: one list is derived from the other."""
+    assert set(VOCABULARY) == set(RENDERERS), "a component exists without its other half"
+
     for name, component in VOCABULARY.items():
+        assert component.summary, f"{name} has no summary for the prompt"
+        assert component.props, f"{name} takes no props, so it can show nothing"
+        # Derived from the schema, so a component added without a renderer fails here.
         html = render_blocks(spec_of(name, minimal_props(name, component)))
         assert html.strip(), f"{name} rendered nothing"
 
+    # The prompt writes down what the validator enforces: `?` for optional props and
+    # a closed set spelled out, so a model can hit it first time.
+    text = describe(VOCABULARY)
+    assert "note: text?" in text, "an optional prop is not marked optional"
+    assert "view: text[day|week|month]" in text, "a closed set is not written down for the model"
+    assert "value: text" in text
 
-def test_omitting_any_required_prop_is_refused_naming_it() -> None:
+
+def test_the_door_refuses_a_prop_that_is_missing_or_unknown_and_names_it() -> None:
     for name, component in VOCABULARY.items():
         for missing in component.required():
             props = {
@@ -83,8 +77,6 @@ def test_omitting_any_required_prop_is_refused_naming_it() -> None:
                 spec_of(name, props)
             assert repr(missing) in str(refused.value), f"{name} did not name {missing}"
 
-
-def test_an_unknown_prop_is_refused_for_every_component() -> None:
     for name, component in VOCABULARY.items():
         props = minimal_props(name, component)
         props["styling"] = "color:red"
@@ -92,8 +84,6 @@ def test_an_unknown_prop_is_refused_for_every_component() -> None:
             spec_of(name, props)
         assert "'styling'" in str(refused.value)
 
-
-# -- nothing can be made to emit a tag --------------------------------------
 
 EVIL_PROPS = [
     ("stat-card", {"label": EVIL, "value": EVIL, "note": EVIL}),
@@ -105,115 +95,78 @@ EVIL_PROPS = [
 ]
 
 
-@pytest.mark.parametrize("component,props", EVIL_PROPS)
-def test_no_component_can_be_made_to_emit_a_tag_even_with_the_door_bypassed(
-    component: str, props: dict[str, object]
-) -> None:
+def test_no_component_can_be_made_to_emit_a_tag_even_with_the_door_bypassed() -> None:
     """The renderer's own escape, proved by walking past the validator."""
-    html = render(Block(component=component, props=props))
+    for component, props in EVIL_PROPS:
+        html = render(Block(component=component, props=props))
 
-    assert "<script" not in html, f"{component} rendered a tag"
-    assert EVIL not in html
-    assert "&lt;script" in html, f"{component} dropped the value instead of escaping it"
+        assert "<script" not in html, f"{component} rendered a tag"
+        assert EVIL not in html
+        assert "&lt;script" in html, f"{component} dropped the value instead of escaping it"
 
-
-def test_an_attribute_value_cannot_break_out_of_its_quotes() -> None:
-    """`escape` quotes by default — an unquoted escape is how a class becomes an attribute."""
-    html = render(Block(component="prose", props={"text": '\" onmouseover="steal()'}))
-
-    assert "onmouseover=\"steal()\"" not in html
+    # `escape` quotes by default — an unquoted escape is how a quote becomes an attribute.
+    html = render(Block(component="prose", props={"text": '" onmouseover="steal()'}))
+    assert 'onmouseover="steal()"' not in html
     assert "&quot;" in html
 
 
-# -- the door still holds these ---------------------------------------------
+def test_the_door_refuses_markup_before_any_renderer_sees_it() -> None:
+    for component, props in EVIL_PROPS:
+        with pytest.raises(SpecError):
+            spec_of(component, props)
 
 
-@pytest.mark.parametrize("component,props", EVIL_PROPS)
-def test_the_door_refuses_the_same_values_before_a_renderer_sees_them(
-    component: str, props: dict[str, object]
-) -> None:
-    with pytest.raises(SpecError):
-        spec_of(component, props)
-
-
-# -- individual components --------------------------------------------------
-
-
-def test_a_stat_card_states_a_value_and_omits_a_note_it_was_not_given() -> None:
+def test_a_component_renders_its_value_omits_absent_optionals_and_keeps_order() -> None:
+    # stat-card: the value and label are stated, and a note it was not given is omitted.
     html = render_blocks(spec_of("stat-card", {"label": "Free", "value": "42 GB"}))
-
     assert "42 GB" in html and "Free" in html
     assert "stat-card__note" not in html
 
+    # A number renders as a number, not as Python's `None`.
+    html = render(Block(component="stat-card", props={"label": "Events", "value": 12}))
+    assert "12" in html and "None" not in html
 
-def test_a_list_says_nothing_to_show_rather_than_drawing_an_empty_list() -> None:
-    html = render_blocks(spec_of("list", {"items": [], "empty": "No tasks."}))
-
-    assert "No tasks." in html
-    assert "<ul" not in html
-
-
-def test_a_list_renders_its_lines_in_order() -> None:
+    # list: the lines in order, one <li> each.
     html = render_blocks(spec_of("list", {"items": ["standup", "review"]}))
-
     assert html.index("standup") < html.index("review")
     assert html.count("<li") == 2
 
+    # timeline: entry order kept, and a one-cell entry invents no second cell.
+    html = render_blocks(spec_of("timeline", {"entries": [["09:00", "standup"], ["14:00", "review"]]}))
+    assert html.index("09:00") < html.index("14:00")
+    assert "timeline__when\">09:00" in html
+    html = render_blocks(spec_of("timeline", {"entries": [["09:00"]]}))
+    assert "09:00" in html
+    assert "None" not in html
 
-def test_a_stat_card_renders_a_number_as_a_number() -> None:
-    html = render(Block(component="stat-card", props={"label": "Events", "value": 12}))
+    # prose: the heading is optional.
+    assert "<h2" not in render_blocks(spec_of("prose", {"text": "All clear."}))
+    assert "<h2" in render_blocks(spec_of("prose", {"text": "All clear.", "heading": "Today"}))
 
-    assert "12" in html and "None" not in html
-
-
-def test_a_table_shows_headings_and_pads_a_short_row() -> None:
+    # table: a short row is padded to the headings, and a wide row is refused rather
+    # than silently dropping the owner's value.
     html = render_blocks(
         spec_of("table", {"columns": ["a", "b", "c"], "rows": [["1"], ["1", "2", "3"]]})
     )
-
     assert html.count('<th scope="col">') == 3
     assert html.count("<td>") == 6, "a short row was not padded to the headings"
-    assert "</td>" in html
-
-
-def test_a_table_refuses_a_row_wider_than_its_headings_rather_than_dropping_a_value() -> None:
     with pytest.raises(SpecError) as refused:
         spec_of("table", {"columns": ["a"], "rows": [["1", "2"]]})
-
     assert "row 1" in str(refused.value)
     assert "1 columns" in str(refused.value)
 
 
-def test_a_timeline_states_an_empty_day() -> None:
-    html = render_blocks(spec_of("timeline", {"entries": [], "empty": "Nothing on."}))
+def test_a_component_with_nothing_to_show_says_so_instead_of_an_empty_element() -> None:
+    html = render_blocks(spec_of("list", {"items": [], "empty": "No tasks."}))
+    assert "No tasks." in html
+    assert "<ul" not in html
 
+    html = render_blocks(spec_of("timeline", {"entries": [], "empty": "Nothing on."}))
     assert "Nothing on." in html
     assert "<ol" not in html
 
 
-def test_a_timeline_keeps_the_entry_order_it_was_given() -> None:
-    html = render_blocks(spec_of("timeline", {"entries": [["09:00", "standup"], ["14:00", "review"]]}))
-
-    assert html.index("09:00") < html.index("14:00")
-    assert "timeline__when\">09:00" in html
-
-
-def test_a_timeline_entry_of_only_a_time_does_not_invent_a_second_cell() -> None:
-    html = render_blocks(spec_of("timeline", {"entries": [["09:00"]]}))
-
-    assert "09:00" in html
-    assert "None" not in html
-
-
-def test_prose_renders_an_optional_heading() -> None:
-    without = render_blocks(spec_of("prose", {"text": "All clear."}))
-    with_heading = render_blocks(spec_of("prose", {"text": "All clear.", "heading": "Today"}))
-
-    assert "<h2" not in without
-    assert "<h2" in with_heading
-
-
-def test_the_calendar_marks_today_and_says_how_much_time_it_shows() -> None:
+def test_the_calendar_marks_today_and_holds_its_views_and_day_shape() -> None:
     html = render_blocks(
         spec_of(
             "calendar",
@@ -224,41 +177,24 @@ def test_the_calendar_marks_today_and_says_how_much_time_it_shows() -> None:
             },
         )
     )
-
     assert "calendar--week" in html
     assert html.count("calendar__day--today") == 1
     assert 'calendar__day--today"><span class="calendar__date">2026-10-16' in html
 
+    # Every view the closed set names is accepted.
+    for view in ("day", "week", "month"):
+        html = render_blocks(spec_of("calendar", {"view": view, "days": [["2026-10-16", "Fri", ""]]}))
+        assert f"calendar--{view}" in html
 
-def test_the_calendar_refuses_a_view_it_does_not_have_and_names_the_three_it_does() -> None:
+    # A view it does not have is refused, and the three it does are named.
     with pytest.raises(SpecError) as refused:
         spec_of("calendar", {"view": "year", "days": [["2026-10-16", "Fri", ""]]})
-
     message = str(refused.value)
     assert "day | week | month" in message
     assert "'year'" in message
 
-
-@pytest.mark.parametrize("view", ["day", "week", "month"])
-def test_every_calendar_view_is_accepted(view: str) -> None:
-    html = render_blocks(spec_of("calendar", {"view": view, "days": [["2026-10-16", "Fri", ""]]}))
-    assert f"calendar--{view}" in html
-
-
-def test_the_calendar_refuses_a_day_that_is_not_the_declared_shape() -> None:
+    # A day is [date, weekday, what is on it] — three cells, every time.
     with pytest.raises(SpecError) as refused:
         spec_of("calendar", {"view": "day", "days": [["2026-10-16"]]})
-
     assert "day 1" in str(refused.value)
     assert "[date, weekday, what is on it]" in str(refused.value)
-
-
-# -- the prompt and the validator agree -------------------------------------
-
-
-def test_describe_marks_optional_props_and_names_a_closed_set_of_choices() -> None:
-    text = describe(VOCABULARY)
-
-    assert "note: text?" in text, "an optional prop is not marked optional"
-    assert "view: text[day|week|month]" in text, "a closed set is not written down for the model"
-    assert "value: text" in text

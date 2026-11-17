@@ -26,44 +26,38 @@ def _registry(tmp_path: Path) -> ResourceRegistry:
     return ResourceRegistry(tmp_path / "resources" / "registry.toml")
 
 
-def test_provisioning_writes_a_local_cli_entry(tmp_path) -> None:
+def test_provisioning_writes_a_local_cli_entry_a_person_can_read_and_re_read(
+    tmp_path,
+) -> None:
     registry = _registry(tmp_path)
-    resource = provision_local_cli(registry, OPENCODE, scopes=OPENCODE_SCOPES)
+    resource = provision_local_cli(
+        registry, OPENCODE, scopes=OPENCODE_SCOPES, note="the delegate CLI"
+    )
 
     assert resource.class_ == "local_cli"
     assert resource.access == "local"
     assert list(resource.scopes) == list(OPENCODE_SCOPES)
     assert resource.cred_ref == "", "a local CLI has no credential to reference"
 
-    # The file is the grant: a fresh read finds it, and it is not a comment.
+    # the file is the grant: a fresh read finds it, and it is not a comment
     reloaded = _registry(tmp_path).get(OPENCODE)
     assert reloaded is not None
     assert reloaded.class_ == "local_cli"
     assert "workspace" in reloaded.scopes
-
-
-def test_the_registry_file_is_one_a_person_can_read(tmp_path) -> None:
-    registry = _registry(tmp_path)
-    provision_local_cli(registry, OPENCODE, scopes=OPENCODE_SCOPES, note="the delegate CLI")
 
     text = registry.path.read_text(encoding="utf-8")
     assert "[[resource]]" in text
     assert 'name = "opencode"' in text
     assert 'class = "local_cli"' in text
 
-
-def test_provisioning_the_same_cli_twice_does_not_duplicate_it(tmp_path) -> None:
-    registry = _registry(tmp_path)
-    provision_local_cli(registry, OPENCODE, scopes=OPENCODE_SCOPES)
+    # provisioning again does not duplicate it, nor widen scopes the owner may
+    # have narrowed by hand
     provision_local_cli(registry, OPENCODE, scopes=("narrower",))
-
     assert len(registry.all()) == 1
-    # The existing grant is not overwritten: a re-run of the wizard must not widen
-    # scopes the owner may have narrowed by hand.
     assert registry.get(OPENCODE).scopes == list(OPENCODE_SCOPES)
 
 
-def test_inventory_says_when_a_local_cli_is_missing(tmp_path) -> None:
+def test_inventory_and_the_prompt_say_whether_a_local_cli_is_there(tmp_path, runtime) -> None:
     registry = _registry(tmp_path)
     provision_local_cli(registry, "opencode-absent", scopes=("workspace",))
 
@@ -72,35 +66,21 @@ def test_inventory_says_when_a_local_cli_is_missing(tmp_path) -> None:
     assert "NOT INSTALLED" in listed, listed
     assert "installed at" not in listed
 
-
-def test_inventory_says_where_a_local_cli_is(tmp_path) -> None:
-    registry = _registry(tmp_path)
     provision_local_cli(registry, OPENCODE, scopes=OPENCODE_SCOPES)
-
-    listed = registry.inventory(resolver=lambda name: "/usr/bin/opencode")
+    listed = registry.inventory(
+        resolver=lambda name: "/usr/bin/opencode" if name == OPENCODE else None
+    )
     assert "installed at /usr/bin/opencode" in listed, listed
     assert "scopes=workspace,net" in listed, listed
 
-
-def test_the_model_sees_a_provisioned_cli_at_startup(runtime) -> None:
+    # the same two facts are in the prompt before the model plans, so absence is
+    # not discovered by failing halfway through a delegation
     provision_local_cli(runtime.resources, OPENCODE, scopes=OPENCODE_SCOPES)
-
+    provision_local_cli(runtime.resources, "daedalus-not-a-real-cli", scopes=("workspace",))
     prompt = build_system_prompt(runtime, InboundEvent(text="hi", user_id="owner"))
 
     assert "opencode" in prompt
     assert "workspace,net" in prompt
-
-
-def test_the_model_is_told_when_the_cli_is_absent(runtime) -> None:
-    """The absence is in the prompt, not discovered by failing halfway through.
-
-    A name nothing provides stands in for "not installed" so the assertion does
-    not depend on whether the machine running the tests has `opencode`.
-    """
-    provision_local_cli(runtime.resources, "daedalus-not-a-real-cli", scopes=("workspace",))
-
-    prompt = build_system_prompt(runtime, InboundEvent(text="hi", user_id="owner"))
-
     assert "daedalus-not-a-real-cli" in prompt
     assert "NOT INSTALLED" in prompt
 

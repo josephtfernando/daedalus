@@ -1,10 +1,9 @@
 """The habit tracker (T36): marks, misses, and the streak the stored days imply.
 
-Through the real runner (subprocess, protocol §9.3), exactly as a scheduled
-run or a turn's `capability op=run` will invoke it. The *seat* is deliberately
-absent from these tests: whose wake runs this is the owner's decision
-(recorded in TICKETS.md), and the capability's state is seat-agnostic truth —
-that is the implementable part, complete.
+Through the real runner (subprocess, protocol §9.3), exactly as a scheduled run
+or a turn's `capability op=run` will invoke it. The *seat* is deliberately absent
+from these tests: whose wake runs this is the owner's decision (recorded in
+TICKETS.md), and the capability's state is seat-agnostic truth.
 """
 
 from __future__ import annotations
@@ -54,7 +53,7 @@ SEED = {
 }
 
 
-async def test_record_marks_a_day(root: Path) -> None:
+async def test_a_day_is_marked_and_a_correction_replaces_the_mark(root: Path) -> None:
     result, state, _ = await run_cap(
         root, {"action": "record", "habit": "evening stretch", "mark": "done", "date": "2026-10-16"}
     )
@@ -62,37 +61,50 @@ async def test_record_marks_a_day(root: Path) -> None:
     (row,) = state["habits"].values()
     assert row["days"]["2026-10-16"] == "done"
 
+    # The same day is an update, not a second mark — and the correction says what it corrected.
+    again, state2, _ = await run_cap(
+        root, {"action": "record", "habit": "evening stretch", "mark": "missed", "date": "2026-10-16"}, state=state
+    )
+    assert again["ok"] and any("was already marked" in w for w in again["warnings"]), (
+        "the correction says what it corrected"
+    )
+    (row,) = state2["habits"].values()
+    assert list(row["days"].items()) == [("2026-10-16", "missed")], (
+        "one day, one mark — the correction stands, no ghost of the old mark"
+    )
 
-async def test_a_miss_is_recorded_and_visible(root: Path) -> None:
-    """A missed day is a mark the report shows — never a silent absence."""
+
+async def test_misses_and_streaks_are_computed_from_the_stored_days(root: Path) -> None:
+    # A missed day is a mark the report shows — never a silent absence. Relative
+    # to today, because a hard-coded day falls out of the last-7-days window.
+    missed = (date.today() - timedelta(days=2)).isoformat()
     result, state, _ = await run_cap(
-        root, {"action": "record", "habit": "evening stretch", "mark": "missed", "date": "2026-10-16"}
+        root, {"action": "record", "habit": "evening stretch", "mark": "missed", "date": missed}
     )
     assert result["ok"], result
     report, _state, _ = await run_cap(root, {"action": "report"}, state=state)
     (row,) = report["habits"]
     marks = {d["day"]: d["mark"] for d in row["last7"]}
-    assert marks["2026-10-16"] == "missed", "the miss is in the grid, named"
-    assert any(m["date"] == "2026-10-16" for m in row["misses"]), "and in the misses list"
+    assert marks[missed] == "missed", "the miss is in the grid, named"
+    assert any(m["date"] == missed for m in row["misses"]), "and in the misses list"
 
-
-async def test_the_streak_is_what_the_stored_days_imply(root: Path) -> None:
-    """5 done (12–16 pattern minus the miss), miss on 16, done 17–18 → current 2, longest 4.
-
-    The stored days here are: 12,13,14,15 done; 16 missed; 17,18 done. The
-    current streak walks back from the newest `done` and stops at the stored
-    miss; an UNRECORDED day stops it exactly the same way.
-    """
-    report, _state, _ = await run_cap(root, {"action": "report"}, state=SEED)
-    (row,) = report["habits"]
+    # The streak is what the stored days imply: done 12–15, miss 16, done 17–18
+    # → current 2, longest 4.
+    seeded, _state, notifications = await run_cap(root, {"action": "report"}, state=SEED)
+    (row,) = seeded["habits"]
     assert row["streak"] == 2, "17–18 are done; the stored miss on 16 stopped the walk"
     assert row["longest_streak"] == 4, "12–15 is the best complete run in the record"
     assert row["marks"] == 6 and len(row["misses"]) == 1
 
+    # The report is the stored record, not a memory — and it names its source.
+    assert notifications, "a report of a lived habit speaks"
+    text = notifications[0]["text"]
+    assert "stored days" in text, "the digest says where its answers came from"
+    assert "sleep by midnight" in text and "streak" in text
 
-async def test_an_unrecorded_day_breaks_the_streak(root: Path) -> None:
-    """Absent ≠ done: honesty beats flattery."""
-    seed = {
+    # Absent ≠ done: an unrecorded day breaks the streak exactly like a stored
+    # miss — 14→18 has three unrecorded days, so the streak is 1.
+    gap = {
         "habits": {
             "morning-pages": {
                 "habit": "morning pages",
@@ -100,42 +112,20 @@ async def test_an_unrecorded_day_breaks_the_streak(root: Path) -> None:
             }
         }
     }
-    report, _state, _ = await run_cap(root, {"action": "report"}, state=seed)
+    report, _state, _ = await run_cap(root, {"action": "report"}, state=gap)
     (row,) = report["habits"]
     assert row["streak"] == 1, "14→18 has three unrecorded days; the streak is the stored days' word"
 
 
-async def test_the_same_day_is_an_update_not_a_second_mark(root: Path) -> None:
+async def test_marks_are_validated_before_they_are_stored(root: Path) -> None:
     result, state, _ = await run_cap(
-        root, {"action": "record", "habit": "evening stretch", "mark": "done", "date": "2026-10-15"}
+        root, {"action": "record", "habit": "x", "mark": "kind-of", "date": "2026-10-16"}
     )
-    assert result["ok"]
-    again, state2, _ = await run_cap(
-        root, {"action": "record", "habit": "evening stretch", "mark": "missed", "date": "2026-10-15"}, state=state
-    )
-    assert again["ok"] and any("was already marked" in w for w in again["warnings"]), (
-        "the correction says what it corrected"
-    )
-    (row,) = state2["habits"].values()
-    assert list(row["days"].items()) == [("2026-10-15", "missed")], (
-        "one day, one mark — the correction stands, no ghost of the old mark"
-    )
-
-
-async def test_how_am_i_doing_comes_from_state(root: Path) -> None:
-    """The report is the stored record, not a memory — a notification names its source."""
-    _result, _state, notifications = await run_cap(root, {"action": "report"}, state=SEED)
-    assert notifications, "a report of a lived habit speaks"
-    text = notifications[0]["text"]
-    assert "stored days" in text, "the digest says where its answers came from"
-    assert "sleep by midnight" in text and "streak" in text
-
-
-async def test_marks_are_validated_before_stored(root: Path) -> None:
-    result, state, _ = await run_cap(root, {"action": "record", "habit": "x", "mark": "kind-of", "date": "2026-10-16"})
     assert not result["ok"] and "done" in result["error"] and state == {}
+
+    # A habit is marked, not promised.
     future = (date.today() + timedelta(days=2)).isoformat()
     result, _state, _ = await run_cap(
         root, {"action": "record", "habit": "x", "mark": "done", "date": future}
     )
-    assert not result["ok"] and "in the future" in result["error"], "a habit is marked, not promised"
+    assert not result["ok"] and "in the future" in result["error"]

@@ -3,16 +3,14 @@
 Two properties are worth more than the rest here.
 
 The first is **occurrences, not definitions**. A calendar that shows a weekly
-standup once, on the day its rule began, is a calendar that is wrong on every
-other day of the year — so the repeating-event test asks about *days*, and the
-month test asks about days that are not the first of anything.
+standup once, on the day its rule began, is wrong on every other day of the year
+— so the repeating-event test asks about *days*, and the month test asks about
+days that are not the first of anything.
 
 The second is that the page and the **spec** are different objects. The spec says
-what to draw and holds keys; the owner's data is bound in at render time. A test
-that renders the page and asserts the summary is present proves the second half,
-and is worth nothing on its own — so each of those is paired with an assertion
-that the *spec* does not contain it. That is the §6 claim, and it is the one that
-would rot silently.
+what to draw and holds keys; the owner's data is bound in at render time (§6).
+A test that renders the page and finds the summary proves the second half only,
+so it is paired with an assertion that the *spec* does not contain it.
 """
 
 from __future__ import annotations
@@ -76,7 +74,9 @@ MARKED = 'class="calendar__day calendar__day--today"'
 # -- the right events, on the right days -------------------------------------
 
 
-def test_the_day_view_shows_the_day_it_was_asked_for(week: CalendarStore) -> None:
+def test_the_day_view_lists_the_right_day_in_time_order(
+    week: CalendarStore, tmp_path: Path
+) -> None:
     page = page_of(week)
 
     assert page.view == "day"
@@ -84,29 +84,27 @@ def test_the_day_view_shows_the_day_it_was_asked_for(week: CalendarStore) -> Non
     assert "Friday 16 October" in page.html()
     assert "standup" in page.html()
 
-
-def test_the_day_view_lists_a_day_in_the_order_it_happens(week: CalendarStore) -> None:
-    """"A schedule" means in time order. Anything else is a pile of entries."""
-    html = page_of(week).html()
-
+    # "A schedule" means in time order. Anything else is a pile of entries.
+    html = page.html()
     assert at(html, "08:00", "morning walk") < at(html, "09:00", "standup")
     assert at(html, "09:00", "standup") < at(html, "16:00", "therapy")
 
-
-def test_the_day_shows_the_time_of_a_timed_event_and_says_all_day_otherwise(
-    week: CalendarStore,
-) -> None:
+    # A timed event shows its clock; an all-day one says so instead.
     saturday = page_of(week, anchor="2026-10-17").html()
-
     assert "all day" in saturday
     assert "trip" in saturday
 
+    # Events from another day are not on this one.
+    tuesday = page_of(week, anchor="2026-10-13").html()
+    assert "standup" not in tuesday
+    assert "therapy" not in tuesday
 
-def test_events_from_another_day_are_not_on_this_one(week: CalendarStore) -> None:
-    html = page_of(week, anchor="2026-10-13").html()
-
-    assert "standup" not in html
-    assert "therapy" not in html
+    # An empty day still draws the day, and says it is empty rather than blank.
+    blank = calendar_page(
+        CalendarStore(tmp_path / "empty"), view="day", anchor=FRIDAY, now=NOW
+    ).html()
+    assert "Nothing on." in blank
+    assert "calendar__day" in blank, "the day itself should still be drawn"
 
 
 def test_a_repeating_event_appears_on_every_day_it_falls(week: CalendarStore) -> None:
@@ -114,92 +112,74 @@ def test_a_repeating_event_appears_on_every_day_it_falls(week: CalendarStore) ->
     for day in ("2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"):
         assert "morning walk" in page_of(week, anchor=day).html(), f"missing on {day}"
 
-    # And a day before the rule begins, and one after it was asked about, are
-    # honestly empty rather than showing the definition.
+    # A day before the rule begins is honestly empty rather than showing the
+    # definition.
     assert "morning walk" not in page_of(week, anchor="2026-10-13").html()
 
 
-def test_the_week_view_draws_monday_to_sunday_around_the_anchor(week: CalendarStore) -> None:
-    html = page_of(week, view="week").html()
-
-    assert "calendar--week" in html
-    assert f">{MONDAY}<" in html, "the week did not start on Monday"
-    assert ">2026-10-18<" in html, "the week did not end on Sunday"
-    assert "morning walk" in html and "standup" in html
-
-
-def test_the_week_names_how_much_is_on(week: CalendarStore) -> None:
-    """`1 standup + a week of walks + a trip + therapy` — counted, not listed."""
-    html = page_of(week, view="week").html()
-
-    assert "This week" in html
-    assert "8 things" in html, "the week's total was not reported"
-
-
-def test_the_month_view_is_drawn_as_whole_weeks(week: CalendarStore) -> None:
-    html = page_of(week, view="month").html()
-
-    assert "calendar--month" in html
-    # October 2026 begins on a Thursday and ends on a Saturday, so the grid runs
-    # from Monday 28 September to Sunday 1 November.
-    assert ">2026-09-28<" in html, "the first row is not a whole week"
-    assert ">2026-11-01<" in html, "the last row is not a whole week"
-    assert ">2026-10-01<" in html
-
-
-def test_a_day_spilling_in_from_the_neighbouring_month_is_shown_as_a_date_only(
+def test_the_week_and_month_are_drawn_as_whole_weeks_and_counted(
     week: CalendarStore,
 ) -> None:
-    """The day exists; it is simply not this month's. Neither hidden nor faked."""
-    html = page_of(week, view="month").html()
-    cell = html[html.index(">2026-09-28<") : html.index(">2026-09-28<") + 400]
+    here = page_of(week, view="week").html()
 
+    assert "calendar--week" in here
+    assert f">{MONDAY}<" in here, "the week did not start on Monday"
+    assert ">2026-10-18<" in here, "the week did not end on Sunday"
+    assert "morning walk" in here and "standup" in here
+    # `1 standup + a week of walks + a trip + therapy` — counted, not listed.
+    assert "This week" in here
+    assert "8 things" in here, "the week's total was not reported"
+
+    month = page_of(week, view="month").html()
+
+    assert "calendar--month" in month
+    # October 2026 begins on a Thursday and ends on a Saturday, so the grid runs
+    # from Monday 28 September to Sunday 1 November.
+    assert ">2026-09-28<" in month, "the first row is not a whole week"
+    assert ">2026-11-01<" in month, "the last row is not a whole week"
+    assert ">2026-10-01<" in month
+
+    # The day that spills in from the neighbouring month exists; it is simply
+    # not this month's. Neither hidden nor faked: a date, and nothing beside it.
+    cell = month[month.index(">2026-09-28<") : month.index(">2026-09-28<") + 400]
     assert "calendar__date" in cell
     assert "calendar__what\"></span>" in cell
 
-
-def test_the_month_names_how_much_is_on(week: CalendarStore) -> None:
-    html = page_of(week, view="month").html()
-
-    assert "This month" in html
-    assert " things" in html
+    assert "This month" in month
+    assert " things" in month
 
 
-def test_today_is_marked_in_the_week_it_falls_in_and_nowhere_else(week: CalendarStore) -> None:
+def test_today_and_the_mood_come_from_the_clock_that_was_passed_in(
+    week: CalendarStore,
+) -> None:
     here = page_of(week, view="week").html()
     elsewhere = page_of(week, view="week", anchor="2026-11-02").html()
 
     assert here.count(MARKED) == 1
     assert elsewhere.count(MARKED) == 0
 
+    # Otherwise this page would be a different page tomorrow, and untestable.
+    pinned = calendar_page(week, view="week", anchor=FRIDAY, now=datetime(2020, 1, 1, 9, 0))
+    assert pinned.values["page.today"] == "2020-01-01"
+    assert MARKED not in pinned.html()
 
-def test_today_is_read_from_the_clock_that_was_passed_in_not_the_wall_clock(
-    week: CalendarStore,
-) -> None:
-    """Otherwise this page would be a different page tomorrow, and untestable."""
-    page = calendar_page(week, view="week", anchor=FRIDAY, now=datetime(2020, 1, 1, 9, 0))
+    # The standing dashboard composes by the hour — midnight is dark, noon is not.
+    night = calendar_page(week, view="day", anchor=FRIDAY, now=datetime(2026, 10, 16, 22, 30))
+    noon = page_of(week)
+    assert night.mood == "midnight-focus" and noon.mood == "calm"
+    assert "--d-scheme: dark;" in night.html(), "the page itself goes dark at 22:30"
+    assert "--d-scheme: light;" in noon.html()
 
-    assert page.values["page.today"] == "2020-01-01"
-    assert MARKED not in page.html()
-
-
-def test_an_empty_day_says_so_rather_than_drawing_a_blank_grid(store: CalendarStore) -> None:
-    html = page_of(store).html()
-
-    assert "Nothing on." in html
-    assert "calendar__day" in html, "the day itself should still be drawn"
-
-
-def test_a_local_only_event_is_shown_on_the_owner_own_surface(week: CalendarStore) -> None:
-    """§6 withholds from *egress*. Hiding this from the owner would be backwards."""
-    assert "therapy" in page_of(week).html()
-    assert "therapy" in page_of(week, view="week").html()
+    # And a crowded day reads as dense ops.
+    for i in range(4):
+        week.add(summary=f"call {i}", start=f"{FRIDAY}T1{i}:00", end=f"{FRIDAY}T1{i}:30")
+    crowded = calendar_page(
+        week, view="day", anchor=FRIDAY, now=datetime(2026, 10, 16, 11, 0)
+    )
+    assert crowded.mood == "dense-ops"
 
 
-# -- the spec and the values are different objects ---------------------------
-
-
-def test_the_spec_holds_keys_and_the_page_holds_the_owners_data(week: CalendarStore) -> None:
+def test_the_owners_data_reaches_the_page_but_never_the_spec(week: CalendarStore) -> None:
     page = page_of(week)
     spec = json.dumps(page.spec.to_dict())
 
@@ -207,18 +187,22 @@ def test_the_spec_holds_keys_and_the_page_holds_the_owners_data(week: CalendarSt
     assert "bind" in spec, "the spec resolved its keys too early to be a spec"
     assert "standup" in page.html() and "therapy" in page.html()
 
+    # §6 withholds from *egress*; hiding the owner's own day from the owner's own
+    # surface would be the rule turned inside out.
+    assert "therapy" in page_of(week, view="week").html()
 
-def test_a_written_page_is_self_contained(week: CalendarStore) -> None:
+    # And the page reaches for nothing: no script, no network, no import.
     html = page_of(week, view="week").html()
-
     for forbidden in ("<script", "http://", "https://", "url(", "@import"):
         assert forbidden not in html
 
 
-# -- writing it out ----------------------------------------------------------
+# -- writing it out, and the server serving it -------------------------------
 
 
-def test_writing_puts_the_page_in_ui_under_its_own_name(week: CalendarStore, tmp_path: Path) -> None:
+def test_each_view_is_written_under_its_own_name_and_the_front_page_is_chosen(
+    week: CalendarStore, tmp_path: Path
+) -> None:
     page = page_of(week, view="week")
 
     written = write_page(page, tmp_path)
@@ -227,164 +211,97 @@ def test_writing_puts_the_page_in_ui_under_its_own_name(week: CalendarStore, tmp
     assert written.read_text(encoding="utf-8") == page.html()
     assert not (tmp_path / "ui" / "index.html").exists(), "a view was made the front page"
 
-
-def test_the_front_page_is_the_one_the_owner_opens_on(week: CalendarStore, tmp_path: Path) -> None:
-    page = page_of(week)
-
-    write_page(page, tmp_path, front=True)
-
-    index = tmp_path / "ui" / "index.html"
-    assert index.read_text(encoding="utf-8") == page.html()
+    front = page_of(week)
+    write_page(front, tmp_path, front=True)
+    assert (tmp_path / "ui" / "index.html").read_text(encoding="utf-8") == front.html()
 
 
-# -- the server serves it ----------------------------------------------------
-
-
-def test_the_server_serves_the_dashboard_and_leaves_the_artifact_behind(
+def test_the_server_serves_each_view_at_its_own_address(
     week: CalendarStore, tmp_path: Path
 ) -> None:
-    # `/dashboard` draws *today*, whatever day the suite runs on. The fixture
-    # pins its events to a fixed Friday, so the event that proves the owner's
-    # data reached the page goes on today — otherwise this passes six days a
-    # week and fails on the seventh.
+    # `/dashboard` draws *today*, whatever day the suite runs on, so the event
+    # that proves the owner's data reached the page goes on today.
     week.add(summary="the plan for today", start=f"{date.today().isoformat()}T12:00")
     server = LocalServer(tmp_path, token="tok", calendar=week)
 
-    response = server.get("/dashboard")
+    dashboard = server.get("/dashboard")
+    assert dashboard.status == 200
+    assert "the plan for today" in dashboard.text
+    index = tmp_path / "ui" / "index.html"
+    assert index.read_text(encoding="utf-8") == dashboard.text
 
-    assert response.status == 200
-    assert "the plan for today" in response.text
-    assert (tmp_path / "ui" / "index.html").read_text(encoding="utf-8") == response.text
-
-
-@pytest.mark.parametrize(
-    "path,view", [("/dashboard", "day"), ("/day/2026-10-16", "day"), ("/week", "week"), ("/month", "month")]
-)
-def test_each_view_has_an_address(week: CalendarStore, tmp_path: Path, path: str, view: str) -> None:
-    server = LocalServer(tmp_path, token="tok", calendar=week)
-
-    response = server.get(path)
-
-    assert response.status == 200
-    assert f"calendar--{view}" in response.text
-
-
-def test_a_view_pinned_to_a_day_is_addressed_by_that_day(week: CalendarStore, tmp_path: Path) -> None:
-    server = LocalServer(tmp_path, token="tok", calendar=week)
-
-    response = server.get("/day/2026-10-17")
-
-    assert response.status == 200
-    assert "trip" in response.text
+    # A view may be pinned to a day, and that address is its own page — it does
+    # not quietly become the front page.
+    pinned = server.get("/day/2026-10-17")
+    assert pinned.status == 200
+    assert "trip" in pinned.text
     assert (tmp_path / "ui" / "day-2026-10-17.html").exists()
-    assert not (tmp_path / "ui" / "index.html").exists()
+    assert index.read_text(encoding="utf-8") == dashboard.text
 
+    # Each view has an address of its own.
+    for view in VIEWS:
+        response = server.get(f"/{view}")
+        assert response.status == 200
+        assert f"calendar--{view}" in response.text
 
-def test_the_route_is_no_longer_answered_as_unbuilt(week: CalendarStore, tmp_path: Path) -> None:
-    server = LocalServer(tmp_path, token="tok", calendar=week)
-
-    assert server.get("/dashboard").status == 200
-    # The four writes the approval split owns still say what they will be.
+    # The dashboard is built; the writes the approval split owns still say what
+    # they will be.
     assert server.post("/tune", b"{}", token="tok").status == 501
 
+    # A server built without a calendar says exactly that, not "not built yet".
+    plain = LocalServer(tmp_path, token="tok").get("/dashboard")
+    assert plain.status == 501
+    assert "without a calendar" in plain.text
 
-def test_the_dashboard_answers_over_a_real_socket(week: CalendarStore, tmp_path: Path) -> None:
-    """T1 serves it, which is the half a unit test of `get()` cannot prove."""
-    week.add(summary="the plan for today", start=f"{date.today().isoformat()}T12:00")
-    server = LocalServer(tmp_path, token="tok", port=0, calendar=week)
-    url = server.start()
+    # And it answers over a real socket, which is the half a unit test of `get()`
+    # cannot prove. The policy travels as a header as well as the <meta>: a meta
+    # policy starts applying where it is parsed, leaving the head unprotected.
+    live = LocalServer(tmp_path, token="tok", port=0, calendar=week)
+    url = live.start()
     try:
         with urllib.request.urlopen(f"{url}/dashboard", timeout=5) as reply:
             body = reply.read().decode("utf-8")
             assert reply.status == 200
-            # As a header, not only as the <meta> in the document: a meta policy
-            # starts applying where it is parsed, which leaves the bytes before it
-            # — and the page head — unprotected.
             assert reply.headers["Content-Security-Policy"].startswith("default-src 'none'")
     finally:
-        server.stop()
+        live.stop()
 
     assert "the plan for today" in body
     assert (tmp_path / "ui" / "index.html").exists()
 
 
-def test_a_server_without_a_calendar_says_so_plainly(tmp_path: Path) -> None:
-    """"Built without a calendar" is true; "not built yet" would not be."""
-    response = LocalServer(tmp_path, token="tok").get("/dashboard")
-
-    assert response.status == 501
-    assert "without a calendar" in response.text
+# -- refusals name the way out ----------------------------------------------
 
 
-def test_an_unreadable_date_is_refused_rather_than_rendered(week: CalendarStore, tmp_path: Path) -> None:
+def test_a_bad_view_anchor_or_address_is_refused_rather_than_rendered(
+    week: CalendarStore, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError) as unknown_view:
+        calendar_page(week, view="year")
+    assert "day | week | month" in str(unknown_view.value)
+
+    # "I asked for a day and got today" is worse than a refusal — it looks right.
+    with pytest.raises(ValueError) as bad_anchor:
+        calendar_page(week, view="day", anchor="16th of October")
+    assert "YYYY-MM-DD" in str(bad_anchor.value)
+
+    # An empty anchor, by contrast, means today.
+    assert calendar_page(week, view="day", anchor="", now=NOW).anchor.isoformat() == FRIDAY
+
     server = LocalServer(tmp_path, token="tok", calendar=week)
 
-    response = server.get("/day/2026-13-45")
-
-    assert response.status == 400
-    assert "YYYY-MM-DD" in response.text
-
-
-def test_a_path_that_is_not_a_view_is_still_not_a_view(week: CalendarStore, tmp_path: Path) -> None:
-    server = LocalServer(tmp_path, token="tok", calendar=week)
+    bad_date = server.get("/day/2026-13-45")
+    assert bad_date.status == 400
+    assert "YYYY-MM-DD" in bad_date.text
 
     assert server.get("/day/not-a-date").status == 400
     assert server.get("/fortnight").status == 404
 
 
-# -- refusals name the way out ----------------------------------------------
+# -- the roots editor rides the authenticated strip (T35) --------------------
 
 
-def test_an_unknown_view_is_refused_naming_the_three_that_exist(week: CalendarStore) -> None:
-    with pytest.raises(ValueError) as refused:
-        calendar_page(week, view="year")
-
-    assert "day | week | month" in str(refused.value)
-
-
-def test_the_views_are_exactly_the_three_the_spec_names() -> None:
-    assert VIEWS == ("day", "week", "month")
-
-
-def test_an_unreadable_anchor_is_refused_rather_than_defaulted_to_today(week: CalendarStore) -> None:
-    """"I asked for a day and got today" is worse than a refusal — it looks right."""
-    with pytest.raises(ValueError) as refused:
-        calendar_page(week, view="day", anchor="16th of October")
-
-    assert "YYYY-MM-DD" in str(refused.value)
-
-
-def test_an_empty_anchor_means_today(week: CalendarStore) -> None:
-    page = calendar_page(week, view="day", anchor="", now=NOW)
-
-    assert page.anchor.isoformat() == FRIDAY
-
-
-# -- the mood of the moment, and the roots editor (T35) ----------------------
-
-
-def test_a_gt_a_night_hour_renders_the_dark_mood_without_anyone_choosing_it(
-    week: CalendarStore,
-) -> None:
-    """The standing dashboard composes by the hour — midnight is dark, noon is not."""
-    night = calendar_page(week, view="day", anchor=FRIDAY, now=datetime(2026, 10, 16, 22, 30))
-    noon = page_of(week)
-
-    assert night.mood == "midnight-focus" and noon.mood == "calm"
-    assert "--d-scheme: dark;" in night.html(), "the page itself goes dark at 22:30"
-    assert "--d-scheme: light;" in noon.html()
-
-
-def test_a_crowded_anchor_day_reads_as_dense_ops(week: CalendarStore) -> None:
-    for i in range(4):
-        week.add(summary=f"call {i}", start=f"{FRIDAY}T1{i}:00", end=f"{FRIDAY}T1{i}:30")
-
-    page = calendar_page(week, view="day", anchor=FRIDAY, now=datetime(2026, 10, 16, 11, 0))
-
-    assert page.mood == "dense-ops"
-
-
-def test_the_roots_editor_rides_the_authenticated_strip(week: CalendarStore) -> None:
+def test_the_control_strip_only_rides_an_authenticated_page(week: CalendarStore) -> None:
     page = calendar_page(
         week,
         view="day",
@@ -400,8 +317,5 @@ def test_the_roots_editor_rides_the_authenticated_strip(week: CalendarStore) -> 
     assert "asks on Discord before it stands" in page.controls
     assert page_of(week).controls == "", "an unauthenticated page proposes nothing"
 
-
-def test_a_page_without_roots_says_there_are_none_beyond_the_always(week: CalendarStore) -> None:
-    page = calendar_page(week, view="day", anchor=FRIDAY, now=NOW, with_controls=True)
-
-    assert "No folders beyond the always-allowed ones" in page.controls
+    bare = calendar_page(week, view="day", anchor=FRIDAY, now=NOW, with_controls=True)
+    assert "No folders beyond the always-allowed ones" in bare.controls

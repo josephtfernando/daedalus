@@ -33,8 +33,11 @@ async def run_cap(root: Path, args: dict, state: dict | None = None) -> tuple[di
     return out.result, out.state_next, out.notifications
 
 
-async def test_the_same_problem_updates_its_row(root: Path) -> None:
-    """'recorded twice' is an update, not a second row — a tracker, not a log."""
+async def test_a_record_keeps_one_row_per_problem_and_refuses_what_it_cannot_count(
+    root: Path,
+) -> None:
+    # 'recorded twice' is an update, not a second row — a tracker, not a log — and
+    # the update keeps the attempt history.
     first, state, _ = await run_cap(
         root,
         {"action": "record", "problem": "122. Best Time to Buy and Sell Stock II", "topic": "dp", "result": "failed"},
@@ -48,29 +51,39 @@ async def test_the_same_problem_updates_its_row(root: Path) -> None:
     assert second["ok"] and second["recorded"] == 1, (
         f"recording the same problem again must stay one row (got {second['recorded']})"
     )
-    rows = state["rows"]
-    (row,) = rows.values()
+    (row,) = state["rows"].values()
     assert [h["result"] for h in row["history"]] == ["failed", "solved"], (
         "the update keeps the attempt history — 'how many times did I fall over this' survives"
     )
 
-
-async def test_a_topic_move_is_visible_not_silent(root: Path) -> None:
-    """An update under a different topic is a warning the record carries."""
-    _, state, _ = await run_cap(
+    # An update under a different topic is a warning the record carries, in the same breath.
+    first, state, _ = await run_cap(
         root, {"action": "record", "problem": "Valid Parentheses", "topic": "stack", "result": "solved"}
     )
-    result, _state, _ = await run_cap(
+    moved, _state, _ = await run_cap(
         root,
         {"action": "record", "problem": "Valid Parentheses", "topic": "strings", "result": "reviewed"},
         state=state,
     )
-    assert result["warnings"], "the row moved topics; the record says so in the same breath"
-    assert "stack" in result["warnings"][0] and "strings" in result["warnings"][0]
+    assert moved["warnings"], "the row moved topics; the record says so in the same breath"
+    assert "stack" in moved["warnings"][0] and "strings" in moved["warnings"][0]
+
+    # An unlisted topic would silently never appear in a report — refused, not stored.
+    result, _state, _ = await run_cap(
+        root, {"action": "record", "problem": "Two Sum", "topic": "vibes", "result": "solved"}
+    )
+    assert not result["ok"] and "not one of the tracker's topics" in result["error"]
+
+    result, _state, _ = await run_cap(
+        root, {"action": "record", "problem": "Two Sum", "topic": "dp", "result": "crushed it"}
+    )
+    assert not result["ok"] and "result" in result["error"]
 
 
-async def test_report_names_what_has_gone_stale(root: Path) -> None:
-    """Coverage decay is a computed fact of the record, not a recollection."""
+async def test_the_report_names_what_has_gone_stale_and_stays_quiet_when_empty(
+    root: Path,
+) -> None:
+    # Coverage decay is a computed fact of the record, not a recollection.
     _result, state, _ = await run_cap(
         root,
         {"action": "record", "problem": "Two Sum", "topic": "hashmap", "result": "solved"},
@@ -84,21 +97,7 @@ async def test_report_names_what_has_gone_stale(root: Path) -> None:
     assert notifications, "the cadence act reports; silence is 'nothing recorded', not 'all fine'"
     assert "due for a repeat" in notifications[0]["text"] and "STALE" in notifications[0]["text"]
 
-
-async def test_a_report_of_an_empty_tracker_is_quiet(root: Path) -> None:
-    result, _state, notifications = await run_cap(root, {"action": "report"})
-    assert result["ok"] and result["total_problems"] == 0
+    # Nothing recorded is nothing to nag about.
+    empty, _state, notifications = await run_cap(root, {"action": "report"})
+    assert empty["ok"] and empty["total_problems"] == 0
     assert notifications == [], "nothing recorded is nothing to nag about"
-
-
-async def test_a_record_refuses_what_it_cannot_count(root: Path) -> None:
-    result, _state, _ = await run_cap(
-        root, {"action": "record", "problem": "Two Sum", "topic": "vibes", "result": "solved"}
-    )
-    assert not result["ok"] and "not one of the tracker's topics" in result["error"], (
-        "an unlisted topic would silently never appear in a report — refused, not stored"
-    )
-    result, _state, _ = await run_cap(
-        root, {"action": "record", "problem": "Two Sum", "topic": "dp", "result": "crushed it"}
-    )
-    assert not result["ok"] and "result" in result["error"]

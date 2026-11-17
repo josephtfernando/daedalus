@@ -1,14 +1,12 @@
 """The workout tracker (T38): the owner's own record, inside the owner's own bounds.
 
-The decision is the test's subject as much as the tracker is. The owner
-adjusted the strictest draft in all three offered directions (19 Oct): the
-tracker MAY store values locally with its report readable by owner and
-Heracles; he MAY read designated files; the local chain is fine for his
-turns. Nothing remote, ever. The acceptance's egress clause — "no remote
-model call carries a workout value, checked as a property of the capability's
-egress rather than trusted to its prompt" — is held as a structural property:
-the manifest declares no network scope, and this file's own imports cannot
-fetch. Both are asserted, because a posture trusted to prose is a posture.
+The decision is the test's subject as much as the tracker is. The owner adjusted
+the strictest draft in all three offered directions (19 Oct): the tracker MAY
+store values locally with its report readable by owner and Heracles; he MAY read
+designated files; the local chain is fine for his turns. Nothing remote, ever.
+The egress clause — "no remote model call carries a workout value, checked as a
+property of the capability's egress rather than trusted to its prompt" — is held
+as a structural property, because a posture trusted to prose is a posture.
 """
 
 from __future__ import annotations
@@ -40,10 +38,7 @@ async def run_cap(root: Path, args: dict, state: dict | None = None) -> tuple[di
     return out.result, out.state_next, out.notifications
 
 
-# -- the egress property, before anything else ---------------------------------
-
-
-async def test_the_egress_is_structural_not_trusted_to_prose(root: Path) -> None:
+def test_the_egress_is_structural_not_trusted_to_prose(root: Path) -> None:
     """T38's own clause: no remote model call can carry a workout value."""
     manifest = Manifest.from_path(root / "workout_tracker" / "manifest.toml")
     net = manifest.scopes.to_dict().get("net")
@@ -57,10 +52,8 @@ async def test_the_egress_is_structural_not_trusted_to_prose(root: Path) -> None
         )
 
 
-# -- recording: values in, one row per session ---------------------------------
-
-
-async def test_a_session_is_stored_with_its_values(root: Path) -> None:
+async def test_a_session_is_one_row_per_day_holding_the_values_it_was_given(root: Path) -> None:
+    # The value is the record — stored, not paraphrased.
     result, state, _ = await run_cap(
         root, {"action": "record", "what": "Back Squat", "how_much": "5x5 @ 80kg"}
     )
@@ -68,31 +61,26 @@ async def test_a_session_is_stored_with_its_values(root: Path) -> None:
     (row,) = state["sessions"].values()
     assert row["how_much"] == "5x5 @ 80kg", "the value is the record — stored, not paraphrased"
 
-
-async def test_the_same_session_twice_is_a_correction_said_aloud(root: Path) -> None:
-    _, state, _ = await run_cap(
-        root, {"action": "record", "what": "Back Squat", "how_much": "5x5 @ 80kg"}
-    )
-    again, state2, _ = await run_cap(
+    # The same session twice is a correction, said aloud: one row, and the
+    # correction says what it corrected.
+    again, state, _ = await run_cap(
         root, {"action": "record", "what": "Back Squat", "how_much": "3x8 @ 70kg"}, state=state
     )
     assert again["ok"] and any("stands as" in w for w in again["warnings"]), (
         "one session, one row — the correction says what it corrected"
     )
-    assert len(state2["sessions"]) == 1 and list(state2["sessions"].values())[0]["how_much"] == "3x8 @ 70kg"
+    assert len(state["sessions"]) == 1
+    assert list(state["sessions"].values())[0]["how_much"] == "3x8 @ 70kg"
 
-
-async def test_a_different_day_is_a_different_session(root: Path) -> None:
-    _, state, _ = await run_cap(
-        root, {"action": "record", "what": "Back Squat", "how_much": "5x5 @ 80kg", "when": "2026-10-18"}
+    # A different day is a different session: the log grows by the calendar, not by retries.
+    _result, state, _ = await run_cap(
+        root,
+        {"action": "record", "what": "Back Squat", "how_much": "5x5 @ 85kg", "when": "2026-10-20"},
+        state=state,
     )
-    _, state2, _ = await run_cap(
-        root, {"action": "record", "what": "Back Squat", "how_much": "5x5 @ 85kg", "when": "2026-10-20"}, state=state
-    )
-    assert len(state2["sessions"]) == 2, "a session a day — the log grows by the calendar, not by retries"
+    assert len(state["sessions"]) == 2, "a session a day — the log grows by the calendar, not by retries"
 
-
-async def test_a_future_session_is_refused(root: Path) -> None:
+    # A future session is refused, and nothing is stored.
     future = (date.today() + timedelta(days=2)).isoformat()
     result, state, _ = await run_cap(
         root, {"action": "record", "what": "Back Squat", "how_much": "5x5", "when": future}
@@ -100,10 +88,9 @@ async def test_a_future_session_is_refused(root: Path) -> None:
     assert not result["ok"] and "not promised" in result["error"] and state == {}
 
 
-# -- reporting: computed from the stored rows, or nothing ------------------------
-
-
-async def test_the_report_is_computed_from_stored_sessions(root: Path) -> None:
+async def test_the_report_is_computed_from_stored_sessions_and_is_quiet_when_empty(
+    root: Path,
+) -> None:
     seeded = {
         "sessions": {
             "back-squat::2026-10-14": {"what": "Back Squat", "how_much": "5x5 @ 75kg", "day": "2026-10-14"},
@@ -120,8 +107,7 @@ async def test_the_report_is_computed_from_stored_sessions(root: Path) -> None:
         "the digest names its own source — a record, not a recollection"
     )
 
-
-async def test_an_empty_record_reports_ok_and_does_not_nag(root: Path) -> None:
-    result, _state, notifications = await run_cap(root, {"action": "report"})
-    assert result["ok"] and result["total_sessions"] == 0
+    # Nothing logged is nothing to say.
+    empty, _state, notifications = await run_cap(root, {"action": "report"})
+    assert empty["ok"] and empty["total_sessions"] == 0
     assert notifications == [], "nothing logged is nothing to say"

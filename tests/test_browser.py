@@ -115,52 +115,36 @@ def playwright_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
     return log
 
 
-async def test_text_without_a_selector_reads_the_body(
+async def test_a_page_reads_with_or_without_a_selector_and_is_always_untrusted(
     runtime: Runtime, playwright_calls: list[tuple]
 ) -> None:
-    result = await BrowserTool().run({"op": "text", "url": URL}, runtime)
-
-    assert result.ok, result.output
-    assert result.output == "page text"
+    # text with no selector reads the body, not a TypeError
+    text = await BrowserTool().run({"op": "text", "url": URL}, runtime)
+    assert text.ok, text.output
+    assert text.output == "page text"
     assert ("page.inner_text", "body") in playwright_calls
+    assert text.data.get("untrusted") is True, "a page's text is third-party: it may inform, never authorize"
 
-
-async def test_html_without_a_selector_reads_the_document(
-    runtime: Runtime, playwright_calls: list[tuple]
-) -> None:
-    result = await BrowserTool().run({"op": "html", "url": URL}, runtime)
-
-    assert result.ok, result.output
-    assert result.output == "<html>page html</html>"
+    # html with no selector reads the document
+    html = await BrowserTool().run({"op": "html", "url": URL}, runtime)
+    assert html.ok, html.output
+    assert html.output == "<html>page html</html>"
     assert ("page.content",) in playwright_calls
 
-
-async def test_a_selector_narrows_the_read(runtime: Runtime, playwright_calls: list[tuple]) -> None:
-    result = await BrowserTool().run({"op": "text", "url": URL, "selector": "#main"}, runtime)
-
-    assert result.ok, result.output
-    assert result.output == "locator text"
+    # a selector narrows the read
+    narrowed = await BrowserTool().run({"op": "text", "url": URL, "selector": "#main"}, runtime)
+    assert narrowed.ok, narrowed.output
+    assert narrowed.output == "locator text"
     assert ("page.locator", "#main") in playwright_calls
 
 
-async def test_screenshots_land_under_state(
+async def test_a_screenshot_lands_under_state_and_only_http_is_fetched(
     runtime: Runtime, playwright_calls: list[tuple]
 ) -> None:
-    result = await BrowserTool().run({"op": "screenshot", "url": URL}, runtime)
-
-    assert result.ok, result.output
+    shot = await BrowserTool().run({"op": "screenshot", "url": URL}, runtime)
+    assert shot.ok, shot.output
     assert (runtime.settings.home / "state" / "screenshot.png").exists()
 
-
-async def test_a_page_reads_as_untrusted(runtime: Runtime, playwright_calls: list[tuple]) -> None:
-    """A page's text is third-party: it may inform, never authorize (SPEC §6)."""
-    result = await BrowserTool().run({"op": "text", "url": URL}, runtime)
-
-    assert result.data.get("untrusted") is True
-
-
-async def test_a_non_http_url_is_refused(runtime: Runtime, playwright_calls: list[tuple]) -> None:
-    result = await BrowserTool().run({"op": "text", "url": "file:///etc/passwd"}, runtime)
-
-    assert not result.ok
-    assert "http" in result.output
+    refused = await BrowserTool().run({"op": "text", "url": "file:///etc/passwd"}, runtime)
+    assert not refused.ok
+    assert "http" in refused.output

@@ -1,12 +1,11 @@
 """Resource caps that actually bite (T19, ARCHITECTURE §9.3, SPEC §13).
 
 Every manifest declares `cpu / mem_mb / time_s`. There are three ways to get the
-enforcement wrong, and each one gets a test:
+enforcement wrong, and each one is held here:
 
-- **recorded and never applied** — then the artifact's promise is fiction, and both
-  the model that wrote the manifest and the owner reading it believe a limit exists;
-- **applied as `RLIMIT_AS`** — which kills a healthy CPython for *reserving* address
-  space it never touches, the trap SPEC §13 names;
+- **recorded and never applied** — then the artifact's promise is fiction;
+- **applied as `RLIMIT_AS`** — which kills a healthy CPython for *reserving*
+  address space it never touches, the trap SPEC §13 names;
 - **applied to the child only** — so a capability that spawns help and then hangs
   leaves the helpers behind, still carrying the caps they were started with.
 
@@ -99,9 +98,9 @@ def _cap(
     return CapabilityRunner(root, use_venv=False), manifest
 
 
-async def test_a_runaway_is_stopped_and_the_cap_is_named(tmp_path) -> None:
+async def test_a_breach_or_a_hang_is_stopped_and_the_declared_cap_is_named(tmp_path) -> None:
+    # a runaway is stopped by resident memory, and the cap is named
     runner, manifest = _cap(tmp_path, "runaway", RUNAWAY, mem_mb=64)
-
     result = await runner.run(manifest)
 
     assert not result.ok
@@ -110,9 +109,7 @@ async def test_a_runaway_is_stopped_and_the_cap_is_named(tmp_path) -> None:
     assert result.peak_mb > 64, "the breach was not what stopped it"
     assert result.exit_code != 0
 
-
-async def test_the_number_comes_from_the_manifest_not_the_runner(tmp_path) -> None:
-    """One artifact, two manifests: in one it has room, in the other a wall."""
+    # the number is the manifest's: one artifact has room at 512 MB, a wall at 64
     body = _allocate(200, hold_s=0.6)
     roomy_runner, roomy = _cap(tmp_path, "roomy", body, mem_mb=512)
     bare_runner, bare = _cap(tmp_path, "bare", body, mem_mb=64)
@@ -126,46 +123,31 @@ async def test_the_number_comes_from_the_manifest_not_the_runner(tmp_path) -> No
     assert not stopped.ok
     assert "mem_mb=64" in stopped.error
 
+    # a hang is stopped by time_s, with the number named
+    hang_runner, hang = _cap(tmp_path, "hang", "import time\ntime.sleep(300)\n", time_s=1)
+    hung = await hang_runner.run(hang)
+    assert not hung.ok
+    assert hung.error == "timed out after 1s", hung.error
 
-async def test_a_capability_inside_its_caps_is_untouched(tmp_path) -> None:
-    runner, manifest = _cap(tmp_path, "echo", ECHO)
+    # one inside its caps is untouched — and measured
+    echo_runner, echo = _cap(tmp_path, "echo", ECHO)
+    fine = await echo_runner.run(echo, args={"hello": "there"})
+    assert fine.ok, fine.error
+    assert fine.result["args"] == {"hello": "there"}
+    assert fine.exit_code == 0
+    assert fine.peak_mb > 0, "the run was not measured at all"
 
-    result = await runner.run(manifest, args={"hello": "there"})
-
-    assert result.ok, result.error
-    assert result.result["args"] == {"hello": "there"}
-    assert result.exit_code == 0
-    assert result.peak_mb > 0, "the run was not measured at all"
-
-
-async def test_cpu_is_a_share_of_the_machine(tmp_path) -> None:
-    if (os.cpu_count() or 1) < 3:
-        pytest.skip("needs three cores for a share to be a share")
-
-    one_runner, one = _cap(tmp_path, "one", ECHO, cpu=1.0)
-    three_runner, three = _cap(tmp_path, "three", ECHO, cpu=3.0)
-    odd_runner, odd = _cap(tmp_path, "odd", ECHO, cpu=2.5)
-
-    assert (await one_runner.run(one)).result["cores"] == 1
-    assert (await three_runner.run(three)).result["cores"] == 3
-    # Whole cores, rounded *down*: granting the next core up would hand out more
-    # than the manifest declared, and a cap that is exceeded is not a cap.
-    assert (await odd_runner.run(odd)).result["cores"] == 2
+    # a crash reports its cause, not the missing JSON it left behind
+    crash_runner, crash = _cap(tmp_path, "crasher", CRASHES)
+    crashed = await crash_runner.run(crash)
+    assert not crashed.ok
+    assert "the database is gone" in crashed.error, crashed.error
 
 
-async def test_a_hang_is_still_stopped_by_time_s(tmp_path) -> None:
-    runner, manifest = _cap(tmp_path, "hang", "import time\ntime.sleep(300)\n", time_s=1)
-
-    result = await runner.run(manifest)
-
-    assert not result.ok
-    assert result.error == "timed out after 1s", result.error
-
-
-async def test_a_timeout_takes_the_children_too(tmp_path) -> None:
-    """A capability that spawns help and hangs must not leave the help running."""
+async def test_a_stopped_run_takes_its_children_with_it(tmp_path) -> None:
+    """A capability that spawns help and is stopped must not leave the help running."""
+    # under a timeout...
     runner, manifest = _cap(tmp_path, "spawner", HANGS_WITH_A_CHILD, time_s=1)
-
     result = await runner.run(manifest)
     assert not result.ok
 
@@ -174,9 +156,7 @@ async def test_a_timeout_takes_the_children_too(tmp_path) -> None:
     child = int(pid_file.read_text())
     assert not _alive(child), f"child {child} outlived the timeout"
 
-
-async def test_a_breach_takes_the_children_too(tmp_path) -> None:
-    """Same rule where the sampler is what stops it, not the clock."""
+    # ...and under a breach, where the sampler is what stops it, not the clock
     body = (
         "import pathlib, subprocess, sys, time\n"
         "child = subprocess.Popen(['sleep', '300'])\n"
@@ -190,7 +170,6 @@ async def test_a_breach_takes_the_children_too(tmp_path) -> None:
         "    time.sleep(0.005)\n"
     )
     runner, manifest = _cap(tmp_path, "breeder", body, mem_mb=64)
-
     result = await runner.run(manifest)
     assert not result.ok
 
@@ -200,36 +179,39 @@ async def test_a_breach_takes_the_children_too(tmp_path) -> None:
     assert not _alive(child), f"child {child} outlived the breach"
 
 
-async def test_a_crash_reports_its_cause_not_the_protocol(tmp_path) -> None:
-    """A failed run must say what went wrong, not blame the missing JSON."""
-    runner, manifest = _cap(tmp_path, "crasher", CRASHES)
+async def test_cpu_is_a_whole_core_share_and_a_zero_cap_is_refused_where_it_is_read(
+    tmp_path, runtime
+) -> None:
+    one_runner, one = _cap(tmp_path, "one", ECHO, cpu=1.0)
+    three_runner, three = _cap(tmp_path, "three", ECHO, cpu=3.0)
+    odd_runner, odd = _cap(tmp_path, "odd", ECHO, cpu=2.5)
+    # A cap can narrow the cores a run sees, never widen them: on a two-core
+    # machine a `cpu = 3` run sees two, and the assertion must say so rather
+    # than pass only on the machine it was written on.
+    cores = len(os.sched_getaffinity(0))
 
-    result = await runner.run(manifest)
+    assert (await one_runner.run(one)).result["cores"] == min(1, cores)
+    assert (await three_runner.run(three)).result["cores"] == min(3, cores)
+    # whole cores, rounded *down*: the next core up would hand out more than the
+    # manifest declared, and a cap that is exceeded is not a cap
+    assert (await odd_runner.run(odd)).result["cores"] == min(2, cores)
 
-    assert not result.ok
-    assert "the database is gone" in result.error, result.error
-
-
-def test_a_cap_of_zero_is_refused_where_it_is_read() -> None:
-    """A zero cap stops every run; it does not bound one. Say so, loudly."""
+    # a zero cap stops every run; it does not bound one — say so where it is read
     with pytest.raises(ValueError, match="positive"):
         Caps.from_dict({"mem_mb": 0})
     with pytest.raises(ValueError, match="positive"):
         Caps.from_dict({"time_s": 0})
-    # Sub-core shares cannot be expressed as affinity, and the smallest share that
-    # *can* is one core — so the value is refused rather than silently rounded up.
+    # sub-core shares cannot be expressed as affinity, so they are refused rather
+    # than silently rounded up
     with pytest.raises(ValueError, match="under one core"):
         Caps.from_dict({"cpu": 0.5})
-    # …and the refusals still allow the ordinary case.
     assert Caps.from_dict({"cpu": 2.0, "mem_mb": 256, "time_s": 30}).mem_mb == 256
 
-
-async def test_the_authoring_model_must_declare_sane_caps(runtime) -> None:
+    # the authoring model is held to the same rule
     result = await CapabilityTool().run(
         {"op": "author", "name": "instant_death", "run_py": ECHO, "mem_mb": 0},
         runtime,
     )
-
     assert not result.ok
     assert "positive" in result.output
 

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from daedalus.calendar.reminders import ReminderLedger, key_for, render
+from daedalus.calendar.store import CalendarStore
 from daedalus.runtime import Runtime
 
 NIGHT = datetime(2026, 10, 16, 3, 0)  # inside the default quiet window
@@ -21,53 +22,32 @@ def _soon(minutes: int) -> str:
     return (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
 
 
-# -- finding the ones that are due -----------------------------------------
-
-
-def test_a_reminder_that_has_come_due_is_found_with_its_own_time(runtime: Runtime) -> None:
-    runtime.calendar.add(summary="Dentist", start=_soon(10), reminders=[15])
-
+def test_a_due_alarm_is_found_once_per_instance_and_never_without_one(tmp_path: Path) -> None:
+    # A reminder that has come due is found, with the moment it fires at.
+    calendar = CalendarStore(tmp_path / "calendar")
+    calendar.add(summary="Dentist", start=_soon(10), reminders=[15])
     now = datetime.now()
-    due = runtime.calendar.due_reminders(now - timedelta(minutes=15), now)
-
+    due = calendar.due_reminders(now - timedelta(minutes=15), now)
     assert [event.summary for event, _reminder, _at in due] == ["Dentist"]
     fired_at = due[0][2]
     assert now - timedelta(minutes=15) < fired_at <= now
 
+    # One whose time has not arrived, or one with no alarm at all, is left alone.
+    quiet = CalendarStore(tmp_path / "quiet")
+    quiet.add(summary="Later", start=_soon(180), reminders=[15])
+    quiet.add(summary="No alarm", start=_soon(10))
+    assert quiet.due_reminders(now - timedelta(minutes=15), now) == []
 
-def test_a_reminder_whose_time_has_not_arrived_is_left_alone(runtime: Runtime) -> None:
-    runtime.calendar.add(summary="Dentist", start=_soon(180), reminders=[15])
-
-    now = datetime.now()
-
-    assert runtime.calendar.due_reminders(now - timedelta(minutes=15), now) == []
-
-
-def test_an_event_with_no_alarm_never_nudges(runtime: Runtime) -> None:
-    runtime.calendar.add(summary="Dentist", start=_soon(10))
-
-    now = datetime.now()
-
-    assert runtime.calendar.due_reminders(now - timedelta(minutes=15), now) == []
-
-
-def test_each_instance_of_a_series_is_its_own_nudge(runtime: Runtime) -> None:
-    """A daily standup reminds on Monday and again on Tuesday, not once for both."""
-    series = runtime.calendar.add(
-        summary="Standup", start="2026-10-19T09:00", rrule="FREQ=DAILY", reminders=[5]
-    )
-    assert series.rrule
-
-    monday = runtime.calendar.occurrences(datetime(2026, 10, 19), datetime(2026, 10, 20))[0]
-    tuesday = runtime.calendar.occurrences(datetime(2026, 10, 20), datetime(2026, 10, 21))[0]
-
+    # Each instance of a series is its own nudge: Monday and Tuesday differ.
+    quiet.add(summary="Standup", start="2026-10-19T09:00", rrule="FREQ=DAILY", reminders=[5])
+    monday = quiet.occurrences(datetime(2026, 10, 19), datetime(2026, 10, 20))[0]
+    tuesday = quiet.occurrences(datetime(2026, 10, 20), datetime(2026, 10, 21))[0]
     assert key_for(monday, monday.reminders[0]) != key_for(tuesday, tuesday.reminders[0])
 
 
-# -- the last hop -----------------------------------------------------------
-
-
-async def test_the_scheduler_delivers_a_reminder_once(runtime: Runtime) -> None:
+async def test_the_scheduler_delivers_a_reminder_exactly_once_whatever_the_hour(
+    runtime: Runtime,
+) -> None:
     runtime.calendar.add(summary="Dentist", start=_soon(5), reminders=[10])
     now = datetime.now()
 
@@ -79,46 +59,24 @@ async def test_the_scheduler_delivers_a_reminder_once(runtime: Runtime) -> None:
     assert len(runtime.surface.sent) == 1
     assert "Dentist" in runtime.surface.sent[0]
 
-
-async def test_a_reminder_is_not_silenced_by_quiet_hours(runtime: Runtime) -> None:
-    """The owner set the alarm; the agent's own quiet hours have no say in it."""
+    # The owner set the alarm: quiet hours have no say, and it spends no cap —
+    # it is an instruction being passed on, not the agent choosing to speak.
     runtime.calendar.add(summary="Night flight", start="2026-10-16T03:10", reminders=[15])
-
     results = await runtime.scheduler.fire_reminders(runtime, NIGHT)
-
-    assert results, "the reminder did not fire"
-    assert runtime.surface.sent, "quiet hours silenced a reminder the owner set"
-
-
-async def test_a_reminder_does_not_spend_the_proactive_cap(runtime: Runtime) -> None:
-    """It is an instruction being passed on, not the agent choosing to speak."""
-    runtime.calendar.add(summary="Night flight", start="2026-10-16T03:10", reminders=[15])
-
-    await runtime.scheduler.fire_reminders(runtime, NIGHT)
-
+    assert [r.job for r in results] == ["reminder:Night flight"], "quiet hours silenced it"
     assert runtime.scheduler.proactive.spoken_today(NIGHT) == 0
 
+    # Reminders fall between ticks; the later tick is the one that owes them.
+    runtime.calendar.add(summary="Standup", start="2026-10-16T09:00", reminders=[15])
+    late = await runtime.scheduler.fire_reminders(runtime, datetime(2026, 10, 16, 8, 50))
+    assert [r.job for r in late] == ["reminder:Standup"]
 
-async def test_a_tick_that_is_too_late_rather_than_early_delivers_it(runtime: Runtime) -> None:
-    """Reminders fall between ticks; the later tick is the one that owes them."""
-    runtime.calendar.add(summary="Dentist", start="2026-10-16T09:00", reminders=[15])
-
-    results = await runtime.scheduler.fire_reminders(runtime, datetime(2026, 10, 16, 8, 50))
-
-    assert [r.job for r in results] == ["reminder:Dentist"]
-
-
-async def test_a_reminder_long_past_is_not_dug_back_up(runtime: Runtime) -> None:
-    """A daemon that was down overnight must not wake the owner with yesterday."""
-    runtime.calendar.add(summary="Dentist", start="2026-10-15T09:00", reminders=[15])
-
-    results = await runtime.scheduler.fire_reminders(runtime, datetime(2026, 10, 16, 8, 0))
-
-    assert results == []
-    assert runtime.surface.sent == []
-
-
-# -- what it says, and what it remembers ------------------------------------
+    # A daemon that was down overnight must not wake the owner with yesterday.
+    runtime.calendar.add(summary="Yesterday", start="2026-10-15T09:00", reminders=[15])
+    delivered = len(runtime.surface.sent)
+    stale = await runtime.scheduler.fire_reminders(runtime, datetime(2026, 10, 16, 8, 0))
+    assert stale == []
+    assert len(runtime.surface.sent) == delivered
 
 
 def test_a_reminder_says_what_and_when(runtime: Runtime) -> None:
@@ -131,7 +89,7 @@ def test_a_reminder_says_what_and_when(runtime: Runtime) -> None:
     assert "09:00" in text
 
 
-def test_the_ledger_forgets_nudges_it_no_longer_needs(tmp_path: Path) -> None:
+def test_the_ledger_remembers_a_nudge_until_it_prunes_it(tmp_path: Path) -> None:
     ledger = ReminderLedger(tmp_path / "reminders.json")
     ledger.note("standup@2026-10-01T09:00|5|DISPLAY", datetime(2026, 10, 1, 8, 55))
 

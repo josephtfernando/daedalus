@@ -3,8 +3,8 @@
 `search` failed on 17 Oct in a way that looked identical from the outside for two
 different reasons — the tool returned "(no results)". One was a parser that could
 not see results that were there; the other was a bot challenge reported as an
-empty web. These tests pin the shape of each, and the new order of things:
-SearXNG answers in JSON and leads, DuckDuckGo is the fallback behind it.
+empty web. These tests pin the shape of each, and the order of things: SearXNG
+answers in JSON and leads, DuckDuckGo is the silent fallback behind it.
 """
 
 from __future__ import annotations
@@ -129,13 +129,10 @@ def _no_searxng(runtime: Runtime) -> None:
     runtime.settings.env["DAEDALUS_SEARCH_URL"] = "off"
 
 
-# -- SearXNG leads -----------------------------------------------------------
-
-
-async def test_searxng_answer_is_read_as_results(
+async def test_searxng_leads_in_json_and_duckduckgo_is_the_silent_fallback(
     runtime: Runtime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The preferred backend answers in JSON, so no parsing of anyone's HTML."""
+    # the local SearXNG answers in JSON and leads; no fallback call is made
     client = _serve(monkeypatch, {LOCAL: (200, json.dumps(SEARX), SEARX)})
     _searxng(runtime)
 
@@ -149,11 +146,7 @@ async def test_searxng_answer_is_read_as_results(
     assert [c["method"] for c in client.sent] == ["GET"], "the fallback was called anyway"
     assert client.sent[0]["params"]["format"] == "json"
 
-
-async def test_an_empty_searxng_gets_a_second_opinion_from_duckduckgo(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """One backend having nothing is not the web having nothing."""
+    # one backend having nothing is not the web having nothing
     _serve(
         monkeypatch,
         {
@@ -161,31 +154,28 @@ async def test_an_empty_searxng_gets_a_second_opinion_from_duckduckgo(
             "https://lite.duckduckgo.com": (200, PAGE, None),
         },
     )
-    _searxng(runtime)
+    second = await SearchTool().run({"query": "duckdb"}, runtime)
+    assert second.ok
+    assert "1. An analytical SQL database" in second.output
+    assert second.data["backend"] == "DuckDuckGo", "the second opinion did not come"
 
-    result = await SearchTool().run({"query": "duckdb"}, runtime)
-
-    assert result.ok
-    assert "1. An analytical SQL database" in result.output
-    assert result.data["backend"] == "DuckDuckGo", "the second opinion did not come"
-
-
-async def test_a_dead_searxng_falls_through_to_duckduckgo_silently(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The owner who has not started SearXNG still gets search, and no lecture."""
+    # a dead SearXNG still gets search, and no lecture
     _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, PAGE, None)})
-    _searxng(runtime)
+    dead = await SearchTool().run({"query": "duckdb"}, runtime)
+    assert dead.ok
+    assert "1. An analytical SQL database" in dead.output
+    assert "SearXNG" not in dead.output, "the fallback narrated itself to the owner"
+    assert dead.data["backend"] == "DuckDuckGo"
 
-    result = await SearchTool().run({"query": "duckdb"}, runtime)
+    # `off` means one backend, not a failed connection
+    client = _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, PAGE, None)})
+    _no_searxng(runtime)
+    off = await SearchTool().run({"query": "duckdb"}, runtime)
+    assert off.ok
+    assert all("127.0.0.1" not in call["url"] for call in client.sent)
 
-    assert result.ok
-    assert "1. An analytical SQL database" in result.output
-    assert "SearXNG" not in result.output, "the fallback narrated itself to the owner"
-    assert result.data["backend"] == "DuckDuckGo"
 
-
-async def test_a_searxng_that_is_not_speaking_json_says_which_setting(
+async def test_a_searxng_that_is_not_speaking_json_names_the_setting_that_fixes_it(
     runtime: Runtime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`?format=json` is a 403 out of the box; the refusal has to name the knob."""
@@ -198,31 +188,16 @@ async def test_a_searxng_that_is_not_speaking_json_says_which_setting(
     assert "search.formats" in result.output, "the fix was not named"
 
 
-async def test_a_searxng_that_is_off_is_not_called_at_all(
+async def test_results_are_read_whatever_order_the_attributes_come_in_and_the_tool_says_who_it_is(
     runtime: Runtime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`DAEDALUS_SEARCH_URL=off` means one backend, not a failed connection."""
-    client = _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, PAGE, None)})
-    _no_searxng(runtime)
+    """The regex expected `class` before `href` and double quotes; the page moved on.
 
-    result = await SearchTool().run({"query": "duckdb"}, runtime)
-
-    assert result.ok
-    assert all("127.0.0.1" not in call["url"] for call in client.sent)
-
-
-# -- DuckDuckGo, the fallback ------------------------------------------------
-
-
-async def test_results_are_read_whatever_order_the_attributes_come_in(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The regex expected `class` before `href` and double quotes. The page moved on.
-
-    Every result was there and the tool saw none of them, five times in two
-    turns, and reported it as an empty web.
+    Every result was there and the tool saw none of them, five times in two turns,
+    and reported it as an empty web. The honest User-Agent is also behaviour: the
+    bot challenge goes to the bare ``httpx`` signature, not to a named client.
     """
-    _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, PAGE, None)})
+    client = _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, PAGE, None)})
     _no_searxng(runtime)
 
     result = await SearchTool().run({"query": "duckdb"}, runtime)
@@ -232,45 +207,23 @@ async def test_results_are_read_whatever_order_the_attributes_come_in(
     assert "https://duckdb.org/" in result.output
     assert "DuckDB is an OLAP database. Fast & open source." in result.output
     assert "2. DuckDB - Wikipedia" in result.output
-
-
-async def test_the_tool_says_who_it_is(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An honest User-Agent is the one the endpoint answers.
-
-    The bot challenge goes to the bare ``httpx`` signature, not to a client that
-    names itself, so this is a behaviour and not a courtesy.
-    """
-    client = _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, PAGE, None)})
-    _no_searxng(runtime)
-
-    await SearchTool().run({"query": "duckdb"}, runtime)
-
     assert client.sent[0]["headers"]["User-Agent"].startswith("Daedalus/")
 
 
-async def test_a_bot_challenge_is_reported_as_a_challenge_not_as_an_empty_web(
+async def test_a_refusal_is_a_refusal_not_an_empty_web(
     runtime: Runtime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A refusal is not an answer, and saying it is one is the worse failure.
-
-    The model read "(no results)" as "the web has nothing" and told the owner so.
-    """
+    # a bot challenge is reported as a challenge, never as "(no results)"
     _serve(monkeypatch, {"https://lite.duckduckgo.com": (202, CHALLENGE, None)})
     _no_searxng(runtime)
 
-    result = await SearchTool().run({"query": "seoul weather"}, runtime)
+    challenged = await SearchTool().run({"query": "seoul weather"}, runtime)
 
-    assert not result.ok
-    assert "challenge" in result.output
-    assert "no results" not in result.output
+    assert not challenged.ok
+    assert "challenge" in challenged.output
+    assert "no results" not in challenged.output
 
-
-async def test_when_every_backend_refuses_the_owner_hears_every_reason(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Two backends failing is two facts; reporting one of them is half a truth."""
+    # two backends failing is two facts; reporting one is half a truth
     _serve(
         monkeypatch,
         {
@@ -280,30 +233,25 @@ async def test_when_every_backend_refuses_the_owner_hears_every_reason(
     )
     _searxng(runtime)
 
-    result = await SearchTool().run({"query": "duckdb"}, runtime)
+    both = await SearchTool().run({"query": "duckdb"}, runtime)
 
-    assert not result.ok
-    assert "SearXNG answered HTTP 500" in result.output
-    assert "challenge" in result.output
+    assert not both.ok
+    assert "SearXNG answered HTTP 500" in both.output
+    assert "challenge" in both.output
 
-
-async def test_a_page_with_genuinely_nothing_is_a_result_not_a_failure(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An honest "nothing" must not feed the repeat guard a strike."""
-    _serve(monkeypatch, {"https://lite.duckduckgo.com": (200, "<html><p>No results.</p></html>", None)})
+    # a genuine nothing is a result, so the repeat guard is not fed a strike
+    _serve(
+        monkeypatch,
+        {"https://lite.duckduckgo.com": (200, "<html><p>No results.</p></html>", None)},
+    )
     _no_searxng(runtime)
 
-    result = await SearchTool().run({"query": "asdfqwerzxcv"}, runtime)
+    empty = await SearchTool().run({"query": "asdfqwerzxcv"}, runtime)
 
-    assert result.ok
-    assert result.output == "(no results for 'asdfqwerzxcv')"
+    assert empty.ok
+    assert empty.output == "(no results for 'asdfqwerzxcv')"
 
-
-async def test_an_empty_answer_beside_a_refusal_is_said_to_be_inconclusive(
-    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """"No results" from one backend plus a refusal from the other is not silence."""
+    # but an empty answer beside a refusal is inconclusive, not silence
     _serve(
         monkeypatch,
         {
@@ -313,7 +261,7 @@ async def test_an_empty_answer_beside_a_refusal_is_said_to_be_inconclusive(
     )
     _searxng(runtime)
 
-    result = await SearchTool().run({"query": "asdfqwerzxcv"}, runtime)
+    mixed = await SearchTool().run({"query": "asdfqwerzxcv"}, runtime)
 
-    assert result.ok
-    assert "not conclusive" in result.output
+    assert mixed.ok
+    assert "not conclusive" in mixed.output
