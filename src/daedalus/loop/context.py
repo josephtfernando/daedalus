@@ -23,31 +23,29 @@ def _long(day: date) -> str:
     return day.strftime("%A %d %B %Y")
 
 
-def now_block(moment: datetime | None = None) -> str:
-    """What "now" is, spelled out — the one fact an agent cannot infer.
+def clock_block(moment: datetime | None = None) -> str:
+    """The minute, and only the minute.
 
-    Until 17 Oct nothing told the agent the date. Asked to add something "on
-    Sunday, which is tomorrow", it answered with **10 Oct 2026**: a *Saturday*,
-    seven days gone — and `calendar` took it, because a start in the past is a
-    perfectly legal write. The owner then spent a morning correcting a date the
-    agent should never have had to guess, and two events sat in the store on a
-    day nobody said.
-
-    A moment, a weekday and the span of the current week are enough to resolve
-    every relative thing an owner says without guessing, and they cost four lines
-    once per turn. The instruction at the end is not decoration: the failure was
-    not ignorance of today's date so much as *writing a date it had not been
-    given*, so the prompt says which of the two it is allowed to do.
+    This used to be the head of the system prompt, which broke the prompt cache
+    on every single turn: llama.cpp reuses the KV of an identical *prefix*, and a
+    prompt whose first bytes change every sixty seconds has no prefix to reuse.
+    Measured on the owner's laptop through `/v1/chat/completions`: 20.2 s cold,
+    and 2.9 s when the prefix matched. So the minute now rides at the *end* of
+    the turn, next to the message that needs it, and the system prompt holds
+    only what changes by the day.
     """
+    now = moment or datetime.now(zones.local_zone())
+    zone = zones.local_name()
+    return f"It is {now.strftime('%H:%M')} on {_long(now.date())}" + (f" ({zone})" if zone else "") + "."
+
+
+def date_block(moment: datetime | None = None) -> str:
+    """The day, the week, and the rule for writing a date — stable for a day."""
     now = moment or datetime.now(zones.local_zone())
     today = now.date()
     monday = today - timedelta(days=today.weekday())
-    zone = zones.local_name()
     return "\n".join(
         [
-            f"It is {now.strftime('%H:%M')} on {_long(today)}"
-            + (f" ({zone})" if zone else "")
-            + ".",
             f"Today is {_short(today)}. Tomorrow is {_short(today + timedelta(days=1))}; "
             f"yesterday was {_short(today - timedelta(days=1))}. "
             f"This week runs {_short(monday)} to {_short(monday + timedelta(days=6))}.",
@@ -59,6 +57,30 @@ def now_block(moment: datetime | None = None) -> str:
     )
 
 
+def now_block(moment: datetime | None = None) -> str:
+    """What "now" is, spelled out — the one fact an agent cannot infer.
+
+    Until 17 Oct nothing told the agent the date. Asked to add something "on
+    Sunday, which is tomorrow", it answered with **10 Oct 2026**: a *Saturday*,
+    seven days gone — and `calendar` took it, because a start in the past is a
+    perfectly legal write. The owner then spent a morning correcting a date the
+    agent should never have had to guess, and two events sat in the store on a
+    day nobody said.
+
+    A moment, a weekday and the span of the current week are enough to resolve
+    every relative thing an owner says without guessing. The instruction at the
+    end is not decoration: the failure was not ignorance of today's date so much
+    as *writing a date it had not been given*, so the prompt says which of the
+    two it is allowed to do.
+
+    Split in two for the cache (see `clock_block`): the minute is volatile and
+    belongs in the turn; the day is stable and belongs in the prompt. This
+    function is the two together, kept for callers that want the whole picture.
+    """
+    return clock_block(moment) + "\n" + date_block(moment)
+
+
+
 SYSTEM_PROMPT = """You are {seat_name}, an identity over a single local agent loop that runs on the
 owner's laptop. You are reached over Discord by one person.
 
@@ -66,7 +88,7 @@ owner's laptop. You are reached over Discord by one person.
 
 ## Right now
 
-{now}
+{date}
 
 {inbox}
 
@@ -180,7 +202,7 @@ def build_system_prompt(
     return SYSTEM_PROMPT.format(
         seat_name=chosen.name,
         charter=chosen.charter,
-        now=now_block(),
+        date=date_block(),
         capabilities=ctx.capabilities.inventory(),
         resources=ctx.resources.inventory(),
         calendar=ctx.calendar.inventory(allow_local_only=include_local_only),
@@ -278,7 +300,10 @@ def build_messages(
     ]
     key = event.thread_id or event.channel_id or event.user_id
     messages.extend(ctx.recent(key, max_history))
-    messages.append({"role": "user", "content": event.text})
+    # The minute goes last, not first: see clock_block. Everything above it —
+    # the system prompt, the seat's charter, the history — stays byte-identical
+    # between turns, which is what lets the local runner reuse its KV cache.
+    messages.append({"role": "user", "content": f"{clock_block()}\n\n{event.text}"})
     return messages
 
 

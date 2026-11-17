@@ -19,31 +19,35 @@ from daedalus.runtime import Runtime
 from daedalus.surface.base import InboundEvent
 
 
-def test_the_moment_is_spelled_out_in_the_words_an_owner_uses() -> None:
-    """A fixed moment, so what the block says cannot drift with the calendar."""
-    block = now_block(datetime(2026, 10, 17, 9, 4))
+def test_the_moment_is_spelled_out_and_the_week_does_not_move_at_midnight() -> None:
+    """A fixed moment, so what the block says cannot drift with the calendar.
 
+    Sunday night is still the week's last day, and tomorrow is the next Monday:
+    "this Sunday" and "next Monday" mean different weeks, and an agent working
+    that out from a bare date gets it wrong exactly at the boundary.
+    """
+    # case: a mid-morning moment, every phrase the owner would use.
+    block = now_block(datetime(2026, 10, 17, 9, 4))
     assert block.startswith("It is 09:04 on Saturday 17 October 2026"), block
     assert "Today is Sat 17 Oct." in block
     assert "Tomorrow is Sun 18 Oct; yesterday was Fri 16 Oct." in block
     assert "This week runs Mon 12 Oct to Sun 18 Oct." in block
 
-
-def test_the_week_does_not_move_when_the_day_rolls_over() -> None:
-    """Sunday night is still the week's last day, and tomorrow is the next Monday.
-
-    "This Sunday" and "next Monday" mean different weeks, and an agent that has to
-    work that out from a bare date gets it wrong exactly when it matters — at the
-    boundary, which is when an owner says "tomorrow" and means the other week.
-    """
+    # case: Sunday 23:30 — the week has not rolled over with the day.
     block = now_block(datetime(2026, 10, 18, 23, 30))
-
     assert "Today is Sun 18 Oct. Tomorrow is Mon 19 Oct; yesterday was Sat 17 Oct." in block
     assert "This week runs Mon 12 Oct to Sun 18 Oct." in block
 
 
-def test_the_prompt_the_agent_is_actually_given_carries_the_date(runtime: Runtime) -> None:
-    """Not just the helper — the assembled prompt, which is what the model reads."""
+def test_the_assembled_prompt_carries_the_date_and_the_capture_rule(runtime: Runtime) -> None:
+    """Not just the helper — the prompt the model actually reads.
+
+    The date must be there or every relative date the owner gives is a guess the
+    model cannot check. And a durable fact only becomes memory if the prompt asks
+    for it to: on 18 Oct the owner told Calliope a fact about his own writing and
+    got an answer that kept none of it, because no instruction anywhere made
+    capture part of the turn.
+    """
     prompt = build_system_prompt(runtime, InboundEvent(text="hi", user_id="owner"))
 
     today = date.today()
@@ -52,21 +56,6 @@ def test_the_prompt_the_agent_is_actually_given_carries_the_date(runtime: Runtim
         "the agent was not told what today is — every relative date it is given "
         "is then a guess it cannot check"
     )
-
-
-def test_the_prompt_tells_the_model_what_capture_is_for(runtime: Runtime) -> None:
-    """A durable fact only becomes memory if something asks for it to.
-
-    Nothing recalls for the owner: the store sits behind a tool the model must
-    choose to use, and nothing else in the prompt, the schemas or a tool result
-    says *when* to use it. So on 18 Oct the owner told Calliope a fact about his
-    own writing and got an answer that kept none of it — not because memory was
-    missing, but because no instruction anywhere made capture part of the turn.
-    The rule is written where the other behavioural contracts live: in the
-    prompt. The store, supersession and the `local_only` gate it relies on are
-    §5's; this only names the habit.
-    """
-    prompt = build_system_prompt(runtime, InboundEvent(text="hi", user_id="owner"))
 
     assert "### Remembering" in prompt
     assert "memory op=write" in prompt, (
@@ -78,3 +67,32 @@ def test_the_prompt_tells_the_model_what_capture_is_for(runtime: Runtime) -> Non
     )
     for facet in ("people", "contacts"):
         assert facet in prompt, f"the suggested facets must be reachable by the model ({facet})"
+
+
+def test_the_clock_rides_in_the_turn_so_the_prefix_can_be_cached(runtime: Runtime) -> None:
+    """The minute must not be in the system prompt.
+
+    llama.cpp reuses the KV of an identical prefix. The system prompt used to
+    open with `It is 21:20 on …`, so its first bytes changed every sixty seconds
+    and no prefix was ever reused; measured through /v1/chat/completions on the
+    owner's laptop, that cost 20.2 s of prefill on a turn that a warm prefix
+    answers in 2.9 s. The date stays (it changes daily, not minutely), the
+    minute moves to the user message, and this test pins the split.
+    """
+    import re
+
+    from daedalus.loop.context import build_messages, clock_block, date_block
+
+    prompt = build_system_prompt(runtime, InboundEvent(text="hi", user_id="owner"))
+    assert not re.search(r"\bIt is \d{2}:\d{2}\b", prompt), (
+        "the clock is back in the system prompt — every turn now pays full prefill"
+    )
+    assert date_block().splitlines()[0] in prompt, "the day must still be told"
+
+    event = InboundEvent(text="hi", user_id="owner")
+    messages = build_messages(runtime, event)
+    assert messages[-1]["role"] == "user"
+    assert messages[-1]["content"].startswith(clock_block()), (
+        "the minute belongs to the turn, next to the message that needs it"
+    )
+    assert messages[-1]["content"].endswith("hi")
