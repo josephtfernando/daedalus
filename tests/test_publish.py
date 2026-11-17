@@ -1,17 +1,14 @@
 """Publishing to the tailnet, and never past it (SPEC §3.5, ticket T2).
 
-*"Loopback-bound, no public Funnel."* The dashboard has two gates — the loopback
-bind with a token on every write, and the tailnet's own authentication. Publishing
-is handing the inner gate to the outer one. Three ways to get it wrong are worth
-a test each:
+*"Loopback-bound, no public Funnel."* Publishing is handing the inner gate to the
+tailnet's own authentication. Three ways to get it wrong are worth a test each:
 
 - **A refusal that arrives as a traceback.** An owner who runs `--publish` on a
   laptop without `tailscale` should be told plainly, not handed a stack.
 - **A public exposure.** `tailscale funnel` is the outer gate removed entirely;
   this module must not construct that command, and must refuse to publish onto a
   node that already has Funnel on.
-- **A command nobody saw.** The line is printed before it runs — the owner is
-  about to publish something, and is entitled to read what.
+- **A command nobody saw.** The line is printed before it runs.
 """
 
 from __future__ import annotations
@@ -64,68 +61,80 @@ class Fake:
         return out(0, "")
 
 
-def _publish(fake: Fake, port: int = 8787) -> object:
-    return publish(port, which=fake.which, run=fake.run)
+def _publish(fake: Fake) -> object:
+    return publish(8787, which=fake.which, run=fake.run)
 
 
-# -- the refusal that is a message, not a traceback --------------------------
-
-
-def test_a_missing_tailscale_is_a_clear_refusal() -> None:
+def test_a_missing_tailscale_is_a_clear_refusal_not_a_traceback(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    # the module refuses plainly, and nothing is run before the check
     fake = Fake(installed=False)
-
     with pytest.raises(PublishError) as refused:
         _publish(fake)
-
     assert "not installed" in str(refused.value)
     assert fake.ran == [], "nothing was run before the check"
 
+    # a publish command that fails is reported with its own error
+    failing = Fake(fail_publish=True)
+    with pytest.raises(PublishError) as failed:
+        _publish(failing)
+    assert "failed" in str(failed.value) and "boom" in str(failed.value)
 
-def test_a_failed_publish_command_is_reported_with_its_error() -> None:
-    fake = Fake(fail_publish=True)
+    # the acceptance: `serve --publish` turns that into a message and exit 1
+    from daedalus.genui import publish as publish_module
+    from daedalus.main import build_parser, main
 
-    with pytest.raises(PublishError) as refused:
-        _publish(fake)
+    assert build_parser().parse_args(["serve", "--publish"]).publish is True
 
-    assert "failed" in str(refused.value) and "boom" in str(refused.value)
+    def denied(*_: object, **__: object) -> object:
+        raise PublishError(
+            "tailscale is not installed, so there is no tailnet to publish to"
+        )
+
+    monkeypatch.setattr(publish_module, "publish", denied)
+    code = main(["--home", str(tmp_path), "serve", "--port", "0", "--publish"])
+    assert code == 1
+    assert "not published" in capsys.readouterr().out
 
 
-# -- funnel is the gate removed ----------------------------------------------
-
-
-def test_a_node_with_funnel_on_is_refused() -> None:
-    fake = Fake(funnel_on=True)
-
-    with pytest.raises(PublishError) as refused:
-        _publish(fake)
-
-    assert "Funnel" in str(refused.value)
-    assert "public" in str(refused.value)
-    assert [cmd[1:3] for cmd in fake.ran] == [["serve", "status"]], (
+def test_a_public_funnel_is_refused_and_never_enabled() -> None:
+    # Funnel on is the outer gate removed: refused before anything is published
+    refused = Fake(funnel_on=True)
+    with pytest.raises(PublishError) as err:
+        _publish(refused)
+    assert "Funnel" in str(err.value)
+    assert "public" in str(err.value)
+    assert [cmd[1:3] for cmd in refused.ran] == [["serve", "status"]], (
         "refused before anything was published"
     )
 
+    # without Funnel the node publishes, and the URL is read from serve status
+    plain = _publish(Fake())
+    assert plain.url == "https://machine.tailnet.ts.net"
+    resolved = _publish(
+        Fake(serve_output="https://box.tail1234.ts.net  (proxying to 127.0.0.1:8787)\n")
+    )
+    assert resolved.url == "https://box.tail1234.ts.net"
 
-def test_a_node_without_funnel_publishes() -> None:
-    published = _publish(Fake())
+    # an unreadable config is not a funnel we can see; a status with no URL still
+    # publishes, because `serve` is tailnet-only either way
+    unreadable = _publish(Fake(unparsable=True, serve_output=""))
+    assert unreadable.url == ""
+    assert "serve" in unreadable.command
+    empty = _publish(Fake(serve_output="(nothing served)\n"))
+    assert empty.url == ""
+    assert empty.command
 
-    assert published.url == "https://machine.tailnet.ts.net"
-
-
-def test_an_unreadable_config_does_not_stop_the_publish() -> None:
-    """A config we cannot read is not a funnel we can see; `serve` is tailnet-only."""
-    fake = Fake(unparsable=True, serve_output="")
-
-    published = _publish(fake)
-
-    assert published.url == ""
-    assert "serve" in published.command
-
-
-# -- the command, seen before it is run --------------------------------------
+    # and no code path ever enables Funnel: the word is only ever read, never set
+    for command in [*plain.ran, *resolved.ran, *unreadable.ran, *empty.ran, *refused.ran]:
+        assert command[0] == BIN
+        assert command[1] == "serve", f"{command} is not a serve command"
+        assert "--funnel" not in command
+        assert "enable" not in command
 
 
-def test_the_publish_command_is_serve_and_printed_first(capsys) -> None:
+def test_the_command_is_printed_before_it_runs(capsys) -> None:
     published = _publish(Fake())
 
     printed = capsys.readouterr().out
@@ -136,91 +145,22 @@ def test_the_publish_command_is_serve_and_printed_first(capsys) -> None:
     )
 
 
-def test_the_only_commands_ever_built_are_serve_and_status() -> None:
-    """No code path enables Funnel: the word is only ever read, never set."""
+def test_unpublish_takes_the_route_down_or_says_no(capsys) -> None:
     fake = Fake()
-    _publish(fake)
-    refused = Fake(funnel_on=True)
-    with pytest.raises(PublishError):
-        _publish(refused)
-
-    for command in [*fake.ran, *refused.ran]:
-        assert command[0] == BIN
-        assert command[1] == "serve", f"{command} is not a serve command"
-        assert "--funnel" not in command
-        assert "enable" not in command
-
-
-def test_the_url_is_read_from_the_serve_status() -> None:
-    fake = Fake(serve_output="https://box.tail1234.ts.net  (proxying to 127.0.0.1:8787)\n")
-
-    published = _publish(fake)
-
-    assert published.url == "https://box.tail1234.ts.net"
-
-
-def test_no_url_in_the_status_still_publishes() -> None:
-    fake = Fake(serve_output="(nothing served)\n")
-
-    published = _publish(fake)
-
-    assert published.url == ""
-    assert published.command
-
-
-# -- taking it back down -----------------------------------------------------
-
-
-def test_unpublish_takes_the_route_down_and_says_so(capsys) -> None:
-    fake = Fake()
-
     assert unpublish(8787, which=fake.which, run=fake.run) is True
-
     assert fake.ran[-1] == [BIN, "serve", "--https=443", "off"]
     assert "+ tailscale serve --https=443 off" in capsys.readouterr().out
 
+    # without tailscale it is a quiet no, and nothing runs
+    absent = Fake(installed=False)
+    assert unpublish(8787, which=absent.which, run=absent.run) is False
+    assert absent.ran == []
 
-def test_unpublish_without_tailscale_is_a_quiet_no() -> None:
-    fake = Fake(installed=False)
-
-    assert unpublish(8787, which=fake.which, run=fake.run) is False
-    assert fake.ran == []
-
-
-def test_unpublish_reports_a_failure_instead_of_lying() -> None:
-    fake = Fake()
+    # a failing command is reported instead of lied about
+    failing = Fake()
 
     def run(command: Sequence[str]) -> object:
-        fake.ran.append(list(command))
+        failing.ran.append(list(command))
         return type("R", (), {"returncode": 1, "stdout": "", "stderr": "not yours"})()
 
-    assert unpublish(8787, which=fake.which, run=run) is False
-
-
-# -- wiring ------------------------------------------------------------------
-
-
-def test_the_flag_exists() -> None:
-    from daedalus.main import build_parser
-
-    assert build_parser().parse_args(["serve", "--publish"]).publish is True
-
-
-def test_serve_refuses_to_publish_when_there_is_no_tailnet(
-    tmp_path: Path, capsys, monkeypatch
-) -> None:
-    """The acceptance: a missing `tailscale` is a clear refusal, not a traceback."""
-    from daedalus.genui import publish as publish_module
-    from daedalus.main import main
-
-    def refused(*_: object, **__: object) -> object:
-        raise PublishError(
-            "tailscale is not installed, so there is no tailnet to publish to"
-        )
-
-    monkeypatch.setattr(publish_module, "publish", refused)
-
-    code = main(["--home", str(tmp_path), "serve", "--port", "0", "--publish"])
-
-    assert code == 1
-    assert "not published" in capsys.readouterr().out
+    assert unpublish(8787, which=failing.which, run=run) is False

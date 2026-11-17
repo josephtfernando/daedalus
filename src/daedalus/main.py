@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import math
+import os
 import sys
 import time
 from datetime import datetime
@@ -37,6 +38,24 @@ def _settings(args: argparse.Namespace) -> Settings:
     home.mkdir(parents=True, exist_ok=True)
     paths.ensure_tree(home)
     return load_settings(home)
+
+
+def enter_state_home(settings: Settings) -> None:
+    """Stand in the state home, so a relative path lands in state, not the code.
+
+    Every path the agent *invents* is relative to where the process stands.
+    The daemon used to stand in the code repo — systemd's `WorkingDirectory`,
+    or whatever directory the owner launched it from — so a write to `notes.md`
+    put an agent artefact beside the source, where `git status` found it. The
+    repo is still reachable through its own absolute root (`tools.guard`), but
+    it is no longer the default neighbourhood; `$DAEDALUS_HOME` is.
+    """
+    try:
+        os.chdir(settings.home)
+    except OSError as exc:  # a home that vanished under us must not stop the loop
+        logging.getLogger("daedalus.main").warning(
+            "could not enter %s (%s); relative paths resolve from here", settings.home, exc
+        )
 
 
 def cmd_version(_: argparse.Namespace) -> int:
@@ -254,6 +273,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from .surface.cli import CliSurface
 
     settings = _settings(args)
+    enter_state_home(settings)
     if settings.surface_mode != "discord" or args.cli:
         return _run_cli_repl(settings)
 
@@ -273,9 +293,33 @@ def cmd_run(args: argparse.Namespace) -> int:
         # the reply clears it, so it never lingers past the answer. Routing is
         # part of the work — the question "who takes this" is asked with the
         # indicator up, not in silence.
-        async with surface.working(event.channel_id):
-            decision = await route(rt, event)
-            result = await engine.run_turn(event, seat=decision.seat.key)
+        #
+        # The answer streams into one message while the model writes it (SPEC
+        # §4: the client streams; this is the surface that shows it). If the
+        # streamed message is not, in the end, exactly the answer, it is deleted
+        # and ordinary delivery takes over — the preview never becomes a second
+        # copy of the reply.
+        stream = surface.open_stream(event.channel_id)
+        try:
+            async with surface.working(event.channel_id):
+                decision = await route(rt, event)
+                result = await engine.run_turn(
+                    event,
+                    seat=decision.seat.key,
+                    on_delta=stream.delta if stream is not None else None,
+                    on_restart=stream.reset if stream is not None else None,
+                )
+                delivered = (
+                    await stream.finish(result.text, header=attribution(rt, decision))
+                    if stream is not None
+                    else False
+                )
+        finally:
+            # The normal path already closed the preview inside `finish`; this
+            # only does work when the turn raised, so a half-written preview is
+            # never left beside the error the surface is about to send.
+            if stream is not None:
+                await stream.abandon()
         log.info(
             "turn done: %d step(s), tools=%s, provider=%s, %d char(s)%s",
             result.steps,
@@ -287,7 +331,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not result.text:
             # Never be silent: a turn with no text is reported, not swallowed.
             log.warning("turn produced no text (%s)", result.error or "the model returned empty content")
-        await deliver(rt.surface, result, header=attribution(rt, decision))  # type: ignore[arg-type]
+        if not delivered:
+            await deliver(rt.surface, result, header=attribution(rt, decision))  # type: ignore[arg-type]
 
     surface = DiscordSurface(settings, handler)
     rt.set_surface(surface)

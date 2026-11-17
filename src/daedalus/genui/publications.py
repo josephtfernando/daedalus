@@ -59,6 +59,10 @@ class Publication:
     max_fetches: int | None = 1
     fetches: int = 0
     taken_down: bool = False
+    #: Whether the bytes under ``serve/`` were *made* by this publication. When
+    #: the source file already lived there, the publication borrowed the owner's
+    #: own artifact — and a takedown must not delete what it did not create.
+    owns_bytes: bool = True
 
     def dead(self, *, now: float) -> str:
         """"Why this publication will not serve," as a short reason — "" if alive."""
@@ -121,6 +125,7 @@ class Publications:
         lifetime_s: float | None = 86400.0,
         max_fetches: int | None = 1,
         created_by: str = "loop",
+        owns_bytes: bool = True,
     ) -> Publication:
         """Open one publication and return its record (with the fresh token)."""
         if not _NAME.fullmatch(name or ""):
@@ -146,6 +151,7 @@ class Publications:
             created_by=created_by,
             expires_at=(time.time() + lifetime_s) if lifetime_s is not None else None,
             max_fetches=max_fetches,
+            owns_bytes=owns_bytes,
         )
         self._items[name] = pub
         self._save()

@@ -26,6 +26,7 @@ onto a 410. Lifetimes are default-24h and cannot be infinite.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
@@ -97,6 +98,19 @@ def _targets() -> list[str]:
 #: a single serve may move. (The guard already bounds which files may be read;
 #: this bounds how big the one that leaves may be.)
 MAX_PUBLISH_BYTES = 64 * 1024 * 1024
+
+
+def _same_file(source: Path, destination: Path) -> bool:
+    """Whether publishing would copy the file onto itself.
+
+    A file that already lives in ``serve/`` is already where a publication
+    keeps its bytes, so a copy is a `SameFileError` — and a takedown of it must
+    leave the owner's file alone rather than delete the only copy.
+    """
+    try:
+        return source.resolve() == destination.resolve()
+    except OSError:
+        return False
 
 
 def _sentinel(value: Any, fallback: Any) -> Any:
@@ -205,26 +219,40 @@ class PushTool(Tool):
                 rows.append(f"{pub.name}: {state} ({pub.fetches} fetches)")
             return ToolResult(output="\n".join(rows) or "(nothing published)")
         if op == "peers":
-            people = _targets()
+            # `tailscale` is a subprocess: run it off the loop. A 10s call made
+            # inline would freeze typing indicators, heartbeats, and every other
+            # turn on this process for its duration.
+            people = await asyncio.to_thread(_targets)
             return ToolResult(output="\n".join(people) or "(no reachable tailnet peers)")
         if op == "serve":
-            return self._serve(args, ctx, pubs, serve_dir, sent)
+            return await self._serve(args, ctx, pubs, serve_dir, sent)
         if op == "takedown":
             name = str(args.get("name", "")).strip()
+            record = next((p for p in pubs.list() if p.name == name), None)
             gone = pubs.takedown(name)
             if gone:
-                (serve_dir / name).unlink(missing_ok=True)
-                return ToolResult(output=f"{name!r} taken down; the bytes are gone and the link answers 410")
+                # Delete only bytes this publication made. A file the owner (or
+                # the agent) already had in serve/ stays: a link dying is not a
+                # reason to destroy the only copy.
+                unlinked = bool(record and record.owns_bytes)
+                if unlinked:
+                    (serve_dir / name).unlink(missing_ok=True)
+                return ToolResult(
+                    output=(
+                        f"{name!r} taken down; the link answers 410"
+                        + (" and the bytes are gone" if unlinked else ", your file in serve/ is untouched")
+                    )
+                )
             return ToolResult.error(
                 f"no live publication named {name!r} to take down — op=list shows what is live"
             )
         if op == "push":
-            return self._push(args, ctx, sent)
+            return await self._push(args, ctx, sent)
         return ToolResult.error(
             f"unknown push op {op!r} — serve, takedown, list, push, peers. You sent: {sent}"
         )
 
-    def _serve(
+    async def _serve(
         self,
         args: dict[str, Any],
         ctx: "Runtime",
@@ -263,19 +291,27 @@ class PushTool(Tool):
                 "good enough for an act that publishes bytes; check `tailscale serve status`"
             )
         name = str(_sentinel(args.get("name"), source.name))
+        # A file that already lives in `serve/` is already the publication's
+        # bytes. Copying it onto itself is a SameFileError, and the artifact the
+        # owner (or the agent) wrote there is not the publication's to delete —
+        # so the record says whose bytes these are, and takedown reads that.
+        destination = serve_dir / name
+        borrowed = _same_file(source, destination)
         try:
             pub = pubs.publish(
                 name,
                 lifetime_s=float(_sentinel(args.get("lifetime_s"), 86400.0)),
                 max_fetches=int(_sentinel(args.get("fetches"), 1)),
                 created_by="push tool",
+                owns_bytes=not borrowed,
             )
         except ValueError as exc:
             return ToolResult.error(f"{exc} You sent: {sent}")
         # The copy is the publication's bytes — read once here, after the guard:
         serve_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, serve_dir / name)
-        dns = _dns_name()
+        if not borrowed:
+            await asyncio.to_thread(shutil.copyfile, source, destination)
+        dns = await asyncio.to_thread(_dns_name)
         link = f"https://{dns}/pub/{name}?t={pub.token}" if dns else (
             f"/pub/{name}?t={pub.token} on the dashboard's tailnet route "
             "(the tailnet DNS name could not be looked up just now)"
@@ -287,11 +323,17 @@ class PushTool(Tool):
                 "Say nothing about it in prose — the link is the message. "
                 "It dies after the first fetch or the lifetime, whichever first; "
                 f"`push op=takedown name={name}` kills it now."
+                + (
+                    " The bytes are your own file in serve/, so the takedown removes "
+                    "the link and leaves the file where it is."
+                    if borrowed
+                    else ""
+                )
             ),
             data={"name": name, "link": link, "expires_at": pub.expires_at},
         )
 
-    def _push(self, args: dict[str, Any], ctx: "Runtime", sent: str) -> ToolResult:
+    async def _push(self, args: dict[str, Any], ctx: "Runtime", sent: str) -> ToolResult:
         raw = str(args.get("path", "")).strip()
         target = str(args.get("target", "")).strip()
         if not raw or not target:
@@ -299,7 +341,7 @@ class PushTool(Tool):
                 f"op=push needs `path` and `target` (a tailnet peer from op=peers; "
                 f"Taildrop goes to a device, not into the air). You sent: {sent}"
             )
-        known = _targets()
+        known = await asyncio.to_thread(_targets)
         if target not in known:
             return ToolResult.error(
                 f"{target!r} is not a reachable tailnet peer — op=peers lists who can "
@@ -313,7 +355,8 @@ class PushTool(Tool):
         except guard.OutOfBounds as exc:
             return ToolResult.error(f"{exc} — a push is a files read first")
         try:
-            result = _taildrop(source, target)
+            # Up to two minutes of `tailscale file cp`: off the loop, always.
+            result = await asyncio.to_thread(_taildrop, source, target)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return ToolResult.error(f"the Taildrop copy did not run cleanly: {exc}")
         if result.returncode != 0:

@@ -5,8 +5,7 @@ expiry, takedown, token) and the server's route that enforces it, then the
 tool that reaches both — including the containment clause that publishing
 cannot read where the files primitive cannot, and the push that names a
 device rather than copying into the air. (The dashboard publish's own tests —
-the Funnel refusal, the printed command — live in test_publish.py; those test
-`genui/publish.py`, this tests what travels over the route it publishes.)
+the Funnel refusal in `genui/publish.py` — live in test_publish.py.)
 """
 
 from __future__ import annotations
@@ -40,19 +39,27 @@ def staged(tmp_path: Path, body: bytes = b"payload") -> Path:
     return serve / "brief.txt"
 
 
-def test_a_one_time_link_spends_on_first_fetch(pubs: Publications) -> None:
-    pub = pubs.publish("brief.txt")
-    assert pub.max_fetches == 1
-    ok, reason, _ = pubs.admit("brief.txt", pub.token)
+def test_a_publication_is_one_time_token_gated_expiring_and_takeable_down(
+    pubs: Publications, tmp_path: Path
+) -> None:
+    import time
+
+    # one-time by default: the first admit spends the link, the second refuses
+    direct = pubs.publish("spent.txt")
+    assert direct.max_fetches == 1
+    ok, reason, _ = pubs.admit("spent.txt", direct.token)
     assert (ok, reason) == (True, "")
-    spent, spent_reason, _ = pubs.admit("brief.txt", pub.token)
+    spent, spent_reason, _ = pubs.admit("spent.txt", direct.token)
     assert not spent and "already fetched" in spent_reason
 
-
-def test_the_route_serves_once_and_then_refuses(pubs: Publications, tmp_path: Path) -> None:
-    pub = pubs.publish("brief.txt")
     staged(tmp_path)
     srv = server(tmp_path, pubs)
+
+    # a wrong token refuses and does not spend; the right one serves, once
+    pub = pubs.publish("brief.txt")
+    wrong = srv.get("/pub/brief.txt?t=not-this-one")
+    assert wrong.status == 403
+    assert pubs.get("brief.txt").fetches == 0, "a wrong token must not spend the link"
 
     first = srv.get(f"/pub/brief.txt?t={pub.token}")
     assert first.status == 200 and first.body == b"payload"
@@ -63,91 +70,57 @@ def test_the_route_serves_once_and_then_refuses(pubs: Publications, tmp_path: Pa
     second = srv.get(f"/pub/brief.txt?t={pub.token}")
     assert second.status == 410, "the second open finds the gate closed, honestly named"
 
-
-def test_the_wrong_token_refuses_and_does_not_spend(pubs: Publications, tmp_path: Path) -> None:
-    pub = pubs.publish("brief.txt")
-    staged(tmp_path)
-    srv = server(tmp_path, pubs)
-
-    wrong = srv.get("/pub/brief.txt?t=not-this-one")
-    assert wrong.status == 403
-    assert pubs.get("brief.txt").fetches == 0, "a wrong token must not spend the link"
-    right = srv.get(f"/pub/brief.txt?t={pub.token}")
-    assert right.status == 200
-
-
-def test_expiry_is_a_read_path_fact(pubs: Publications, tmp_path: Path) -> None:
-    import time
-
-    pub = pubs.publish("brief.txt", lifetime_s=0.05)
+    # expiry is a read-path fact, not a sweep's
+    expiring = pubs.publish("expired.txt", lifetime_s=0.05)
     time.sleep(0.06)  # the lifetime runs out while nobody is sweeping
-    staged(tmp_path)
-    srv = server(tmp_path, pubs)
-    answer = srv.get(f"/pub/brief.txt?t={pub.token}")
-    assert answer.status == 410 and "expired" in answer.text
+    (tmp_path / "home" / "serve" / "expired.txt").write_bytes(b"payload")
+    expired = srv.get(f"/pub/expired.txt?t={expiring.token}")
+    assert expired.status == 410 and "expired" in expired.text
 
+    # takedown marks the record dead, is idempotent, and the route answers 410
+    live = pubs.publish("live.txt")
+    (tmp_path / "home" / "serve" / "live.txt").write_bytes(b"payload")
+    assert pubs.takedown("live.txt") is True
+    assert pubs.takedown("live.txt") is False, "a takedown is idempotent — not a second act"
+    assert pubs.get("live.txt").taken_down
+    dead = srv.get(f"/pub/live.txt?t={live.token}")
+    assert dead.status == 410 and "taken down" in dead.text
 
-def test_takedown_marks_the_record_dead(pubs: Publications, tmp_path: Path) -> None:
-    pub = pubs.publish("brief.txt")
-    staged(tmp_path)
-    srv = server(tmp_path, pubs)
-
-    assert pubs.takedown("brief.txt") is True
-    assert pubs.takedown("brief.txt") is False, "a takedown is idempotent — not a second act"
-    assert pubs.get("brief.txt").taken_down
-    answer = srv.get(f"/pub/brief.txt?t={pub.token}")
-    assert answer.status == 410 and "taken down" in answer.text
-
-
-def test_the_tool_takedown_deletes_the_bytes(runtime) -> None:
-    """Deletion is the tool's act, next to the registry's mark."""
-    import asyncio
-
-    served = runtime.settings.home / "serve" / "x.txt"
-    served.parent.mkdir(parents=True, exist_ok=True)
-    served.write_bytes(b"payload")
-    runtime.publications.publish("x.txt")
-    result = asyncio.run(PushTool().run({"op": "takedown", "name": "x.txt"}, runtime))
-    assert result.ok and not served.exists(), (
-        "takedown deletes the bytes — a dead link with live bytes is a leak in waiting"
-    )
-
-
-def test_names_are_plain_and_republish_is_governed(pubs: Publications) -> None:
+    # names are one plain file name, and a live publication is not replaced
+    for bad in ("../escape", "a/b", r"..\win"):
+        with pytest.raises(ValueError):
+            pubs.publish(bad)
+    pubs.publish("slot.txt")
     with pytest.raises(ValueError):
-        pubs.publish("../escape")
-    with pytest.raises(ValueError):
-        pubs.publish("a/b")
-    with pytest.raises(ValueError):
-        pubs.publish(r"..\win")
-    pubs.publish("live.txt")
-    with pytest.raises(ValueError):
-        pubs.publish("live.txt"), "an alive publication is not replaced by a second link"
-    pubs.takedown("live.txt")
-    pubs.publish("live.txt")  # a dead one may be replaced
+        pubs.publish("slot.txt"), "an alive publication is not replaced by a second link"
+    pubs.takedown("slot.txt")
+    pubs.publish("slot.txt")  # a dead one may be replaced
 
-
-def test_a_server_without_publications_says_nothing(pubs, tmp_path) -> None:
+    # a server with no registry answers as if nothing, not as if closed
     bare = LocalServer(tmp_path / "home", artifacts=tmp_path / "home" / "ui")
     assert bare.get("/pub/anything?t=x").status == 404, (
         "a server without publications answers as if nothing, not as if closed"
     )
 
 
-async def test_the_tool_serves_within_the_files_tool_reach(runtime, monkeypatch) -> None:
+async def test_the_tool_serves_within_the_files_reach_and_never_in_front_of_a_funnel(
+    runtime, monkeypatch
+) -> None:
     """The read is a files read: private paths are refused, home files publish."""
     from daedalus.tools import publish as publish_module
 
     monkeypatch.setattr(publish_module, "funnel_on", lambda: False)
     tool = PushTool()
+
     allowed = runtime.settings.home / "brief.txt"
     allowed.write_bytes(b"payload")
     result = await tool.run({"op": "serve", "path": str(allowed)}, runtime)
     assert result.ok, result.output
     record = runtime.publications.get(allowed.name)
     assert record is not None and record.fetches == 0
-    copied = runtime.settings.home / "serve" / allowed.name
-    assert copied.is_file(), "the publication's bytes live in serve/, not in ui/"
+    assert (runtime.settings.home / "serve" / allowed.name).is_file(), (
+        "the publication's bytes live in serve/, not in ui/"
+    )
 
     blocked = runtime.settings.home / "docs" / "private" / "note.txt"
     blocked.parent.mkdir(parents=True, exist_ok=True)
@@ -160,13 +133,8 @@ async def test_the_tool_serves_within_the_files_tool_reach(runtime, monkeypatch)
     oversized = await tool.run({"op": "serve", "path": str(big)}, runtime)
     assert not oversized.ok and "publication cap" in oversized.output
 
-
-async def test_publication_is_refused_in_front_of_a_funnel(runtime, monkeypatch) -> None:
-    """T25's gate, inherited: Funnel on is a refusal, unknown is one too."""
-    from daedalus.tools import publish as publish_module
-
-    tool = PushTool()
-    src = runtime.settings.home / "brief.txt"
+    # Funnel on is a refusal, and refusal precedes the move; unknown is one too
+    src = runtime.settings.home / "small.txt"
     src.write_bytes(b"payload")
     monkeypatch.setattr(publish_module, "funnel_on", lambda: True)
     funnelled = await tool.run({"op": "serve", "path": str(src)}, runtime)
@@ -174,12 +142,16 @@ async def test_publication_is_refused_in_front_of_a_funnel(runtime, monkeypatch)
     assert not (runtime.settings.home / "serve" / src.name).exists(), (
         "a refused publish copies nothing — refusal precedes the move"
     )
+
     monkeypatch.setattr(publish_module, "funnel_on", lambda: None)
     unknown = await tool.run({"op": "serve", "path": str(src)}, runtime)
     assert not unknown.ok and "unknown" in unknown.output
 
 
-async def test_the_tool_serves_a_url_with_the_token_and_a_takedown(runtime, monkeypatch) -> None:
+async def test_the_link_is_a_real_url_with_its_token_and_a_takedown_deletes_the_bytes(
+    runtime, monkeypatch
+) -> None:
+    from daedalus.approvals.classify import Level
     from daedalus.tools import publish as publish_module
 
     stub = runtime.settings.home / "stubts"
@@ -206,10 +178,58 @@ async def test_the_tool_serves_a_url_with_the_token_and_a_takedown(runtime, monk
 
     # takedown: the link dies and the bytes go with it
     after = await tool.run({"op": "takedown", "name": src.name}, runtime)
-    assert after.ok and not (runtime.settings.home / "serve" / src.name).exists()
+    assert after.ok and not (runtime.settings.home / "serve" / src.name).exists(), (
+        "takedown deletes the bytes — a dead link with live bytes is a leak in waiting"
+    )
+
+    # the public acts are cautioned; reading the list is not
+    assert tool.risk_for({"op": "serve"}) is not None
+    assert tool.assess({"op": "serve"}).level == Level.CAUTION
+    assert tool.assess({"op": "push"}).level == Level.CAUTION
+    assert tool.assess({"op": "list"}).level == Level.OK
+
+
+async def test_serving_a_file_that_already_lives_in_serve_borrows_it_and_leaves_it(
+    runtime, monkeypatch
+) -> None:
+    """The owner asked for a file *in* serve/ — so publishing one must not copy
+    it onto itself, and taking the link down must not delete their only copy.
+
+    Lived as a traceback: `shutil.SameFileError` when the agent wrote its own
+    artifact into serve/ and then published it, and a `unlink` waiting to eat
+    the owner's file on takedown.
+    """
+    from daedalus.tools import publish as publish_module
+
+    monkeypatch.setattr(publish_module, "funnel_on", lambda: False)
+    tool = PushTool()
+
+    serve_dir = runtime.settings.home / "serve"
+    serve_dir.mkdir(parents=True, exist_ok=True)
+    mine = serve_dir / "catalog.md"
+    mine.write_text("# the owner's own file\n")
+
+    served = await tool.run({"op": "serve", "path": str(mine), "fetches": 2}, runtime)
+    assert served.ok, served.output
+    assert mine.read_text() == "# the owner's own file\n", "the copy overwrote its own source"
+    record = runtime.publications.get("catalog.md")
+    assert record is not None and record.owns_bytes is False
+
+    gone = await tool.run({"op": "takedown", "name": "catalog.md"}, runtime)
+    assert gone.ok and "untouched" in gone.output
+    assert mine.is_file(), "a takedown deleted a file the publication never made"
+
+    # a copy the tool did make is still deleted — the takedown's own guarantee
+    elsewhere = runtime.settings.home / "notes.md"
+    elsewhere.write_text("mine too")
+    assert (await tool.run({"op": "serve", "path": str(elsewhere)}, runtime)).ok
+    await tool.run({"op": "takedown", "name": "notes.md"}, runtime)
+    assert not (serve_dir / "notes.md").exists()
 
 
 async def test_push_names_a_peer_and_refuses_the_air(runtime, monkeypatch) -> None:
+    import threading
+
     from daedalus.tools import publish as publish_module
 
     stub = runtime.settings.home / "stubts2"
@@ -241,12 +261,15 @@ async def test_push_names_a_peer_and_refuses_the_air(runtime, monkeypatch) -> No
         "the copy went through the one Taildrop command, to a named peer"
     )
 
+    # the tailscale subprocess runs off the event loop, so a slow call cannot
+    # freeze typing, heartbeats, or every turn
+    seen: list[bool] = []
 
-def test_push_assess_cautions_the_public_acts(runtime) -> None:
-    from daedalus.approvals.classify import Level
+    def targets() -> list[str]:
+        seen.append(threading.current_thread() is threading.main_thread())
+        return ["phone"]
 
-    tool = PushTool()
-    assert tool.risk_for({"op": "serve"}) is not None
-    assert tool.assess({"op": "serve"}).level == Level.CAUTION
-    assert tool.assess({"op": "push"}).level == Level.CAUTION
-    assert tool.assess({"op": "list"}).level == Level.OK
+    monkeypatch.setattr(publish_module, "_targets", targets)
+    again = await PushTool().run({"op": "peers"}, runtime)
+    assert again.ok and "phone" in again.output
+    assert seen == [False], "the subprocess ran on the loop's thread"
