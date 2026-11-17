@@ -30,6 +30,8 @@ import shlex
 from dataclasses import dataclass
 from enum import Enum
 
+from .explain import effects
+
 # A `rm` aimed at one of these removes the machine's footing. Aimed at
 # `~/code/build`, it is merely destructive.
 _CATASTROPHIC_TARGETS = frozenset(
@@ -75,6 +77,9 @@ class Assessment:
     level: Level = Level.OK
     summary: str = "run a command"
     reasons: tuple[str, ...] = ()
+    #: What the source or command literally does, in plain sentences — the line
+    #: that makes the level mean something (`approvals/explain.py`).
+    effects: tuple[str, ...] = ()
     recognised: bool = True
     target: str = ""
     # An explicit replacement for the level's stock risk line, for the rare case
@@ -310,13 +315,17 @@ def classify_command(command: str) -> Assessment:
         # that it was not recognised.
         return Assessment(
             level=Level.CAUTION,
-            summary="run a command that this classifier does not recognise",
-            reasons=("it did not match the known read-only commands",),
+            # No jargon: the owner does not own a "classifier". They own a
+            # machine that may change, and that is the sentence they need.
+            summary="run a command it has not seen before",
+            reasons=("it is not one of the commands it knows only read",),
+            effects=effects(text, language="bash"),
             recognised=False,
         )
     return Assessment(
         level=worst,
         summary=summary,
         reasons=tuple(dict.fromkeys(reasons)),
+        effects=effects(text, language="bash"),
         target=wiped,
     )

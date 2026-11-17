@@ -32,6 +32,14 @@ class ApprovalRequest:
     level: str = "ok"
     note: str = ""
     reasons: tuple[str, ...] = ()
+    #: What the action literally does (approvals/explain.py) — the facts, not
+    #: the risk label. This is the difference between a prompt the owner reads
+    #: and one they click through.
+    effects: tuple[str, ...] = ()
+    #: What saying yes also remembers, when it remembers anything ("approving
+    #: this host"). Consent that quietly becomes standing is worse than no
+    #: consent at all, so the prompt says it before the click, not after.
+    remembers: str = ""
     detail: str = ""
     # What the two buttons say. The tool supplies them so the choice names the
     # action rather than a generic "Approve".
@@ -53,10 +61,22 @@ class ApprovalRequest:
         lines.append(f"**Risk:** {self.note or self.level}")
         for reason in self.reasons:
             lines.append(f"    • {reason}")
+        # The facts, above the code: what it will touch, where it will write,
+        # who it will talk to. A risk label without this is a mood; this is the
+        # part the owner can actually judge.
+        if self.effects:
+            lines.extend(["", "**What this will do:**"])
+            for effect in self.effects:
+                lines.append(f"    • {effect}")
         detail = self.detail_text()
         if detail:
             lines.extend(["", f"```\n{detail}\n```"])
+        if self.remembers:
+            lines.extend(["", f"_Saying yes also remembers this: {self.remembers}._"])
         lines.extend(["", f"_{self.reason}_"])
+        # What declining costs, said plainly: a prompt with no stated
+        # consequence is a prompt that invites guessing.
+        lines.append("_If you say no, nothing runs and the turn carries on._")
         return "\n".join(lines)
 
 

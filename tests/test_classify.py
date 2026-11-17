@@ -26,9 +26,8 @@ from tests.conftest import tool_call
 
 # --- the classifier ------------------------------------------------------
 
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
+def test_the_classifier_judges_a_command_by_what_it_could_destroy() -> None:
+    for command, expected in [
         # Reading is not an event.
         ("git status --short && git log --oneline -5", Level.OK),
         ("df -h /", Level.OK),
@@ -55,50 +54,51 @@ from tests.conftest import tool_call
         ("mkfs.ext4 /dev/nvme0n1p1", Level.CATASTROPHIC),
         ("dd if=/dev/zero of=/dev/sda bs=1M", Level.CATASTROPHIC),
         (":(){ :|:& };:", Level.CATASTROPHIC),
-    ],
-)
-def test_the_classifier_judges_commands_by_what_they_could_destroy(command: str, expected: Level) -> None:
-    assert classify_command(command).level is expected
+    ]:
+        assert classify_command(command).level is expected, command
 
 
-def test_a_target_inside_a_system_root_is_refused_but_a_deep_one_is_not() -> None:
-    """`/usr/lib` takes the machine with it; `/usr/local/myapp` is a rebuild."""
+def test_a_system_root_is_refused_where_a_deep_path_is_a_rebuild() -> None:
+    """A path is judged by what it takes with it, wherever it sits in the line."""
+    # case: `/usr/lib` takes the machine; `/usr/local/myapp` is a rebuild.
     assert classify_command("rm -rf /usr/lib").level is Level.CATASTROPHIC
     assert classify_command("rm -rf /usr/local/myapp").level is Level.DESTRUCTIVE
 
-
-def test_a_cd_prefix_does_not_hide_the_command_behind_it() -> None:
+    # case: a `cd` prefix does not hide the command behind it.
     assert classify_command("cd /tmp && rm -rf /").level is Level.CATASTROPHIC
 
 
-@pytest.mark.parametrize(
-    "command",
-    ["cat .env", "cat ~/.ssh/id_rsa", "grep -r AWS ~/.aws/credentials", "cat docs/private/notes.md"],
-)
-def test_paths_the_owner_put_out_of_bounds_are_refused_from_the_shell_too(command: str) -> None:
+def test_paths_the_owner_put_out_of_bounds_are_refused_from_the_shell_too() -> None:
     """`files` refuses these. A guard on one tool is worth nothing if `shell`
     walks straight through it — and reading a key into the conversation is a
     way for a value to leave the machine."""
-    assert classify_command(command).level is Level.CATASTROPHIC
+    for command in [
+        "cat .env",
+        "cat ~/.ssh/id_rsa",
+        "grep -r AWS ~/.aws/credentials",
+        "cat docs/private/notes.md",
+    ]:
+        assert classify_command(command).level is Level.CATASTROPHIC, command
 
 
-def test_an_unrecognised_command_is_never_called_safe() -> None:
+def test_an_unrecognised_command_is_caution_and_the_classifier_never_raises() -> None:
     """Both error directions have a cost, so the unknown case is stated plainly
-    rather than guessed at in either direction."""
+    rather than guessed at in either direction — and no input crashes the guard."""
     assessment = classify_command("frobnicate --the-thing")
     assert assessment.level is Level.CAUTION
     assert not assessment.recognised
     assert "not" in assessment.note()
 
-
-def test_the_classifier_never_raises() -> None:
     for command in ["", "   ", "\x00", "rm -rf 'unclosed", "$(", "cat <<'EOF'"]:
         classify_command(command)
 
 
 # --- what the owner reads ------------------------------------------------
 
-def test_the_prompt_says_what_the_action_is_not_which_internal_tool_it_is(runtime: Runtime) -> None:
+def test_the_approval_prompt_describes_the_action_and_its_risk(runtime: Runtime) -> None:
+    """The owner reads an action, not a scope glob — and a tool that cannot
+    describe itself is never flattered as read-only."""
+    # case: the prompt explains the action, its level, its cost and its arguments.
     request = ApprovalRequest(
         action="shell",
         scope="shell:*",
@@ -118,17 +118,13 @@ def test_the_prompt_says_what_the_action_is_not_which_internal_tool_it_is(runtim
     assert "cannot be undone" in text
     assert "rm -rf build/" in text
 
-
-def test_a_read_only_command_is_labelled_as_such(runtime: Runtime) -> None:
-    tool = runtime.tools.get("shell")
-    assessment = tool.assess({"command": "git status --short"})
+    # case: a read-only command is labelled honestly.
+    assessment = runtime.tools.get("shell").assess({"command": "git status --short"})
     assert assessment.level is Level.OK
     assert assessment.note() == "no lasting change"
 
-
-def test_an_ask_tier_tool_never_claims_to_be_read_only(runtime: Runtime) -> None:
-    """The default assessment must not flatter a tool that cannot describe
-    itself — "read-only" on an unknown action is how a prompt gets waved through."""
+    # case: an ASK-tier tool that cannot describe itself does not claim read-only;
+    # an AUTO-tier one may.
     from daedalus.tools.base import Tool
 
     opaque = type("Opaque", (Tool,), {"name": "mystery", "risk": Risk.ASK})()
@@ -140,7 +136,11 @@ def test_an_ask_tier_tool_never_claims_to_be_read_only(runtime: Runtime) -> None
 
 # --- who asks, and what consent actually covers --------------------------
 
-async def test_a_read_only_command_runs_without_asking(runtime: Runtime) -> None:
+async def test_a_read_only_command_runs_without_asking_and_a_mutating_one_asks(
+    runtime: Runtime,
+) -> None:
+    """The prompt is for actions that change something, not for looking."""
+    # case: read-only — no approval requested.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[ScriptedProvider([tool_call("shell", command="df -h /"), ChatResult(content="57% free.")])],
@@ -151,24 +151,24 @@ async def test_a_read_only_command_runs_without_asking(runtime: Runtime) -> None
     assert isinstance(surface, ScriptedSurface)
     assert surface.approvals == [], "a read-only command should not have asked for permission"
 
-
-async def test_a_mutating_command_asks(runtime: Runtime) -> None:
+    # case: mutating — exactly one approval, and the call still runs.
     runtime.model = ModelClient(
         runtime.settings,
-        providers=[
-            ScriptedProvider([tool_call("shell", command="mv a b"), ChatResult(content="Moved.")])
-        ],
+        providers=[ScriptedProvider([tool_call("shell", command="mv a b"), ChatResult(content="Moved.")])],
     )
     result = await Engine(runtime).run_turn(InboundEvent(text="move it", user_id="owner"))
     assert result.text == "Moved."
-    surface = runtime.surface
-    assert isinstance(surface, ScriptedSurface)
     assert len(surface.approvals) == 1
 
 
-async def test_approving_one_shell_command_does_not_cover_the_next(runtime: Runtime) -> None:
-    """The hole this closes: `shell` has no scope that describes a command, so a
-    `shell:*` grant from approving `mv a b` used to silently cover `rm -rf c`."""
+async def test_an_approval_covers_only_the_call_that_was_approved(runtime: Runtime) -> None:
+    """Consent is narrow: one command, one operation, and never for destruction.
+
+    `shell` has no scope that describes a command, so a `shell:*` grant from
+    approving `mv a b` used to cover `rm -rf c`; and consent for something
+    irreversible is not consent for it later, forever.
+    """
+    # case: a second shell command is not covered by the first approval.
     runtime.model = ModelClient(
         runtime.settings,
         providers=[
@@ -187,9 +187,7 @@ async def test_approving_one_shell_command_does_not_cover_the_next(runtime: Runt
     assert len(surface.approvals) == 2, "the second command was covered by the first approval"
     assert not runtime.approvals.grants.find("shell", "shell:*")
 
-
-async def test_a_destructive_approval_is_never_remembered(runtime: Runtime) -> None:
-    """Consent for something irreversible is not consent for it later, forever."""
+    # case: a destructive capability removal leaves no standing grant.
     remove = ToolCall(
         id="call_remove", name="capability", arguments={"op": "remove", "name": "disk_free_check"}
     )
@@ -200,8 +198,7 @@ async def test_a_destructive_approval_is_never_remembered(runtime: Runtime) -> N
     await Engine(runtime).run_turn(InboundEvent(text="remove that", user_id="owner"))
     assert not runtime.approvals.grants.find("capability", "capability:remove")
 
-
-def test_an_operation_scope_does_not_cover_a_different_operation(runtime: Runtime) -> None:
+    # case: an operation scope never covers a different operation.
     assert runtime.approvals.derive_scope("capability", {"op": "author"}) == "capability:author"
     assert runtime.approvals.derive_scope("capability", {"op": "remove"}) == "capability:remove"
 
@@ -228,28 +225,27 @@ async def test_a_refused_command_is_stopped_and_the_owner_is_told(runtime: Runti
 
 # --- bytes stay home -----------------------------------------------------
 
-@pytest.mark.parametrize("name", ["NVIDIA_API_KEY", "ZAI_API_KEY", "MY_TOKEN", "DB_PASSWORD", "GPG_KEY"])
-def test_a_command_cannot_inherit_a_credential(name: str, settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(name, "sk-live-value")
-    monkeypatch.setenv("EDITOR", "vim")
-    env = scrubbed(settings)
-    assert name not in env
-    assert env["EDITOR"] == "vim", "only credentials are removed"
+def test_a_command_cannot_inherit_a_credential(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Only credentials are removed from the environment a command inherits.
 
+    That includes keys in the install's `.env`, which are the owner's and were
+    put there for Daedalus — not for whatever command the agent composes next.
+    """
+    for name in ["NVIDIA_API_KEY", "ZAI_API_KEY", "MY_TOKEN", "DB_PASSWORD", "GPG_KEY"]:
+        monkeypatch.setenv(name, "sk-live-value")
+        monkeypatch.setenv("EDITOR", "vim")
+        env = scrubbed(settings)
+        assert name not in env
+        assert env["EDITOR"] == "vim", "only credentials are removed"
+        assert looks_secret(name)
+    assert not looks_secret("EDITOR") and not looks_secret("PATH")
 
-def test_everything_in_the_install_env_is_scrubbed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    """Keys in the install's `.env` are the owner's, put there for Daedalus —
-    not for whatever command the agent composes next."""
+    # case: a key in the install's own `.env` is scrubbed too.
     monkeypatch.setenv("SOME_HARMLESS_NAME", "value")
-    settings = Settings(home=tmp_path, env={"SOME_HARMLESS_NAME": "value"}, heavy=[], cheap=None)
-    assert "SOME_HARMLESS_NAME" not in scrubbed(settings)
-
-
-def test_looks_secret_is_wide_on_purpose() -> None:
-    assert looks_secret("NVIDIA_API_KEY")
-    assert looks_secret("DISCORD_BOT_TOKEN")
-    assert not looks_secret("EDITOR")
-    assert not looks_secret("PATH")
+    install = Settings(home=tmp_path, env={"SOME_HARMLESS_NAME": "value"}, heavy=[], cheap=None)
+    assert "SOME_HARMLESS_NAME" not in scrubbed(install)
 
 
 async def test_a_command_cannot_print_a_secret_into_the_conversation(

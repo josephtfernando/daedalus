@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from ..approvals.classify import Assessment, Level
+from ..approvals.explain import effects as explain_effects
 from ..approvals.risk import Risk
 from ..security.env import scrubbed
 from . import guard
@@ -403,6 +404,9 @@ class ProcessTool(Tool):
             level=Level.CAUTION,
             summary=f"start {name!r} and leave it running",
             reasons=("it keeps running in the background after this turn ends",),
+            # The same facts `shell` gets, because starting a process *is*
+            # running a command — only the lifetime differs.
+            effects=explain_effects(str(args.get("command", "")), language="bash"),
         )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:

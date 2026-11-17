@@ -10,6 +10,7 @@ import sys
 from typing import Any, TYPE_CHECKING
 
 from ..approvals.classify import Assessment, Level
+from ..approvals.explain import effects
 from ..approvals.risk import Risk
 from ..security.env import scrubbed
 from .base import Tool, ToolResult, params
@@ -47,11 +48,16 @@ class CodeTool(Tool):
     )
 
     def assess(self, args: dict[str, Any]) -> Assessment:
-        language = str(args.get("language", "code"))
+        language = str(args.get("language", "code")).lower()
+        source = str(args.get("source", ""))
+        # The prompt used to say "run python code on this machine" for every
+        # script — true of `print(1)` and of `shutil.rmtree("~")` alike, which is
+        # how a prompt stops being read. These are the facts the source states.
         return Assessment(
             level=Level.CAUTION,
             summary=f"run {language} code on this machine",
             reasons=("it runs with your privileges — nothing confines it to the workspace",),
+            effects=effects(source, language=language),
         )
 
     async def run(self, args: dict[str, Any], ctx: "Runtime") -> ToolResult:

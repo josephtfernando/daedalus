@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import discord
 
 from ..base import ApprovalRequest
+
+log = logging.getLogger("daedalus.surface.discord")
 
 
 class ApprovalView(discord.ui.View):
@@ -32,7 +35,7 @@ class ApprovalView(discord.ui.View):
             return
         self.result = True
         self._finish()
-        await interaction.response.edit_message(content=self._resolved_text(True), view=None)
+        await self._say(interaction, self._resolved_text(True))
 
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="⛔")
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:  # noqa: ARG002
@@ -41,7 +44,24 @@ class ApprovalView(discord.ui.View):
             return
         self.result = False
         self._finish()
-        await interaction.response.edit_message(content=self._resolved_text(False), view=None)
+        await self._say(interaction, self._resolved_text(False))
+
+    @staticmethod
+    async def _say(interaction: discord.Interaction, text: str) -> None:
+        """Rewrite the question with the answer, tolerating a late click.
+
+        Discord expires an interaction token after a few seconds. The decision
+        above is already recorded by then — the future is resolved before this
+        call — so a 404 here means "that message is too old to edit", not "the
+        approval was lost". Raising would print a traceback and make a
+        successful approval look like a crash.
+        """
+        try:
+            await interaction.response.edit_message(content=text, view=None)
+        except discord.NotFound:
+            log.info("the approval question was too old to rewrite; the answer still stands")
+        except discord.HTTPException as exc:  # noqa: BLE001 — the answer stands regardless
+            log.warning("could not rewrite the approval question (%s)", exc)
 
     def _finish(self) -> None:
         if not self.future.done():
@@ -53,5 +73,6 @@ class ApprovalView(discord.ui.View):
         return f"{self.request.describe()}\n\n— {mark}"
 
     async def on_timeout(self) -> None:
+        log.info("the approval question expired unanswered — the action was not taken")
         if not self.future.done():
             self.future.set_result(False)
