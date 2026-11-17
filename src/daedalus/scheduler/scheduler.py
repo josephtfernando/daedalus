@@ -26,6 +26,7 @@ from .cron import validate as validate_cron
 from .jobs import Job, JobStore
 from .proactive import ProactiveState
 from .wakes import Wake, WakeLog
+from .watches import Watch, WatchStore, any_fire_due, describe_fire, prompt_for
 
 if TYPE_CHECKING:
     from ..runtime import Runtime
@@ -67,6 +68,7 @@ class Scheduler:
     log: WakeLog = field(init=False)
     proactive: ProactiveState = field(init=False)
     reminders: ReminderLedger = field(init=False)
+    watches: WatchStore = field(init=False)
 
     def __post_init__(self) -> None:
         if self.jobs_path is None:
@@ -75,6 +77,7 @@ class Scheduler:
         self.log = WakeLog(self.state_dir / "wakes.db")
         self.proactive = ProactiveState(self.state_dir / "proactive.json")
         self.reminders = ReminderLedger(self.state_dir / "reminders.json")
+        self.watches = WatchStore(self.state_dir / "watches.json")
 
     # -- job management ---------------------------------------------------
 
@@ -205,6 +208,10 @@ class Scheduler:
             self.store.put(job)
             results.append(result)
         results.extend(await self.fire_reminders(ctx, when))
+        # Watches come after reminders and before catch-up: a reminder is a
+        # moment the owner named, catch-up is work that is already late, and a
+        # watch is a *change* that will still be true a minute from now.
+        results.extend(await self.fire_watches(ctx, wake_handler, when))
         # Last, so that a slow drain can never delay a reminder the owner set
         # themselves. On a normal tick there is nothing here to do — a job whose
         # moment is *now* was handled above and has already moved `last_run` out
@@ -322,6 +329,68 @@ class Scheduler:
                 TickResult(job=f"reminder:{event.summary}", ran=True, ok=True, detail="reminded", output=text)
             )
         self.reminders.prune(now - REMINDER_MEMORY)
+        return results
+
+    async def fire_watches(
+        self, ctx: "Runtime", wake_handler: WakeHandler | None, when: datetime | None = None
+    ) -> list[TickResult]:
+        """Deliver every watch whose path changed since the owner was last told.
+
+        Each watch is stat'd once per tick. A change is composed through the wake
+        handler when one is wired — a sentence about *this* change is better than
+        a template — and falls back to the plain line when the model declines or
+        no handler exists. Silence is not an option here: unlike a wake, this was
+        the owner's instruction, so the fact is delivered either way.
+
+        The signature is updated only when the message is actually sent, so a
+        failed delivery is retried on the next tick rather than lost.
+        """
+        now_dt = when or datetime.now()
+        now = now_dt.timestamp()
+        results: list[TickResult] = []
+        watches = self.watches.all()
+        if not watches:
+            return results
+        # A stat is microseconds on a local disk and *not* on a stalled network
+        # mount — and this runs on the same loop that serves the owner's messages.
+        # The same lesson `publish` learned: a filesystem call off the loop.
+        due = await asyncio.to_thread(any_fire_due, watches, now)
+        for watch, what, current in due:
+            text = ""
+            if wake_handler is not None:
+                try:
+                    text = (await wake_handler(prompt_for(watch, what)) or "").strip()
+                except Exception:  # noqa: BLE001 — a watch must not kill the tick
+                    log.exception("watch %s could not compose its message", watch.id)
+                    text = ""
+            if not text:
+                text = describe_fire(watch, what, now)
+            if ctx.surface is not None:
+                try:
+                    await ctx.surface.send(text)
+                except Exception:  # noqa: BLE001 — recorded, and retried next tick
+                    log.exception("watch %s could not deliver its message", watch.id)
+                    results.append(
+                        TickResult(job=f"watch:{watch.id}", ran=True, ok=False, detail="delivery failed")
+                    )
+                    continue
+            watch.fired_at = now
+            watch.signature = current
+            if watch.once:
+                self.watches.remove(watch.id)
+            else:
+                self.watches.put(watch)
+            log.info("watch %s fired — %s %s", watch.id, Path(watch.path).name, what)
+            results.append(
+                TickResult(
+                    job=f"watch:{watch.id}",
+                    ran=True,
+                    ok=True,
+                    detail=f"{Path(watch.path).name} {what}"
+                    + (" (removed: it was a one-shot)" if watch.once else ""),
+                    output=text,
+                )
+            )
         return results
 
     async def _run_job(

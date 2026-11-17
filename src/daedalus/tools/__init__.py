@@ -14,9 +14,11 @@ def build_registry() -> ToolRegistry:
     from .capability import CapabilityTool
     from .code import CodeTool
     from .delegate import DelegateTool
+    from .diagnose import DiagnoseTool
     from .discord import DiscordTool
     from .files import FilesTool
     from .http import HttpTool
+    from .inbox import InboxTool
     from .memory import MemoryTool
     from .message import MessageTool
     from .process import ProcessTool
@@ -27,6 +29,7 @@ def build_registry() -> ToolRegistry:
     from .secrets import SecretsTool
     from .settings import SettingsTool
     from .shell import ShellTool
+    from .watch import WatchTool
 
     registry = ToolRegistry()
     for tool in (
@@ -34,6 +37,7 @@ def build_registry() -> ToolRegistry:
         ShellTool(),
         CodeTool(),
         HttpTool(),
+        InboxTool(),
         SearchTool(),
         BrowserTool(),
         ProcessTool(),
@@ -42,11 +46,13 @@ def build_registry() -> ToolRegistry:
         CalendarTool(),
         ScheduleTool(),
         RemindTool(),
+        WatchTool(),
         DiscordTool(),
         AskTool(),
         SecretsTool(),
         CapabilityTool(),
         DelegateTool(),
+        DiagnoseTool(),
         PushTool(),
         SettingsTool(),
     ):
