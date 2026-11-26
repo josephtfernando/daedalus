@@ -1,0 +1,1501 @@
+{
+  "ok": false,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 8,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "gsap_timeline_set_initial_hide",
+        "severity": "warning",
+        "message": "Initial hidden state for \".seat\" is set via tl.set(...) at position 0 inside the paused timeline. A zero-duration set at 0 does not render while the playhead sits exactly at 0, so frame 0 shows the un-hidden state.",
+        "selector": ".seat",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Use gsap.set(...) (immediate, outside the timeline) for initial states, or author the hidden state directly in CSS/attributes."
+      },
+      {
+        "code": "gsap_timeline_set_initial_hide",
+        "severity": "warning",
+        "message": "Initial hidden state for \".orbit-ring\" is set via tl.set(...) at position 0 inside the paused timeline. A zero-duration set at 0 does not render while the playhead sits exactly at 0, so frame 0 shows the un-hidden state.",
+        "selector": ".orbit-ring",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Use gsap.set(...) (immediate, outside the timeline) for initial states, or author the hidden state directly in CSS/attributes."
+      },
+      {
+        "code": "timeline_track_too_dense",
+        "severity": "warning",
+        "message": "This HTML file has 5 timed elements. Smaller sub-compositions keep timelines easier to read, iterate on, and diff.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move coherent scene groups into separate .html files under compositions/ and mount them from the parent with data-composition-src so the timeline stays easier to inspect, revise, and validate."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<section id=\"s1\"> is a timeline element that contains nested <div>. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#s1",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <section id=\"s1\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<section id=\"s2\"> is a timeline element that contains nested <div>. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#s2",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <section id=\"s2\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<section id=\"s3\"> is a timeline element that contains nested <div>. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#s3",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <section id=\"s3\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<section id=\"s4\"> is a timeline element that contains nested <div>. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#s4",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <section id=\"s4\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<section id=\"s5\"> is a timeline element that contains nested <div>. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#s5",
+        "dataAttributes": {},
+        "sourceFile": "/home/apollo/projects/daedalus/brag-output/composition/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <section id=\"s5\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      }
+    ],
+    "filesScanned": 1
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 8,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-labyrinth\" is 1.48s but its slot (data-duration) is 1.60s — the slot is shortened to the media length when rendered. Set data-duration to ~1.48s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-ring\" is 0.18s but its slot (data-duration) is 0.90s — the slot is shortened to the media length when rendered. Set data-duration to ~0.18s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-caption\" is 0.12s but its slot (data-duration) is 1.40s — the slot is shortened to the media length when rendered. Set data-duration to ~0.12s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-send\" is 0.10s but its slot (data-duration) is 0.35s — the slot is shortened to the media length when rendered. Set data-duration to ~0.10s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-gate\" is 0.18s but its slot (data-duration) is 0.90s — the slot is shortened to the media length when rendered. Set data-duration to ~0.18s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-lock\" is 0.30s but its slot (data-duration) is 2.00s — the slot is shortened to the media length when rendered. Set data-duration to ~0.30s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-logo\" is 1.48s but its slot (data-duration) is 2.00s — the slot is shortened to the media length when rendered. Set data-duration to ~1.48s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-dave\" is 0.10s but its slot (data-duration) is 0.30s — the slot is shortened to the media length when rendered. Set data-duration to ~0.10s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "daedalus-brag",
+          "data-start": "0",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-duration": "22",
+          "data-fps": "30"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      }
+    ]
+  },
+  "layout": {
+    "ok": false,
+    "errorCount": 2,
+    "warningCount": 1,
+    "infoCount": 12,
+    "findings": [
+      {
+        "code": "text_occluded",
+        "severity": "error",
+        "time": 1.222,
+        "selector": "div.bg-ghost",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 22.33,
+          "top": 360,
+          "right": 1913.61,
+          "bottom": 765,
+          "width": 1891.28,
+          "height": 405
+        },
+        "containerSelector": "div.bg-vignette",
+        "text": "DAEDALUS",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 22
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22.33,
+          "y": 360,
+          "width": 1891.28,
+          "height": 405
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 20.778,
+        "occurrences": 9,
+        "heldMs": 0,
+        "times": [
+          1.222,
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333,
+          20.778
+        ]
+      },
+      {
+        "code": "text_not_painted",
+        "severity": "error",
+        "time": 1.222,
+        "selector": "div.bg-ghost",
+        "message": "Text paints with an effectively transparent fill (-webkit-text-fill-color / color), so its glyphs are invisible.",
+        "rect": {
+          "left": 22.33,
+          "top": 360,
+          "right": 1913.61,
+          "bottom": 765,
+          "width": 1891.28,
+          "height": 405
+        },
+        "text": "DAEDALUS",
+        "fixHint": "Set an explicit, opaque `color` on the text — and an explicit `-webkit-text-fill-color` if an ancestor makes the fill transparent. If the transparency is intentional gradient text, add `background-clip: text`.",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22.33,
+          "y": 360,
+          "width": 1891.28,
+          "height": 405
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 20.778,
+        "occurrences": 9,
+        "heldMs": 0,
+        "times": [
+          1.222,
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333,
+          20.778
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "warning",
+        "time": 13.444,
+        "selector": "div.bg-grid",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -312,
+          "top": -168,
+          "right": 1992,
+          "bottom": 1128,
+          "width": 2304,
+          "height": 1296
+        },
+        "containerSelector": "div.bg",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 312,
+          "right": 72,
+          "top": 168,
+          "bottom": 48
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -312,
+          "y": -168,
+          "width": 2304,
+          "height": 1296
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 20.778,
+        "occurrences": 9,
+        "heldMs": 0,
+        "times": [
+          1.222,
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333,
+          20.778
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 1.222,
+        "selector": "div.bg-glow-b",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -324.28,
+          "top": -224.28,
+          "right": 1184.28,
+          "bottom": 1284.28,
+          "width": 1508.55,
+          "height": 1508.55
+        },
+        "containerSelector": "div.bg",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 324.28,
+          "top": 224.28,
+          "bottom": 204.28
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -324.28,
+          "y": -224.28,
+          "width": 1508.55,
+          "height": 1508.55
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 20.778,
+        "occurrences": 9,
+        "heldMs": 0,
+        "times": [
+          1.222,
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333,
+          20.778
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 1.222,
+        "selector": "div.bg-glow-a",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 230.21,
+          "top": -189.79,
+          "right": 1689.79,
+          "bottom": 1269.79,
+          "width": 1459.58,
+          "height": 1459.58
+        },
+        "containerSelector": "div.bg",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "top": 189.79,
+          "bottom": 189.79
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 230.21,
+          "y": -189.79,
+          "width": 1459.58,
+          "height": 1459.58
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 20.778,
+        "occurrences": 9,
+        "heldMs": 0,
+        "times": [
+          1.222,
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333,
+          20.778
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 1.222,
+        "selector": "span.hook-a",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 590.34,
+          "top": 566.29,
+          "right": 1329.64,
+          "bottom": 648.19,
+          "width": 739.3,
+          "height": 81.91
+        },
+        "containerSelector": "div.hook-wrap > div:nth-of-type(1)",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 590.34,
+          "top": 472.09,
+          "right": 1329.64,
+          "bottom": 554,
+          "width": 739.3,
+          "height": 81.91
+        },
+        "overflow": {
+          "bottom": 94.19
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 590.34,
+          "y": 566.29,
+          "width": 739.3,
+          "height": 81.91
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 1.222,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          1.222
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 1.222,
+        "selector": "span.hook-b",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 566.5,
+          "top": 648.19,
+          "right": 1353.48,
+          "bottom": 730.1,
+          "width": 786.98,
+          "height": 81.91
+        },
+        "containerSelector": "div.hook-wrap > div:nth-of-type(2)",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 566.5,
+          "top": 554,
+          "right": 1353.48,
+          "bottom": 635.91,
+          "width": 786.98,
+          "height": 81.91
+        },
+        "overflow": {
+          "bottom": 94.19
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 566.5,
+          "y": 648.19,
+          "width": 786.98,
+          "height": 81.91
+        },
+        "firstSeen": 1.222,
+        "lastSeen": 1.222,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          1.222
+        ]
+      },
+      {
+        "code": "text_box_overflow",
+        "severity": "info",
+        "time": 3.667,
+        "selector": "div.bg-ghost",
+        "message": "Text extends outside its nearest visual/container box.",
+        "rect": {
+          "left": 40,
+          "top": 432.69,
+          "right": 1931.28,
+          "bottom": 657.69,
+          "width": 1891.28,
+          "height": 225
+        },
+        "containerSelector": "div.bg",
+        "text": "DAEDALUS",
+        "fixHint": "Text is 1891px x 225px inside 1920px x 1080px and overflows by up to 11px; widen the container to at least ~1931px, or allow wrapping with max-width/fitTextFontSize.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "right": 11.28
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 40,
+          "y": 432.69,
+          "width": 1891.28,
+          "height": 225
+        },
+        "firstSeen": 3.667,
+        "lastSeen": 18.333,
+        "occurrences": 7,
+        "heldMs": 0,
+        "times": [
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333
+        ]
+      },
+      {
+        "code": "canvas_overflow",
+        "severity": "info",
+        "time": 3.667,
+        "selector": "div.bg-ghost",
+        "message": "Text extends outside the composition canvas.",
+        "rect": {
+          "left": 40,
+          "top": 360,
+          "right": 1931.28,
+          "bottom": 765,
+          "width": 1891.28,
+          "height": 405
+        },
+        "containerSelector": "#root",
+        "text": "DAEDALUS",
+        "fixHint": "Move the text inward, reduce its size, or mark intentional off-canvas animation with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "right": 11.28
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 40,
+          "y": 360,
+          "width": 1891.28,
+          "height": 405
+        },
+        "firstSeen": 3.667,
+        "lastSeen": 18.333,
+        "occurrences": 7,
+        "heldMs": 0,
+        "times": [
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 3.667,
+        "selector": "div.bg-ghost",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 40,
+          "top": 360,
+          "right": 1931.28,
+          "bottom": 765,
+          "width": 1891.28,
+          "height": 405
+        },
+        "containerSelector": "div.bg",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "right": 11.28
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 40,
+          "y": 360,
+          "width": 1891.28,
+          "height": 405
+        },
+        "firstSeen": 3.667,
+        "lastSeen": 18.333,
+        "occurrences": 7,
+        "heldMs": 0,
+        "times": [
+          3.667,
+          6.111,
+          8.556,
+          11,
+          13.444,
+          15.889,
+          18.333
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 3.667,
+        "selector": "#s2-title",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -55.49,
+          "top": 74.7,
+          "right": 1975.49,
+          "bottom": 234.43,
+          "width": 2030.98,
+          "height": 159.73
+        },
+        "containerSelector": "#s2",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 55.49,
+          "right": 55.49
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -55.49,
+          "y": 74.7,
+          "width": 2030.98,
+          "height": 159.73
+        },
+        "firstSeen": 3.667,
+        "lastSeen": 3.667,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          3.667
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 13.444,
+        "selector": "span.vault-line-a",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 849.99,
+          "top": 514.58,
+          "right": 1790.08,
+          "bottom": 593.77,
+          "width": 940.09,
+          "height": 79.2
+        },
+        "containerSelector": "div.s4-copy > div:nth-of-type(1)",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 849.99,
+          "top": 423.5,
+          "right": 1790.08,
+          "bottom": 502.7,
+          "width": 940.09,
+          "height": 79.2
+        },
+        "overflow": {
+          "bottom": 91.07
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 849.99,
+          "y": 514.58,
+          "width": 940.09,
+          "height": 79.2
+        },
+        "firstSeen": 13.444,
+        "lastSeen": 13.444,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          13.444
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 13.444,
+        "selector": "span.vault-line-b",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 849.99,
+          "top": 593.77,
+          "right": 1790.08,
+          "bottom": 672.97,
+          "width": 940.09,
+          "height": 79.2
+        },
+        "containerSelector": "div.s4-copy > div:nth-of-type(2)",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 849.99,
+          "top": 502.7,
+          "right": 1790.08,
+          "bottom": 581.89,
+          "width": 940.09,
+          "height": 79.2
+        },
+        "overflow": {
+          "bottom": 91.08
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 849.99,
+          "y": 593.77,
+          "width": 940.09,
+          "height": 79.2
+        },
+        "firstSeen": 13.444,
+        "lastSeen": 13.444,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          13.444
+        ]
+      },
+      {
+        "code": "text_box_overflow",
+        "severity": "info",
+        "time": 18.333,
+        "selector": "span.s5-tagline",
+        "message": "Text extends outside its nearest visual/container box.",
+        "rect": {
+          "left": 477.81,
+          "top": 670.5,
+          "right": 1442.19,
+          "bottom": 707.5,
+          "width": 964.38,
+          "height": 37
+        },
+        "containerSelector": "div.s5-inner > div:nth-of-type(2)",
+        "text": "Your laptop. A cabinet of gods. One free-text line.",
+        "fixHint": "Text is 964px x 37px inside 964px x 83px and overflows by up to 5px; increase the container height to at least ~88px, or allow wrapping with max-width/fitTextFontSize.",
+        "containerRect": {
+          "left": 477.81,
+          "top": 619.5,
+          "right": 1442.19,
+          "bottom": 702.5,
+          "width": 964.38,
+          "height": 83
+        },
+        "overflow": {
+          "bottom": 5
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 477.81,
+          "y": 670.5,
+          "width": 964.38,
+          "height": 37
+        },
+        "firstSeen": 18.333,
+        "lastSeen": 18.333,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          18.333
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 18.333,
+        "selector": "span.s5-tagline",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 477.81,
+          "top": 662.5,
+          "right": 1442.19,
+          "bottom": 709.5,
+          "width": 964.38,
+          "height": 47
+        },
+        "containerSelector": "div.s5-inner > div:nth-of-type(2)",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 477.81,
+          "top": 619.5,
+          "right": 1442.19,
+          "bottom": 702.5,
+          "width": 964.38,
+          "height": 83
+        },
+        "overflow": {
+          "bottom": 7
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 477.81,
+          "y": 662.5,
+          "width": 964.38,
+          "height": 47
+        },
+        "firstSeen": 18.333,
+        "lastSeen": 18.333,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          18.333
+        ]
+      }
+    ],
+    "duration": 22,
+    "samples": [
+      1.222,
+      3.667,
+      6.111,
+      8.556,
+      11,
+      13.444,
+      15.889,
+      18.333,
+      20.778
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 15,
+    "truncated": false,
+    "faceCheck": {
+      "ran": true,
+      "candidates": 0,
+      "faces": 0
+    }
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": false,
+    "errorCount": 1,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "contrast_aa_failure",
+        "severity": "error",
+        "message": "Contrast is 1.05:1; WCAG AA requires 3:1.",
+        "text": "DAEDALUS",
+        "fg": "rgb(18,21,28)",
+        "bg": "rgb(10,15,26)",
+        "ratio": 1.05,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(94,96,101)",
+        "large": true,
+        "selector": "div > div > div:nth-of-type(4)",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22.32619857788086,
+          "y": 360,
+          "width": 1891.28125,
+          "height": 405
+        },
+        "time": 1.222,
+        "times": [
+          1.222,
+          6.111,
+          11,
+          15.889,
+          20.778
+        ]
+      }
+    ],
+    "enabled": true,
+    "samples": [
+      1.222,
+      6.111,
+      11,
+      15.889,
+      20.778
+    ],
+    "checked": 73,
+    "passed": 68
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 3,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 23 text elements stay under it for 0.5 s or more, the smallest \"laptop ops\" at 16 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "laptop ops",
+        "selector": "#seat-dave > div:nth-of-type(2)",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 558.88,
+          "y": 627.32,
+          "width": 82.24,
+          "height": 19.02
+        },
+        "time": 6.125,
+        "times": [
+          0,
+          3.875,
+          4.125,
+          4.5,
+          4.75,
+          5.125,
+          5.5,
+          5.875,
+          6.125,
+          6.125,
+          6.5,
+          8.875,
+          10.875,
+          10.875,
+          11,
+          11.25,
+          11.25,
+          11.625,
+          11.625,
+          11.75,
+          12,
+          12,
+          20.625
+        ],
+        "fontPx": 15.56,
+        "floorPx": 28,
+        "seconds": 2.375,
+        "elements": [
+          {
+            "selector": "#seat-dave > div:nth-of-type(2)",
+            "text": "laptop ops",
+            "fontPx": 15.56,
+            "time": 6.125,
+            "seconds": 2.375
+          },
+          {
+            "selector": "#allow",
+            "text": "ALLOW",
+            "fontPx": 16,
+            "time": 11.75,
+            "seconds": 1.25
+          },
+          {
+            "selector": "#pipe-1 > span:nth-of-type(1)",
+            "text": "01",
+            "fontPx": 16.76,
+            "time": 10.875,
+            "seconds": 2.125
+          },
+          {
+            "selector": "#pipe-2 > span:nth-of-type(1)",
+            "text": "02",
+            "fontPx": 16.83,
+            "time": 11.25,
+            "seconds": 1.75
+          },
+          {
+            "selector": "#pipe-3 > span:nth-of-type(1)",
+            "text": "03",
+            "fontPx": 16.89,
+            "time": 11.625,
+            "seconds": 1.375
+          },
+          {
+            "selector": "#seat-odysseus > div:nth-of-type(2)",
+            "text": "research",
+            "fontPx": 16.99,
+            "time": 4.75,
+            "seconds": 3.75
+          },
+          {
+            "selector": "#pipe-4 > span:nth-of-type(1)",
+            "text": "04",
+            "fontPx": 17,
+            "time": 12,
+            "seconds": 1
+          },
+          {
+            "selector": "#seat-calliope > div:nth-of-type(2)",
+            "text": "creative voice",
+            "fontPx": 18.09,
+            "time": 5.125,
+            "seconds": 3.375
+          },
+          {
+            "selector": "#seat-daedalus > div:nth-of-type(2)",
+            "text": "coordinator",
+            "fontPx": 18.76,
+            "time": 4.125,
+            "seconds": 4.375
+          },
+          {
+            "selector": "div.msg-label",
+            "text": "DISCORD · DM",
+            "fontPx": 18.89,
+            "time": 8.875,
+            "seconds": 4.125
+          },
+          {
+            "selector": "#seat-melinoe > div:nth-of-type(2)",
+            "text": "verification",
+            "fontPx": 19.3,
+            "time": 6.5,
+            "seconds": 2
+          },
+          {
+            "selector": "#seat-icarus > div:nth-of-type(2)",
+            "text": "engineering",
+            "fontPx": 19.73,
+            "time": 5.5,
+            "seconds": 3
+          },
+          {
+            "selector": "#seat-dave > div:nth-of-type(1)",
+            "text": "dave",
+            "fontPx": 19.89,
+            "time": 6.125,
+            "seconds": 2.375
+          },
+          {
+            "selector": "#seat-athena > div:nth-of-type(2)",
+            "text": "knowledge & code",
+            "fontPx": 20,
+            "time": 4.5,
+            "seconds": 4
+          },
+          {
+            "selector": "#seat-heracles > div:nth-of-type(2)",
+            "text": "the body",
+            "fontPx": 20,
+            "time": 5.875,
+            "seconds": 2.625
+          },
+          {
+            "selector": "div.s1-meta.kicker",
+            "text": "A CAPABILITY IS A THING THAT RUNS",
+            "fontPx": 21,
+            "time": 0,
+            "seconds": 3.5
+          },
+          {
+            "selector": "div.pantheon-kicker.kicker",
+            "text": "THE CABINET · EIGHT SEATS · ONE LOOP",
+            "fontPx": 21,
+            "time": 3.875,
+            "seconds": 4.625
+          },
+          {
+            "selector": "#s5-dave",
+            "text": "and dave.",
+            "fontPx": 25.62,
+            "time": 20.625,
+            "seconds": 1.375
+          },
+          {
+            "selector": "#mini-core",
+            "text": "LOOP",
+            "fontPx": 26.52,
+            "time": 11,
+            "seconds": 0.5
+          },
+          {
+            "selector": "#pipe-1 > span:nth-of-type(2)",
+            "text": "CONTEXT",
+            "fontPx": 26.61,
+            "time": 10.875,
+            "seconds": 2.125
+          },
+          {
+            "selector": "#pipe-2 > span:nth-of-type(2)",
+            "text": "MODEL PROPOSES",
+            "fontPx": 26.73,
+            "time": 11.25,
+            "seconds": 1.75
+          },
+          {
+            "selector": "#pipe-3 > span:nth-of-type(2)",
+            "text": "APPROVAL GATE",
+            "fontPx": 26.83,
+            "time": 11.625,
+            "seconds": 1.375
+          },
+          {
+            "selector": "#pipe-4 > span:nth-of-type(2)",
+            "text": "LOCAL ACTION",
+            "fontPx": 27,
+            "time": 12,
+            "seconds": 1
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"The model proposes. The engine decides.\" (6 words) is on screen 0.86 s (±0.01 s), under its 1.72 s floor: hold it about 0.5 s + 0.3 s a word (2.30 s here) before it leaves or changes; see references/motion.md.",
+        "text": "The model proposes. The engine decides.",
+        "selector": "div.s3-caption-bottom",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 610.89,
+          "y": 996.71,
+          "width": 698.2200000000001,
+          "height": 39
+        },
+        "time": 12.141,
+        "words": 6,
+        "seconds": 0.859,
+        "floorSeconds": 1.725,
+        "measured": [
+          {
+            "time": 11.875,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 12,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 12.125,
+            "opacity": 0.4,
+            "heightPx": 39
+          },
+          {
+            "time": 12.25,
+            "opacity": 0.77,
+            "heightPx": 39
+          },
+          {
+            "time": 12.375,
+            "opacity": 0.97,
+            "heightPx": 39
+          },
+          {
+            "time": 12.5,
+            "opacity": 1,
+            "heightPx": 39
+          },
+          {
+            "time": 12.625,
+            "opacity": 1,
+            "heightPx": 39
+          },
+          {
+            "time": 12.75,
+            "opacity": 1,
+            "heightPx": 39
+          },
+          {
+            "time": 12.875,
+            "opacity": 1,
+            "heightPx": 39
+          },
+          {
+            "time": 13,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 13.125,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 13.25,
+            "opacity": null,
+            "heightPx": null
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "The film's last line \"and dave.\" (2 words) is on screen 1.43 s (±0.01 s), under the 2.00 s a closing line needs: hold it about 0.5 s + 0.3 s a word and at least 2 s before the film ends; see references/motion.md.",
+        "text": "and dave.",
+        "selector": "#s5-dave",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1593.9,
+          "y": 939.01,
+          "width": 154.95000000000005,
+          "height": 37.440000000000055
+        },
+        "time": 20.57,
+        "words": 2,
+        "seconds": 1.434,
+        "floorSeconds": 2,
+        "measured": [
+          {
+            "time": 20.25,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 20.375,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 20.5,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 20.625,
+            "opacity": 0.93,
+            "heightPx": 37
+          },
+          {
+            "time": 20.75,
+            "opacity": 1,
+            "heightPx": 39
+          },
+          {
+            "time": 20.875,
+            "opacity": 1,
+            "heightPx": 38
+          },
+          {
+            "time": 21,
+            "opacity": 1,
+            "heightPx": 38
+          },
+          {
+            "time": 21.5,
+            "opacity": 1,
+            "heightPx": 38
+          },
+          {
+            "time": 21.625,
+            "opacity": 1,
+            "heightPx": 38
+          },
+          {
+            "time": 21.75,
+            "opacity": 1,
+            "heightPx": 38
+          },
+          {
+            "time": 21.875,
+            "opacity": 1,
+            "heightPx": 38
+          }
+        ]
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 176
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  }
+}

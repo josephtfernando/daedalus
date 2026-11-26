@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Daedalus Brag</title>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("assets/fonts/geist-latin.woff2") format("woff2");
+        font-style: normal;
+        font-weight: 400 700;
+        font-display: block;
+      }
+
+      :root {
+        --paper: #f6f5f2;
+        --card: #edece7;
+        --ink: #1b1b1f;
+        --muted: #55585f;
+        --hi: #0f6b5c;
+        --blue: #1a6491;
+        --amber: #a35b17;
+        --tint-teal: #e4efeb;
+        --tint-blue: #e6eef4;
+        --tint-amber: #f5ece0;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: var(--paper);
+        overflow: hidden;
+      }
+
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: "Geist", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .clip { position: absolute; inset: 0; }
+      .scene { box-sizing: border-box; overflow: hidden; }
+      .scene-inner { position: absolute; inset: 0; }
+      .mask { display: block; overflow: hidden; }
+      .mask > span { display: block; }
+      .hi { color: var(--hi); }
+      .blue { color: var(--blue); }
+      .amber { color: var(--amber); }
+
+      /* 1 */
+      .center-col {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .hook {
+        font-size: 118px;
+        font-weight: 600;
+        letter-spacing: -0.035em;
+        line-height: 1.14;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      /* 2 */
+      #s2-lines {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 210px;
+        text-align: center;
+        font-size: 88px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.16;
+      }
+      #msg-card2 {
+        position: absolute;
+        left: calc(50% - 560px);
+        top: 620px;
+        width: 1120px;
+        height: 170px;
+        box-sizing: border-box;
+        padding: 58px 48px;
+        background: var(--tint-teal);
+        border-radius: 6px;
+      }
+      #msg-text2 { font-size: 44px; white-space: nowrap; }
+      .char { display: inline-block; opacity: 0; }
+      .cursor {
+        display: inline-block;
+        width: 3px;
+        height: 44px;
+        margin-left: 5px;
+        vertical-align: middle;
+        background: var(--hi);
+      }
+
+      /* 3 */
+      #s3-head {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 74px;
+        text-align: center;
+        font-size: 60px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .seat-grid {
+        position: absolute;
+        left: 260px;
+        right: 260px;
+        top: 230px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 100px;
+        row-gap: 26px;
+      }
+      .seat-block { opacity: 0; }
+      .seat-name {
+        font-size: 54px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        line-height: 1.2;
+      }
+      .seat-job {
+        margin-top: 8px;
+        font-size: 33px;
+        color: var(--muted);
+      }
+      #seat-2 .seat-job { color: var(--blue); }
+      #seat-6 .seat-job { color: var(--amber); }
+      #seat-7 .seat-name { font-weight: 500; color: var(--muted); }
+      #seat-8 .seat-job { color: var(--hi); }
+
+      /* 4 */
+      .mem-col {
+        position: absolute;
+        left: 360px;
+        right: 360px;
+        top: 220px;
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+      }
+      .mem-panel {
+        width: 100%;
+        height: 150px;
+        box-sizing: border-box;
+        padding: 0 58px;
+        display: flex;
+        align-items: center;
+        background: var(--card);
+        border-radius: 6px;
+        font-size: 62px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        opacity: 0;
+      }
+      #mem-2 { background: var(--tint-blue); }
+      #mem-3 { background: var(--tint-teal); }
+
+      /* 5 */
+      #s5-head {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 80px;
+        text-align: center;
+        font-size: 60px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .steps {
+        position: absolute;
+        left: calc(50% - 840px);
+        top: 430px;
+        width: 1680px;
+        height: 160px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .step {
+        width: 340px;
+        height: 160px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: var(--card);
+        border-radius: 6px;
+        opacity: 0;
+      }
+      #chk-2 { background: var(--tint-blue); }
+      #chk-3 { background: var(--tint-amber); }
+      #chk-4 { background: var(--tint-teal); }
+      .step-name { font-size: 34px; font-weight: 600; white-space: nowrap; }
+      .step-allow {
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: var(--hi);
+      }
+      #s5-foot {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 110px;
+        text-align: center;
+        font-size: 42px;
+        color: var(--muted);
+      }
+
+      /* 6 */
+      .s6-inner {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 140px;
+        padding: 0 130px;
+        box-sizing: border-box;
+      }
+      .laptop { position: relative; width: 580px; height: 380px; flex-shrink: 0; }
+      .screen {
+        position: absolute;
+        left: 10px;
+        top: 0;
+        width: 560px;
+        height: 344px;
+        background: var(--tint-blue);
+        border-radius: 6px;
+      }
+      .base {
+        position: absolute;
+        left: 0;
+        top: 352px;
+        width: 580px;
+        height: 18px;
+        background: var(--card);
+        border-radius: 3px;
+      }
+      #lock6 {
+        position: absolute;
+        left: calc(50% - 62px);
+        top: 92px;
+        width: 124px;
+        height: 150px;
+      }
+      #lock6 path {
+        fill: none;
+        stroke: var(--hi);
+        stroke-width: 9;
+        stroke-linecap: round;
+      }
+      #lock6 rect { fill: var(--hi); }
+      .priv {
+        font-size: 76px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.16;
+        white-space: nowrap;
+      }
+
+      /* 7 */
+      #s7-name {
+        font-size: 212px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
+        line-height: 1;
+      }
+      #s7-tag {
+        margin-top: 40px;
+        font-size: 42px;
+        font-weight: 400;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      #s7-cta {
+        margin-top: 44px;
+        font-size: 50px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--hi);
+        white-space: nowrap;
+      }
+
+      .w { display: inline-block; }
+      .l { display: inline-block; }
+      #flash {
+        position: absolute;
+        inset: 0;
+        background: var(--hi);
+        opacity: 0;
+        pointer-events: none;
+        z-index: 90;
+      }
+      #root { perspective: 1200px; }
+      .scene-inner { transform-origin: 50% 50%; will-change: transform, opacity; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="daedalus-motion"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="30"
+      data-fps="30"
+    >
+      <div id="flash"></div>
+      <!-- 1 : push left out -->
+      <section id="s1" class="clip scene" data-start="0" data-duration="3.6" data-track-index="0">
+        <div class="scene-inner">
+          <div class="center-col">
+            <div class="hook">
+              <div class="mask" data-layout-allow-overflow><span id="hook-1">Just tell Daedalus</span></div>
+              <div class="mask" data-layout-allow-overflow><span id="hook-2" class="hi">what you need.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2 : slide in right, out up -->
+      <section id="s2" class="clip scene" data-start="3.6" data-duration="3.6" data-track-index="0">
+        <div class="scene-inner">
+          <div id="s2-lines">
+            <div class="mask" data-layout-allow-overflow><span id="s2-l1">You send a message.</span></div>
+            <div class="mask" data-layout-allow-overflow><span id="s2-l2" class="hi">I do the work.</span></div>
+          </div>
+          <div id="msg-card2"><div id="msg-text2"><span class="cursor"></span></div></div>
+        </div>
+      </section>
+
+      <!-- 3 : bottom wipe, scale out -->
+      <section id="s3" class="clip scene" data-start="7.2" data-duration="5" data-track-index="0">
+        <div class="scene-inner">
+          <div id="s3-head">Eight named jobs. <span class="hi">One loop.</span></div>
+          <div class="seat-grid">
+            <div class="seat-block" id="seat-1"><div class="seat-name">DAEDALUS</div><div class="seat-job">plans the work</div></div>
+            <div class="seat-block" id="seat-2"><div class="seat-name">ATHENA</div><div class="seat-job">helps with code</div></div>
+            <div class="seat-block" id="seat-3"><div class="seat-name">ODYSSEUS</div><div class="seat-job">finds things out</div></div>
+            <div class="seat-block" id="seat-4"><div class="seat-name">CALLIOPE</div><div class="seat-job">writes with you</div></div>
+            <div class="seat-block" id="seat-5"><div class="seat-name">ICARUS</div><div class="seat-job">builds things</div></div>
+            <div class="seat-block" id="seat-6"><div class="seat-name">HERACLES</div><div class="seat-job">tracks your body</div></div>
+            <div class="seat-block" id="seat-7"><div class="seat-name">dave</div><div class="seat-job">runs the laptop</div></div>
+            <div class="seat-block" id="seat-8"><div class="seat-name">MELINO&Euml;</div><div class="seat-job">checks the work</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 : slide in left, out right -->
+      <section id="s4" class="clip scene" data-start="12.2" data-duration="4.4" data-track-index="0">
+        <div class="scene-inner">
+          <div class="mem-col">
+            <div class="mem-panel" id="mem-1"><span>I remember.</span></div>
+            <div class="mem-panel" id="mem-2"><span class="blue">I keep your calendar.</span></div>
+            <div class="mem-panel" id="mem-3"><span class="hi">I show up on time.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5 : top wipe, scale out -->
+      <section id="s5" class="clip scene" data-start="16.6" data-duration="5.4" data-track-index="0">
+        <div class="scene-inner">
+          <div id="s5-head">Every action <span class="hi">gets checked.</span></div>
+          <div class="steps">
+            <div class="step" id="chk-1"><div class="step-name">CONTEXT</div></div>
+            <div class="step" id="chk-2"><div class="step-name">MODEL SUGGESTS</div></div>
+            <div class="step" id="chk-3"><div class="step-name">PERMISSION CHECK</div><div class="step-allow" id="chk-allow">ALLOW</div></div>
+            <div class="step" id="chk-4"><div class="step-name">LOCAL ACTION</div></div>
+          </div>
+          <div id="s5-foot">You can see why.</div>
+        </div>
+      </section>
+
+      <!-- 6 : diagonal shift -->
+      <section id="s6" class="clip scene" data-start="22" data-duration="2.8" data-track-index="0">
+        <div class="scene-inner">
+          <div class="s6-inner">
+            <div class="laptop" id="laptop6">
+              <div class="screen"></div>
+              <div class="base"></div>
+              <svg id="lock6" viewBox="0 0 124 150" aria-hidden="true">
+                <path d="M38 68 V46 a24 24 0 0 1 48 0 V68" />
+                <rect x="22" y="68" width="80" height="68" rx="8" />
+              </svg>
+            </div>
+            <div>
+              <div class="mask" data-layout-allow-overflow><span id="priv-1" class="priv">Nothing private</span></div>
+              <div class="mask" data-layout-allow-overflow><span id="priv-2" class="priv hi">leaves your laptop.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7 : scale in -->
+      <section id="s7" class="clip scene" data-start="24.8" data-duration="5.2" data-track-index="0">
+        <div class="scene-inner">
+          <div class="center-col">
+            <div id="s7-name">DAEDALUS</div>
+            <div id="s7-tag">Your laptop. Your data. One message.</div>
+            <div id="s7-cta">Run it on your own laptop.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- audio -->
+      <audio id="bg-music" src="assets/music/bed-30.mp3" data-start="0" data-duration="30" data-track-index="10" data-volume="0.30"
+        data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0},{"t":0.5,"v":0.5},{"t":27.9,"v":0.5},{"t":28.8,"v":1},{"t":29.5,"v":1},{"t":30,"v":0}]}]}'></audio>
+
+      <audio id="vo-1" src="assets/voice/vo-01.wav" data-start="0.8" data-duration="2.325" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-2" src="assets/voice/vo-02.wav" data-start="4.0" data-duration="2.88" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-3" src="assets/voice/vo-03.wav" data-start="7.6" data-duration="3.947" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-4" src="assets/voice/vo-04.wav" data-start="12.6" data-duration="3.541" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-5" src="assets/voice/vo-05.wav" data-start="17.0" data-duration="4.075" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-6" src="assets/voice/vo-06.wav" data-start="22.4" data-duration="2.176" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-7" src="assets/voice/vo-07.wav" data-start="25.2" data-duration="2.56" data-track-index="11" data-volume="1"></audio>
+
+      <audio id="sfx-type" src="assets/sfx/interface/click_001.ogg" data-start="4.35" data-duration="0.1" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-seat-1" src="assets/sfx/casino/card-place-1.ogg" data-start="7.7" data-duration="0.32" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-seat-2" src="assets/sfx/casino/card-place-2.ogg" data-start="8.1" data-duration="0.32" data-track-index="13" data-volume="0.35"></audio>
+      <audio id="sfx-seat-3" src="assets/sfx/casino/card-place-1.ogg" data-start="8.5" data-duration="0.32" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-seat-4" src="assets/sfx/casino/card-place-2.ogg" data-start="8.9" data-duration="0.32" data-track-index="13" data-volume="0.35"></audio>
+      <audio id="sfx-seat-5" src="assets/sfx/casino/card-place-1.ogg" data-start="9.3" data-duration="0.32" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-seat-6" src="assets/sfx/casino/card-place-2.ogg" data-start="9.7" data-duration="0.32" data-track-index="13" data-volume="0.35"></audio>
+      <audio id="sfx-seat-7" src="assets/sfx/casino/card-place-1.ogg" data-start="10.1" data-duration="0.32" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-seat-8" src="assets/sfx/casino/card-place-2.ogg" data-start="10.5" data-duration="0.32" data-track-index="13" data-volume="0.35"></audio>
+      <audio id="sfx-check" src="assets/sfx/interface/click_001.ogg" data-start="19.3" data-duration="0.1" data-track-index="14" data-volume="0.32"></audio>
+      <audio id="sfx-cta" src="assets/sfx/interface/bong_001.ogg" data-start="27.4" data-duration="0.12" data-track-index="15" data-volume="0.38"></audio>
+    </div>
+
+    <script src="assets/js/gsap.min.js"></script>
+    <script>
+      document.fonts.ready.then(function () {
+        var root = document.querySelector("[data-composition-id]");
+        var compositionId = root.dataset.compositionId;
+        var tl = gsap.timeline({ paused: true });
+
+        var message = "what's on my calendar tomorrow?";
+        var msgText = document.getElementById("msg-text2");
+        var cursor = msgText.querySelector(".cursor");
+        var chars = [];
+        for (var i = 0; i < message.length; i++) {
+          var c = document.createElement("span");
+          c.className = "char";
+          c.textContent = message[i] === " " ? "\u00a0" : message[i];
+          msgText.insertBefore(c, cursor);
+          chars.push(c);
+        }
+
+        function splitWords(el) {
+          var text = el.textContent;
+          el.textContent = "";
+          var parts = text.split(" ");
+          var out = [];
+          for (var i = 0; i < parts.length; i++) {
+            if (!parts[i]) continue;
+            var sp = document.createElement("span");
+            sp.className = "w";
+            sp.textContent = parts[i];
+            el.appendChild(sp);
+            if (i < parts.length - 1) el.appendChild(document.createTextNode(" "));
+            out.push(sp);
+          }
+          return out;
+        }
+
+        var h1 = splitWords(document.getElementById("hook-1"));
+        var h2 = splitWords(document.getElementById("hook-2"));
+        var l1 = splitWords(document.getElementById("s2-l1"));
+        var l2 = splitWords(document.getElementById("s2-l2"));
+        var p1 = splitWords(document.getElementById("priv-1"));
+        var p2 = splitWords(document.getElementById("priv-2"));
+
+        var nameEl = document.getElementById("s7-name");
+        var nameStr = nameEl.textContent;
+        nameEl.textContent = "";
+        var letters = [];
+        for (var q = 0; q < nameStr.length; q++) {
+          var ls = document.createElement("span");
+          ls.className = "l";
+          ls.textContent = nameStr[q];
+          nameEl.appendChild(ls);
+          letters.push(ls);
+        }
+
+        var IN = "back.out(2)";
+
+        // 1 : word slam, zoom through
+        tl.fromTo("#s1 .scene-inner", { scale: 1.08 }, { scale: 1, duration: 1.6, ease: "power2.out" }, 0);
+        tl.fromTo(h1, { yPercent: 130, rotate: 5 }, { yPercent: 0, rotate: 0, duration: 0.42, ease: IN, stagger: 0.055 }, 0.42);
+        tl.fromTo(h2, { yPercent: 130, rotate: 5 }, { yPercent: 0, rotate: 0, duration: 0.42, ease: IN, stagger: 0.055 }, 0.62);
+        tl.to("#s1 .scene-inner", { scale: 1.55, opacity: 0, duration: 0.24, ease: "power3.in" }, 3.36);
+        tl.fromTo("#flash", { opacity: 0.5 }, { opacity: 0, duration: 0.26, ease: "power2.out", immediateRender: false }, 3.36);
+
+        // 2 : slide up hard, card pop
+        tl.fromTo("#s2 .scene-inner", { y: 130, rotate: -1.5 }, { y: 0, rotate: 0, duration: 0.34, ease: "back.out(1.5)" }, 3.6);
+        tl.fromTo(l1, { yPercent: 130, rotate: 4 }, { yPercent: 0, rotate: 0, duration: 0.4, ease: IN, stagger: 0.05 }, 3.62);
+        tl.fromTo(l2, { yPercent: 130, rotate: 4 }, { yPercent: 0, rotate: 0, duration: 0.4, ease: IN, stagger: 0.05 }, 3.8);
+        tl.fromTo("#msg-card2", { scale: 0.84, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.38, ease: "back.out(2.6)" }, 3.9);
+        tl.to(chars, { opacity: 1, duration: 0.02, stagger: 0.028 }, 4.3);
+        tl.to(".cursor", { opacity: 0, duration: 0.26, repeat: 5, yoyo: true }, 4.4);
+        tl.to("#s2 .scene-inner", { y: -170, scale: 1.08, opacity: 0, duration: 0.24, ease: "power3.in" }, 6.96);
+        tl.fromTo("#flash", { opacity: 0.5 }, { opacity: 0, duration: 0.26, ease: "power2.out", immediateRender: false }, 6.96);
+
+        // 3 : bottom wipe, seats fly in
+        tl.fromTo("#s3 .scene-inner", { clipPath: "inset(100% 0 0 0)" }, { clipPath: "inset(0% 0 0 0)", duration: 0.3, ease: "power4.out" }, 7.2);
+        tl.fromTo("#s3-head", { y: -70, opacity: 0, scale: 0.9 }, { y: 0, opacity: 1, scale: 1, duration: 0.36, ease: IN }, 7.22);
+        var seats = ["#seat-1", "#seat-2", "#seat-3", "#seat-4", "#seat-5", "#seat-6", "#seat-7", "#seat-8"];
+        for (var s = 0; s < seats.length; s++) {
+          var fromX = s % 2 === 0 ? -70 : 70;
+          tl.fromTo(seats[s], { x: fromX, y: 70, opacity: 0, scale: 1.1 }, { x: 0, y: 0, opacity: 1, scale: 1, duration: 0.34, ease: "back.out(1.9)" }, 7.3 + s * 0.2);
+        }
+        tl.to("#s3 .scene-inner", { scale: 0.82, opacity: 0, duration: 0.24, ease: "power3.in" }, 11.92);
+        tl.fromTo("#flash", { opacity: 0.5 }, { opacity: 0, duration: 0.26, ease: "power2.out", immediateRender: false }, 11.92);
+
+        // 4 : swing in from left, panels pop
+        tl.fromTo("#s4 .scene-inner", { x: -240, rotate: 2.5 }, { x: 0, rotate: 0, duration: 0.32, ease: "back.out(1.4)" }, 12.2);
+        tl.fromTo("#mem-1", { x: -200, opacity: 0, scale: 0.94 }, { x: 0, opacity: 1, scale: 1, duration: 0.32, ease: "back.out(1.8)" }, 12.24);
+        tl.fromTo("#mem-2", { x: 200, opacity: 0, scale: 0.94 }, { x: 0, opacity: 1, scale: 1, duration: 0.32, ease: "back.out(1.8)" }, 13.2);
+        tl.fromTo("#mem-3", { x: -200, opacity: 0, scale: 0.94 }, { x: 0, opacity: 1, scale: 1, duration: 0.32, ease: "back.out(1.8)" }, 14.3);
+        tl.to("#s4 .scene-inner", { x: 250, rotate: -2, opacity: 0, duration: 0.24, ease: "power3.in" }, 16.36);
+        tl.fromTo("#flash", { opacity: 0.5 }, { opacity: 0, duration: 0.26, ease: "power2.out", immediateRender: false }, 16.36);
+
+        // 5 : top wipe, steps slam, allow punch
+        tl.fromTo("#s5 .scene-inner", { clipPath: "inset(0 0 100% 0)" }, { clipPath: "inset(0 0 0% 0)", duration: 0.3, ease: "power4.out" }, 16.6);
+        tl.fromTo("#s5-head", { y: -70, opacity: 0, scale: 0.9 }, { y: 0, opacity: 1, scale: 1, duration: 0.36, ease: IN }, 16.62);
+        var steps = ["#chk-1", "#chk-2", "#chk-3", "#chk-4"];
+        var stepTimes = [16.9, 17.4, 18.0, 18.7];
+        for (var p = 0; p < steps.length; p++) {
+          tl.fromTo(steps[p], { y: 110, opacity: 0, scale: 0.86 }, { y: 0, opacity: 1, scale: 1, duration: 0.34, ease: "back.out(2.6)" }, stepTimes[p]);
+        }
+        tl.fromTo("#chk-allow", { opacity: 0, scale: 2.4 }, { opacity: 1, scale: 1, duration: 0.26, ease: "back.out(3)" }, 19.28);
+        tl.fromTo("#s5-foot", { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: IN }, 20.4);
+        tl.to("#s5 .scene-inner", { scale: 1.2, opacity: 0, duration: 0.24, ease: "power3.in" }, 21.74);
+        tl.fromTo("#flash", { opacity: 0.5 }, { opacity: 0, duration: 0.26, ease: "power2.out", immediateRender: false }, 21.74);
+
+        // 6 : diagonal punch, lock pop
+        tl.fromTo("#s6 .scene-inner", { x: 220, y: -90, rotate: -2, opacity: 0 }, { x: 0, y: 0, rotate: 0, opacity: 1, duration: 0.34, ease: "back.out(1.5)" }, 22.0);
+        tl.fromTo("#laptop6", { x: -150, scale: 0.9, opacity: 0 }, { x: 0, scale: 1, opacity: 1, duration: 0.32, ease: "back.out(1.7)" }, 22.05);
+        tl.fromTo("#lock6", { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(3.5)" }, 22.32);
+        tl.fromTo(p1, { xPercent: 115 }, { xPercent: 0, duration: 0.3, ease: IN, stagger: 0.04 }, 22.08);
+        tl.fromTo(p2, { xPercent: 115 }, { xPercent: 0, duration: 0.3, ease: IN, stagger: 0.04 }, 22.26);
+        tl.to("#s6 .scene-inner", { y: 180, scale: 1.1, opacity: 0, duration: 0.24, ease: "power3.in" }, 24.56);
+        tl.fromTo("#flash", { opacity: 0.5 }, { opacity: 0, duration: 0.26, ease: "power2.out", immediateRender: false }, 24.56);
+
+        // 7 : letter slam, then hold
+        tl.fromTo("#s7 .scene-inner", { scale: 0.86, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: "power4.out" }, 24.78);
+        tl.fromTo(letters, { yPercent: 118, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.38, ease: "back.out(1.8)", stagger: 0.028 }, 24.84);
+        tl.fromTo("#s7-tag", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "back.out(1.6)" }, 25.7);
+        tl.fromTo("#s7-cta", { y: 46, scale: 0.94, opacity: 0 }, { y: 0, scale: 1, opacity: 1, duration: 0.32, ease: "back.out(2.2)" }, 27.3);
+        tl.to("#s7 .scene-inner", { scale: 1.03, duration: 4.6, ease: "none" }, 25.3);
+
+        window.__timelines[compositionId] = tl;
+        if (window.__hfForceTimelineRebind) window.__hfForceTimelineRebind();
+      });
+    </script>
+  </body>
+</html>
